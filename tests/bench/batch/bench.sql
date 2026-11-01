@@ -1,7 +1,7 @@
 -- Deterministic A/B harness for the whole server tick.  Loads the integration benchmark's setup (ibench.setup) and adds:
 --   bbench.gen(t, frac, mode)   the gateway's input for tick t, a pure function of (connection, t, position): both implementations see identical input
 --   bbench.run(impl, ticks, frac, mode, txmode)   drives gen -> tick -> drain server-side, committing like the real gateway
--- impl:   'base' = mc.server_tick(), 'batched' = mc.server_tick_batched(), 'noop' = nothing (subtracted when counting statements)
+-- impl:   'base' = mc.server_tick(), 'batched' or 'batched:FLAGS' = mc.server_tick_batched() (FLAGS = mc.batch_flags, e.g. batched:in,out or batched:none), 'noop' = nothing
 -- txmode: 'split' = gen, tick and drain each commit separately (what tests/bench/integration does); 'one' = one transaction per tick (what the PL/Python gateway does)
 -- mode:   'dither' = every moving player takes a +-0.2 step (stresses chunk borders: players re-cross them constantly),
 --         'walk'   = every moving player walks straight at 0.22 blocks per tick (a realistic walk: a border crossing every ~70 ticks)
@@ -45,7 +45,7 @@ begin
     fi := bbench.gen(t, frac, mode);
     if txmode = 'split' then commit; end if;
     t0 := clock_timestamp();
-    if impl = 'base' then perform mc.server_tick(); elsif impl = 'batched' then perform mc.server_tick_batched(); end if;
+    if impl = 'base' then perform mc.server_tick(); elsif impl like 'batched%' then perform mc.server_tick_batched(); end if;
     t1 := clock_timestamp();
     if txmode = 'split' then commit; end if;
     select count(*), coalesce(sum(length(d.data)), 0) into fo, bo from net.drain_outbox() d;

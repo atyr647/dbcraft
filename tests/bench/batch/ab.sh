@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Interleaved A/B runs of whole-tick implementations on identical deterministic input.
 #   usage: tests/bench/batch/ab.sh "base batched" PLAYERS SIDE_CHUNKS MOVING_FRACTION MODE TXMODE TICKS ROUNDS [FLAGS]
-#   e.g.   tests/bench/batch/ab.sh "base batched" 500 100 1.0 dither split 80 5
+#   e.g.   tests/bench/batch/ab.sh "base batched" 500 100 1.0 dither split 80 5      or, for an ablation,   tests/bench/batch/ab.sh "base batched:none batched:in batched:all" 500 100 1.0 dither split 80 5
 # Needs the benchmark database prepared like docs/PERF-BATCH.md says (cluster :54422, database dbbench, warm world).  Environment: DBCRAFT_PGPORT, DBCRAFT_BENCH_DB.
 # For each round, each implementation gets a fresh ibench.setup (same seed) and runs TICKS ticks (the first 20 are warm-up); impls alternate A B A B ...
 # FLAGS (optional) is written to the GUC mc.batch_flags before each 'batched' run (component switches, see sql/380_batch_pipeline.sql).
@@ -16,7 +16,9 @@ for round in $(seq 1 "$ROUNDS"); do
   for impl in $IMPLS; do
     run=$((run + 1))
     $P -c "select ibench.setup($N, $SIDE)" -c "select count(*) from mc.refresh_visibility()" -c "analyze mc.player" -c "vacuum mc.player, mc.visible" > /dev/null
-    [ -n "$FLAGS" ] && $P -c "alter database $PGDATABASE set mc.batch_flags = '$FLAGS'" > /dev/null || $P -c "alter database $PGDATABASE reset mc.batch_flags" > /dev/null
+    # an impl written batched:FLAGS carries its own component switches; otherwise the global FLAGS (if any) apply to batched
+    case "$impl" in *:*) IFLAGS=${impl#*:} ;; *) IFLAGS=$FLAGS ;; esac
+    if [ -n "$IFLAGS" ]; then $P -c "alter database $PGDATABASE set mc.batch_flags = '$IFLAGS'" > /dev/null; else $P -c "alter database $PGDATABASE reset mc.batch_flags" > /dev/null; fi
     sleep 1.3
     S0=$($P -c "select coalesce(sum(n_tup_ins),0)||' '||coalesce(sum(n_tup_upd),0)||' '||coalesce(sum(n_tup_del),0)||' '||coalesce(sum(n_tup_hot_upd),0) from pg_stat_user_tables where schemaname in ('mc','net')")
     LOAD=$(cut -d' ' -f1 /proc/loadavg)
