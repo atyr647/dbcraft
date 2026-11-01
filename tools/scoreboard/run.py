@@ -48,13 +48,13 @@ class Vanilla:
     name = "vanilla"
     port = C.VANILLA_PORT
 
-    def start(self, vd, n, first_names=()):
+    def start(self, vd, n, first_names=(), spread=800):
         sh(os.path.join(TOOLS, "vanilla.sh"), "reset")
         self.t_start = time.time()
         sh(os.path.join(TOOLS, "vanilla.sh"), "start", str(vd))
         self.startup_s = time.time() - self.t_start
         self.rcon = C.Rcon()
-        self.rcon.cmd("gamerule respawn_radius 800")      # new players spawn spread over +-800 blocks like dbcraft's seeded positions
+        self.rcon.cmd("gamerule respawn_radius %d" % spread)      # new players spawn spread over +-spread blocks like dbcraft's seeded positions
         self.pid = C.vanilla_pid()
 
     def sample(self):
@@ -71,19 +71,41 @@ class Vanilla:
 
     def window_begin(self):
         self.samples = []
+        try:
+            self.gc_off = os.path.getsize(os.path.join(C.VANILLA_DIR, "gc.log"))
+        except OSError:
+            self.gc_off = 0
 
     def window_poll(self):
         s = self.sample()
         if s:
             self.samples.append(s)
 
+    def gc_pauses(self):
+        """Stop-the-world pauses (ms) logged since window_begin: lines like '[123.456s] GC(12) Pause Young (Normal) ... 3.456ms'."""
+        out = []
+        try:
+            with open(os.path.join(C.VANILLA_DIR, "gc.log")) as f:
+                f.seek(self.gc_off)
+                for line in f:
+                    m = re.search(r"Pause .*?([\d.]+)ms\s*$", line)
+                    if m:
+                        out.append(float(m.group(1)))
+        except OSError:
+            pass
+        return out
+
     def window_end(self):
         s = self.samples
         if not s:
             return {}
-        return {"mspt_mean": sum(x["avg"] for x in s) / len(s), "mspt_p50": C.percentile([x["p50"] for x in s], 50),
-                "mspt_p95": C.percentile([x["p95"] for x in s], 50), "mspt_p99": C.percentile([x["p99"] for x in s], 50),
-                "mspt_worst_window_p99": max(x["p99"] for x in s), "mspt_worst_window_avg": max(x["avg"] for x in s), "samples": len(s)}
+        r = {"mspt_mean": sum(x["avg"] for x in s) / len(s), "mspt_p50": C.percentile([x["p50"] for x in s], 50),
+             "mspt_p95": C.percentile([x["p95"] for x in s], 50), "mspt_p99": C.percentile([x["p99"] for x in s], 50),
+             "mspt_worst_window_p99": max(x["p99"] for x in s), "mspt_worst_window_avg": max(x["avg"] for x in s), "samples": len(s)}
+        g = self.gc_pauses()
+        if g:
+            r.update({"gc_pauses": len(g), "gc_pause_max_ms": max(g), "gc_pause_p99_ms": C.percentile(g, 99), "gc_pause_total_ms": sum(g)})
+        return r
 
     def stop(self):
         sh(os.path.join(TOOLS, "vanilla.sh"), "stop", check=False)
@@ -96,27 +118,27 @@ class Dbcraft:
     def __init__(self, mode="default"):
         self.mode = mode
 
-    def start(self, vd, n, first_names=()):
+    def start(self, vd, n, first_names=(), spread=800):
         dc = os.path.join(TOOLS, "dbcraft.sh")
         sh(dc, "stop", check=False)
         sh(dc, "tickmode", self.mode)
         sh(dc, "reset-world")
         sh(dc, "settings", str(vd))
         if n:
-            self.seed_players(first_names)
+            self.seed_players(first_names, spread)
         t0 = time.time()
         sh(dc, "start")
         self.startup_s = time.time() - t0
         self.pid = C.postmaster_pid()
         self.last_tick = int(dbq("select coalesce(max(tick), 0) from mc.server_tick_log") or 0)
 
-    def seed_players(self, names):
-        """Players get random positions over +-800 blocks (100 x 100 chunks), the same spread vanilla's respawn_radius gives."""
+    def seed_players(self, names, spread=800):
+        """Players get random positions over +-spread blocks (800 = 100 x 100 chunks), the same spread vanilla's respawn_radius gives."""
         vals = ",".join("('%s')" % n for n in names)
         dbq("insert into mc.player (uuid, name, gamemode, x, y, z, yaw, chunk_x, chunk_z) "
             "select net.offline_uuid(n), n, 1, x, gs.spawn_y, z, 0, floor(x / 16)::int, floor(z / 16)::int "
-            "from (select n, random() * 1600 - 800 as x, random() * 1600 - 800 as z from (values %s) v(n)) q, mc.game_state gs "
-            "on conflict (uuid) do nothing" % vals)
+            "from (select n, random() * %d - %d as x, random() * %d - %d as z from (values %s) v(n)) q, mc.game_state gs "
+            "on conflict (uuid) do nothing" % (2 * spread, spread, 2 * spread, spread, vals))
 
     def cpu(self):
         return C.tree_cpu(self.pid)[0]
@@ -281,7 +303,7 @@ def scenario_idle0(srv, a):
 
 def scenario_pop(srv, a):
     first_names = ["Bot%d" % i for i in range(a.n)] + ["Probe0"]
-    srv.start(a.vd, a.n, first_names)
+    srv.start(a.vd, a.n, first_names, a.spread)
     time.sleep(2.0)
     lg = LoadGens(srv.port, a.n, a.moving, a.vd, a.join_spread, a.ready_timeout, a.hold)
     try:
@@ -311,7 +333,7 @@ def scenario_pop(srv, a):
 
 def scenario_storm(srv, a):
     first_names = ["Bot%d" % i for i in range(a.n)] + ["Probe0"]
-    srv.start(a.vd, a.n, first_names)
+    srv.start(a.vd, a.n, first_names, a.spread)
     time.sleep(2.0)
     srv.window_begin()
     c0, t0 = srv.cpu(), time.time()
@@ -352,12 +374,14 @@ def main():
     ap.add_argument("--vd", type=int, default=10)
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--hold", type=float, default=45.0)
+    ap.add_argument("--spread", type=int, default=800, help="players spawn within +-spread blocks of the origin")
     ap.add_argument("--settle", type=float, default=8.0)
     ap.add_argument("--join-spread", type=float, default=20.0)
     ap.add_argument("--ready-timeout", type=float, default=240.0)
     ap.add_argument("--servers", default="vanilla,dbcraft")
     ap.add_argument("--dbmode", default="default")
-    ap.add_argument("--quiet-wait", type=float, default=600.0, help="max seconds to wait before each run for the machine to go quiet (0 = never wait)")
+    ap.add_argument("--quiet-wait", type=float, default=float(os.environ.get("SCORE_QUIET_WAIT", 180)),
+                    help="max seconds to wait before each run for the machine to go quiet (0 = never wait; runs after the wait are flagged quiet_reached=false)")
     ap.add_argument("--quiet-busy", type=float, default=0.30, help="CPU busy fraction below which the machine counts as quiet")
     ap.add_argument("--tag", default="")
     ap.add_argument("--out", default=os.path.join(C.OUT, "results.jsonl"))
