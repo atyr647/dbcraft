@@ -219,4 +219,15 @@ def moveseq3():
         time.sleep(0.6); dead = [e for e in c.events if e["name"] == "minecraft:disconnect"]
         print(f"{'+'.join(seq):22s} -> {'REJECTED' if dead else 'ok'}"); c.close()
 
-{"social": social, "movetest": movetest, "moveseq": moveseq, "moveseq2": moveseq2, "moveseq3": moveseq3}[args.scenario]()
+def dist():
+    """How far may one move packet jump before the real server answers with a corrective player_position ('moved too quickly')?  Survival and creative."""
+    for mode in ("creative", "survival"):
+        for d in (3.0, 6.0, 9.0, 9.9, 10.1, 12.0, 20.0):
+            c = Client(f"D{int(d * 10)}{mode[0]}"); time.sleep(1.6)
+            if mode == "survival": op = Client("Op"); op.command(f"gamemode survival {c.name}"); time.sleep(0.4); op.close()
+            p = c.pos or (0.5, -60.0, 0.5); n0 = len([e for e in c.events if e["name"] == "minecraft:player_position"])
+            c.pos_(p[0] + d, p[1], p[2], 1); time.sleep(0.5)
+            corrected = len([e for e in c.events if e["name"] == "minecraft:player_position"]) > n0
+            print(f"{mode:9s} jump {d:5.1f} blocks -> {'CORRECTED (moved too quickly)' if corrected else 'accepted'}"); c.close()
+
+{"social": social, "movetest": movetest, "moveseq": moveseq, "moveseq2": moveseq2, "moveseq3": moveseq3, "dist": dist}[args.scenario]()
