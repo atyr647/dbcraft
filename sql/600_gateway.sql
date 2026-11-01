@@ -14,24 +14,33 @@
 alter table net.conn add column if not exists await_key     boolean not null default false;   -- encryption_request sent, key response not yet seen
 alter table net.conn add column if not exists auth_pending  boolean not null default false;   -- key accepted, session check running in the gateway
 alter table net.conn add column if not exists verify_token  bytea;
-alter table net.conn add column if not exists ctl_seq       bigint  not null default 0;
+-- The "something changed" stamp is NOT a column of net.conn: it comes from a sequence, so a column would make otherwise identical rows differ between runs, and
+-- the differential tests compare whole rows (md5 of to_jsonb(net.conn)).  It lives in a side table kept by triggers.
+drop trigger if exists ctl_stamp on net.conn;                   -- an earlier revision stamped the row itself
+alter table net.conn drop column if exists ctl_seq;
 
 create sequence if not exists net.ctl_seq;
--- Stamps a row whenever something the gateway has to act on changes (state, threshold, key exchange).  Fires only for those columns, so the
--- per-tick keep-alive updates of net.conn stay in-place (HOT) updates.
+create unlogged table if not exists net.conn_ctl (conn_id bigint primary key, ctl_seq bigint not null);
 create or replace function net.ctl_stamp() returns trigger language plpgsql as $$
 begin
-    new.ctl_seq := nextval('net.ctl_seq');
+    if tg_op = 'DELETE' then
+        delete from net.conn_ctl where conn_id = old.conn_id;
+        return old;
+    end if;
+    insert into net.conn_ctl (conn_id, ctl_seq) values (new.conn_id, nextval('net.ctl_seq')) on conflict (conn_id) do update set ctl_seq = excluded.ctl_seq;
     return new;
 end $$;
-drop trigger if exists ctl_stamp on net.conn;
-create trigger ctl_stamp before insert or update of state, compression, await_key on net.conn for each row execute function net.ctl_stamp();
+-- fires only when something the gateway has to act on changes (state, threshold, key exchange), so the per-tick keep-alive updates of net.conn stay in-place (HOT) updates
+create trigger ctl_stamp after insert or update of state, compression, await_key on net.conn for each row execute function net.ctl_stamp();
+drop trigger if exists ctl_stamp_delete on net.conn;
+create trigger ctl_stamp_delete after delete on net.conn for each row execute function net.ctl_stamp();
+insert into net.conn_ctl (conn_id, ctl_seq) select conn_id, nextval('net.ctl_seq') from net.conn on conflict (conn_id) do nothing;     -- rows that exist when this file is applied
 
 create or replace function net.gateway_ctl(p_after bigint default 0)
 returns table (conn_id bigint, ctl_seq bigint, state text, compression int, await_key boolean, name text, verify_token bytea)
 language sql stable as $$
-    select c.conn_id, c.ctl_seq, c.state, c.compression, c.await_key, c.name, case when c.await_key then c.verify_token end
-    from net.conn c where c.ctl_seq > p_after order by c.ctl_seq $$;
+    select c.conn_id, k.ctl_seq, c.state, c.compression, c.await_key, c.name, case when c.await_key then c.verify_token end
+    from net.conn c join net.conn_ctl k on k.conn_id = c.conn_id where k.ctl_seq > p_after order by k.ctl_seq $$;
 
 ------------------------------------------------------------------------------------------------ gateway start
 -- A gateway process numbers its connections from 1.  The rows of the previous process describe sockets that died with it, and anything still queued for those ids

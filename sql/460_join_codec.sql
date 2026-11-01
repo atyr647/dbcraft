@@ -16,7 +16,7 @@ language plpgsql immutable parallel safe as $$
 declare len int := length(b); c int; u bigint := 0; i int := 0; sh int := 0;
 begin
     loop
-        if off + i >= len then val := null; nxt := null; return; end if;
+        if off is null or off + i >= len then val := null; nxt := null; return; end if;   -- (null offset: a caller that read past the end; without this the loop never ends)
         c := get_byte(b, off + i);
         if i = 4 and c >= 16 then perform proto.bad('VarInt too long or fifth byte out of range'); end if;
         u := u | ((c & 127)::bigint << sh);

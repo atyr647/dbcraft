@@ -38,6 +38,7 @@ create or replace function net.read_client_information(body bytea) returns jsonb
 declare lang text; o int; vd int; chat int; cc boolean; skin int; hand int; filt boolean; listing boolean; part int; x int;
 begin
     select val, nxt into lang, o from proto.string_read(body, 0);
+    if o is null then perform proto.bad('truncated packet'); end if;       -- (an empty body: the string read found no length)
     perform net.need(body, o + 1);
     vd := proto.i8_read(body, o);
     select val, nxt into chat, o from proto.varint_read(body, o + 1);

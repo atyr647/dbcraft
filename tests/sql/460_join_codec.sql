@@ -111,3 +111,8 @@ select net.close(7);
 select t.eq('close marks the connection closing', (select closing from net.conn where conn_id = 7), true);
 select t.eq('need raises the protocol error 22P03 on a short buffer', t.err_state($$select net.need('\x0102'::bytea, 3)$$), '22P03');
 select t.eq('need is silent when the buffer is long enough', t.err_state($$select net.need('\x0102'::bytea, 2)$$), 'no error');
+-- an empty client_information used to hang the server: the string read ran off the end, left a NULL offset, and varint_read looped on it forever
+set statement_timeout = '5s';
+select t.eq('varint_read of a null offset returns null instead of looping', (select val is null and nxt is null from proto.varint_read('\x01'::bytea, null)), true);
+select t.eq('an empty client_information is a protocol error, not a hang', t.err_state($$select net.read_client_information('\x'::bytea)$$), '22P03');
+reset statement_timeout;

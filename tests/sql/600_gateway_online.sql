@@ -154,14 +154,14 @@ update net.setting set value = '-1' where key = 'compression_threshold';
 select t.reset_net();
 select net.on_connect(40); select net.on_connect(41);
 select t.is_true('every new connection is stamped', (select count(*) = 2 and min(ctl_seq) > 0 from net.gateway_ctl(0)));
-select max(ctl_seq) as m1 from net.conn \gset
+select max(ctl_seq) as m1 from net.conn_ctl \gset
 select t.eq('nothing newer than the last seen sequence', (select count(*)::int from net.gateway_ctl(:m1)), 0);
 update net.conn set latency_ms = 7, last_activity = now(), keepalive_id = 5 where conn_id = 40;
 select t.eq('the per-tick keep-alive columns do not stamp (they must stay in-place updates)', (select count(*)::int from net.gateway_ctl(:m1)), 0);
 update net.conn set state = 'play' where conn_id = 40;
 select t.eq('a state change does, for that connection only', (select array_agg(conn_id) from net.gateway_ctl(:m1)), array[40::bigint]);
 select t.is_true('...with the state', (select state = 'play' from net.gateway_ctl(:m1) where conn_id = 40));
-select max(ctl_seq) as m2 from net.conn \gset
+select max(ctl_seq) as m2 from net.conn_ctl \gset
 update net.conn set compression = 256 where conn_id = 41;
 select t.eq('a threshold change does', (select array_agg(conn_id) from net.gateway_ctl(:m2)), array[41::bigint]);
 select t.is_true('the verify token is only revealed while a key is awaited', (select verify_token is null from net.gateway_ctl(0) where conn_id = 41));
