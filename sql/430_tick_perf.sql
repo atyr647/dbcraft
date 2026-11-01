@@ -89,6 +89,8 @@ declare
     cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz;
     n_in int; n_players int; n_out int; r record; framed_rows mc.drain_row[];
 begin
+    -- housekeeping, once a second: the queues only the tick uses are emptied with TRUNCATE (sql/435 says why; the others are emptied with DELETE every tick)
+    if (select game_time from mc.game_state) % 20 = 19 then truncate mc.play_in_work, net.batch; end if;
     -- 1, 2: consume net.inbox; the game's packets land in its work queue directly
     delete from mc.play_in_work;
     n_in := net.process_fast();
@@ -125,13 +127,14 @@ begin
     exception when others then
         insert into mc.error_log (tick, step, message) values (cur, 'kicks', sqlerrm); raise warning 'kicks failed: %', sqlerrm;
     end;
-    -- 8: mc.play_out -> net.outbox, one row per connection (concatenated in generation order).  Connections without compression (the common case) are written
-    -- straight to net.outbox by the same statement; the frames of connections with compression come back in an array (no scratch table: a temp table emptied
-    -- with DELETE is never vacuumed and grows for as long as the session lives) and go through net.reframe, as before.
+    -- 8: mc.play_out -> net.outbox, row for row in generation order; net.drain_outbox() concatenates per connection when the gateway reads (concatenating here
+    -- as well cost 24 ms instead of 9 ms per tick at 2,000 players: the same bytes were aggregated twice).  Connections without compression (the common case) are
+    -- written straight to net.outbox by the same statement; the frames of connections with compression come back in an array (no scratch table: a temp table
+    -- emptied with DELETE is never vacuumed and grows for as long as the session lives) and go through net.reframe, as before.
     with o as (delete from mc.play_out returning seq, conn_id, data),
          j as (select o.seq, o.conn_id, o.data, c.compression as comp from o join net.conn c on c.conn_id = o.conn_id and c.state = 'play'),
          plain as (insert into net.outbox (conn_id, data)
-                   select conn_id, string_agg(data, ''::bytea order by seq) from j where comp < 0 group by conn_id returning 1)
+                   select conn_id, data from j where comp < 0 order by seq returning 1)
     select count(*)::int, coalesce(array_agg(row(j.conn_id, j.comp, j.data)::mc.drain_row order by j.seq) filter (where j.comp >= 0), '{}')
       into n_out, framed_rows from j;
     for r in select d.conn_id, d.comp, string_agg(d.data, ''::bytea order by d.ord) as data
@@ -143,6 +146,7 @@ begin
             perform net.close(r.conn_id);
         end;
     end loop;
+    if cur % 20 = 0 then truncate mc.play_out; end if;          -- empty after the drain above; see the housekeeping note at the top
     t5 := clock_timestamp();
     select count(*)::int into n_players from mc.player where conn_id is not null;
     insert into mc.server_tick_log (tick, frames_in, players, frames_out, ms_total, ms_process, ms_game, ms_blocks, ms_chunks, ms_drain)
