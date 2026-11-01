@@ -107,6 +107,24 @@ create table if not exists mc.chunk_cache (
     foreign key (dimension, cx, cz) references mc.chunk(dimension, cx, cz) on delete cascade
 ) with (fillfactor = 70);
 
+-- Block entities (chests, signs, banners, ...).  nbt is the NBT exactly as the chunk packet carries it: '\x00' for none, otherwise 0x0a and the compound
+-- payload (network NBT has no root name).  Kept as bytes for now: a readable NBT representation is future work (docs/WORLD.md).
+-- seq fixes the order in the packet (vanilla's is a hash-map order; clients do not care).
+create table if not exists mc.block_entity (
+    dimension text   not null,
+    cx        int    not null,
+    cz        int    not null,
+    x         int    not null,
+    y         int    not null,
+    z         int    not null,
+    type      text   not null,                     -- minecraft:chest
+    nbt       bytea  not null default '\x00',
+    seq       bigint generated always as identity,
+    primary key (dimension, x, y, z),
+    foreign key (dimension, cx, cz) references mc.chunk(dimension, cx, cz) on delete cascade
+);
+create index if not exists block_entity_chunk_idx on mc.block_entity (dimension, cx, cz, seq);
+
 -- Block changes for the tick to broadcast.  Transient, hence unlogged.
 create unlogged table if not exists mc.block_event (
     id        bigint generated always as identity primary key,

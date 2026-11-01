@@ -18,7 +18,12 @@ create or replace function mc.non_collidable(state text) returns boolean languag
       'minecraft:sugar_cane', 'minecraft:dandelion', 'minecraft:poppy', 'minecraft:blue_orchid', 'minecraft:allium', 'minecraft:azure_bluet',
       'minecraft:red_tulip', 'minecraft:orange_tulip', 'minecraft:white_tulip', 'minecraft:pink_tulip', 'minecraft:oxeye_daisy', 'minecraft:cornflower',
       'minecraft:lily_of_the_valley', 'minecraft:sunflower', 'minecraft:lilac', 'minecraft:rose_bush', 'minecraft:peony', 'minecraft:brown_mushroom',
-      'minecraft:red_mushroom', 'minecraft:nether_sprouts', 'minecraft:crimson_roots', 'minecraft:warped_roots', 'minecraft:hanging_roots')
+      'minecraft:red_mushroom', 'minecraft:nether_sprouts', 'minecraft:crimson_roots', 'minecraft:warped_roots', 'minecraft:hanging_roots',
+      -- verified against a captured vanilla pale-garden chunk set (vanilla excludes these from MOTION_BLOCKING):
+      'minecraft:pale_hanging_moss', 'minecraft:pale_moss_carpet', 'minecraft:leaf_litter',
+      -- NOT verified (same family, judged likely): moss_carpet, glow_lichen, sculk_vein, dry grass, bush, firefly_bush, wildflowers, petals, cactus_flower
+      'minecraft:moss_carpet', 'minecraft:glow_lichen', 'minecraft:sculk_vein', 'minecraft:short_dry_grass', 'minecraft:tall_dry_grass', 'minecraft:bush',
+      'minecraft:firefly_bush', 'minecraft:wildflowers', 'minecraft:pink_petals', 'minecraft:cactus_flower')
      or split_part(state, '[', 1) like '%\_sapling' or split_part(state, '[', 1) like '%\_button' or split_part(state, '[', 1) like '%\_pressure\_plate'
      or split_part(state, '[', 1) like '%\_sign' or split_part(state, '[', 1) like '%\_wall\_sign' or split_part(state, '[', 1) like '%\_hanging\_sign' $$;
 

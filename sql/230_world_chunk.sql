@@ -6,7 +6,7 @@
 --                  short block_count, short fluid_count,
 --                  blocks container (u8 bits; palette; longs), biomes container (same shape, 64 entries)
 --                  palette = single value: VarInt id | linear/hashed: VarInt size + VarInt ids | global (bits above 8 / 3): none.  Longs have NO length prefix.
---   block entities : VarInt count (always 0 here: block entities are not stored yet)
+--   block entities : VarInt count, then per entry: byte (x << 4 | z), short y, VarInt type id, NBT (see mc.block_entity)
 --   light      : 4 bit sets (sky, block, empty sky, empty block; each VarInt byte count + little-endian bytes),
 --                list of sky arrays, list of block arrays (each: VarInt count, then VarInt 2048 + bytes)
 
@@ -73,6 +73,14 @@ create or replace function mc.light_wire(p_dim text, p_cx int, p_cz int) returns
       || proto.varint((select count(*)::int from l where block_kind = 'data'))
       || coalesce((select string_agg(proto.varint(octet_length(block)) || block, ''::bytea order by idx) from l where block_kind = 'data'), '\x') $$;
 
+-- Block entity list of the packet: VarInt count, then per entry packed x/z (one byte, x << 4 | z), y (short), block entity type id (VarInt), NBT.
+create or replace function mc.block_entities_wire(p_dim text, p_cx int, p_cz int) returns bytea language sql stable parallel safe as $$
+  select proto.varint(count(*)::int)
+      || coalesce(string_agg(proto.i8(((e.x & 15) << 4) | (e.z & 15)) || proto.i16(e.y) || proto.varint(r.protocol_id) || e.nbt, ''::bytea order by e.seq), '\x'::bytea)
+  from mc.block_entity e
+  join ref.registry r on r.registry = 'minecraft:block_entity_type' and r.name = e.type
+  where e.dimension = p_dim and e.cx = p_cx and e.cz = p_cz $$;
+
 -- The body of minecraft:level_chunk_with_light for a chunk whose derived data is current (see mc.ensure_chunk_current).  NULL when the chunk does not exist.
 create or replace function mc.chunk_packet_body(p_dim text, p_cx int, p_cz int) returns bytea language plpgsql stable as $$
 declare
@@ -91,7 +99,7 @@ begin
     return proto.i32(p_cx) || proto.i32(p_cz)
         || mc.heightmaps_wire(c, d.height)
         || proto.varint(octet_length(secs)) || secs
-        || proto.varint(0)
+        || mc.block_entities_wire(p_dim, p_cx, p_cz)
         || mc.light_wire(p_dim, p_cx, p_cz);
 end $$;
 
