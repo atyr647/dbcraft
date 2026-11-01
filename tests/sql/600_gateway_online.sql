@@ -8,6 +8,7 @@
 update net.setting set value = 'true' where key = 'online_mode';
 insert into net.server_key (id, public_der) values (1, '\x3081a0deadbeef'::bytea) on conflict (id) do update set public_der = excluded.public_der;
 update mc.server_property set value = 'false' where key = 'white-list';
+update mc.player set conn_id = null where conn_id is not null;     -- players other test files left online would make the server look full
 
 create or replace function t.login_start(p_conn bigint, p_name text) returns void language plpgsql as $$
 begin
@@ -120,6 +121,7 @@ select t.verdict(14, true, null, 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee', 'NotLis
 select t.eq('a verified player who is not whitelisted is refused with the whitelist message', t.take_hex(14),
             encode(proto.frame(net.pkt('login', 'clientbound', 'minecraft:login_disconnect'), proto.string(mc.disconnect_json('multiplayer.disconnect.not_whitelisted', null::text[], null::text[]))), 'hex'));
 update mc.server_property set value = 'false' where key = 'white-list';
+update mc.player set conn_id = null where conn_id is not null;     -- players other test files left online would make the server look full
 
 ------------------------------------------------------------------------------------------------ verdicts that must be ignored
 select t.reset_net();
