@@ -81,6 +81,19 @@ def cases2():
     ts, salt = struct.unpack(">qq", pc[i:i + 16])
     yield ("player_chat: Bob says hello world", f"mc.pkt_player_chat(0, '{BOB}'::uuid, 0, 'hello world', {ts}, {salt}, 0, mc.tc_player('{BOB}'::uuid, 'Bob'))", ("Op", "bob chats", "player_chat", 0))
 
+def cases3():
+    """set_time: the periodic form (game time, no clocks) and the one-clock form sent after /time set"""
+    import struct
+    ev = load("Op")
+    start = next(k for k, e in enumerate(ev) if e["name"] == "cmd list")
+    periodic = next(e for e in ev[start:] if e["name"] == "minecraft:set_time" and len(e["hex"]) // 2 == 11)
+    gt = struct.unpack(">q", body(periodic["hex"])[:8])[0]
+    yield ("set_time: periodic game time, empty clock list", f"mc.pkt_set_time({gt})", ("Op", "cmd list", "set_time", 0, "0a73"))
+    start = next(k for k, e in enumerate(ev) if e["name"] == "cmd time set day")
+    clocked = next(e for e in ev[start:] if e["name"] == "minecraft:set_time" and len(e["hex"]) // 2 > 11)
+    b = body(clocked["hex"]); gt = struct.unpack(">q", b[:8])[0]; n, o = varint(b, 8); cid, o = varint(b, o); ticks, o = varint(b, o)
+    yield ("set_time: one clock entry after /time set", f"mc.pkt_set_time({gt}, array[{cid}], array[{ticks}::bigint])", ("Op", "cmd time set day", "set_time", 0))
+
 def proto_varint_hex(n):
     out = bytearray()
     while True:
@@ -92,7 +105,7 @@ if __name__ == "__main__":
     if load("Op") is None:
         print("SKIP: no captures in", CAP, "(run tools/game_probe.py social against a vanilla server)"); sys.exit(0)
     fails = 0; n = 0
-    for label, expr, ref in list(cases()) + list(cases2()):
+    for label, expr, ref in list(cases()) + list(cases2()) + list(cases3()):
         if want not in label: continue
         n += 1
         try:
