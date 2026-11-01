@@ -1,8 +1,10 @@
--- Flat world generator: one block type per y layer, from mc.flat_layer (vanilla's default preset is bedrock, 2 x dirt, grass_block).
+-- Flat world generator (reference implementation; see sql/245_world_gen.sql for the fast path): one block type per y layer, from mc.flat_layer (vanilla's default preset is bedrock, 2 x dirt, grass_block).
 -- Sections that are entirely air are not stored (a missing section reads as air with the dimension's default biome).
 -- The palette is in order of first appearance from the bottom up, like vanilla's generator, so a generated chunk is byte-identical to the vanilla one.
 
-create or replace function mc.generate_flat(p_dim text, p_cx int, p_cz int, p_replace boolean default false) returns boolean language plpgsql volatile as $$
+-- The reference implementation: builds one chunk section by section and derives heightmaps and light the generic way.  Since sql/245 it is used to build
+-- the TEMPLATE chunk that mc.generate_flat_batch copies (and by the tests that prove the copy is identical); mc.generate_flat is the fast entry point.
+create or replace function mc.generate_flat_slow(p_dim text, p_cx int, p_cz int, p_replace boolean default false) returns boolean language plpgsql volatile as $$
 declare
     d         mc.dimension%rowtype;
     sy        int;
@@ -40,7 +42,3 @@ begin
     perform mc.ensure_chunk_current(p_dim, p_cx, p_cz);
     return true;
 end $$;
-
--- A rectangle of chunks (inclusive corners).  Returns how many were generated.
-create or replace function mc.generate_flat_area(p_dim text, cx1 int, cz1 int, cx2 int, cz2 int) returns int language sql volatile as $$
-  select count(*) filter (where mc.generate_flat(p_dim, x, z))::int from generate_series(least(cx1, cx2), greatest(cx1, cx2)) x, generate_series(least(cz1, cz2), greatest(cz1, cz2)) z $$;

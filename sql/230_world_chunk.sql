@@ -108,8 +108,8 @@ end $$;
 create or replace function mc.chunk_packet_id() returns int language sql stable parallel safe as $$
   select protocol_id from ref.packet where state = 'play' and direction = 'clientbound' and name = 'minecraft:level_chunk_with_light' $$;
 
--- Framed packet, rebuilt only when the chunk changed since the cached copy (compare mc.chunk.version).  NULL when the chunk does not exist.
-create or replace function mc.chunk_packet(p_dim text, p_cx int, p_cz int) returns bytea language plpgsql volatile as $$
+-- Framed packet built (and cached) the generic way: brings the derived data current, then encodes.  NULL when the chunk does not exist.
+create or replace function mc.chunk_packet_build(p_dim text, p_cx int, p_cz int) returns bytea language plpgsql volatile as $$
 declare
     v   bigint;
     pkt bytea;
@@ -123,4 +123,18 @@ begin
     insert into mc.chunk_cache (dimension, cx, cz, version, packet) values (p_dim, p_cx, p_cz, v, pkt)
     on conflict (dimension, cx, cz) do update set version = excluded.version, packet = excluded.packet;
     return pkt;
+end $$;
+
+-- Framed packet, rebuilt only when the chunk changed since the cached copy (compare mc.chunk.version).  NULL when the chunk does not exist.
+-- The common case (nothing changed, packet cached) is ONE index lookup with no row lock: the first version took a FOR UPDATE lock on the chunk row on every
+-- call (mc.ensure_chunk_current), which cost more than the rest of the read together.  Anything else falls through to mc.chunk_packet_build.
+-- PL/pgSQL on purpose: a LANGUAGE sql function that cannot be inlined is re-planned on every call (0.5 ms here), PL/pgSQL keeps its plans.
+create or replace function mc.chunk_packet(p_dim text, p_cx int, p_cz int) returns bytea language plpgsql volatile as $$
+declare pkt bytea;
+begin
+    select k.packet into pkt
+      from mc.chunk c join mc.chunk_cache k on k.dimension = c.dimension and k.cx = c.cx and k.cz = c.cz and k.version = c.version
+     where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz and not c.dirty and not c.hm_dirty and c.hm_world_surface is not null;
+    if found then return pkt; end if;
+    return mc.chunk_packet_build(p_dim, p_cx, p_cz);
 end $$;
