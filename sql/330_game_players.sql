@@ -106,7 +106,7 @@ begin
   update mc.player set conn_id = p_conn, entity_id = nextval('mc.entity_id_seq'), vis_dirty = true,
          chunk_x = floor(x / 16)::int, chunk_z = floor(z / 16)::int,
          sent_qx = mc.quant(x), sent_qy = mc.quant(y), sent_qz = mc.quant(z), sent_yaw = yaw, sent_pitch = pitch,
-         awaiting_teleport = null, keepalive_id = null, keepalive_sent_tick = null, inv_state = 1, chat_recv = 0
+         awaiting_teleport = null, keepalive_id = null, keepalive_sent_tick = null, inv_state = 1, chat_recv = 0, chat_sent = 0   -- chat_sent: the per-session message index restarts at 0 (vanilla, recorded by tests/e2e/join_probe.py)
    where uuid = p_uuid returning * into p;
   -- 1. everyone (including the joiner) gets the join message, then the joiner's tab list entry (vanilla's order)
   insert into mc.play_out (conn_id, data)
@@ -128,11 +128,12 @@ begin
   select * into p from mc.player where conn_id = p_conn;
   if not found then return; end if;
   if kick_key is not null then perform mc.kick(p_conn, kick_key); end if;
-  insert into mc.play_out (conn_id, data)
-    select v.viewer_conn, mc.pkt_remove_entities(array[p.entity_id]) from mc.visible v where v.target_eid = p.entity_id and v.viewer_conn <> p_conn;
+  -- order as the real server sends it (recorded by tests/e2e/join_probe.py): the leave message, then the entity removal, then the tab-list removal
   insert into mc.play_out (conn_id, data)
     select o.conn_id, mc.pkt_system_chat(proto.nbt_root(mc.tc_translate('multiplayer.player.left', array[mc.tc_player(p.uuid, p.name)], 'yellow')))
       from mc.player o where o.conn_id is not null and o.uuid <> p.uuid order by o.entity_id;
+  insert into mc.play_out (conn_id, data)
+    select v.viewer_conn, mc.pkt_remove_entities(array[p.entity_id]) from mc.visible v where v.target_eid = p.entity_id and v.viewer_conn <> p_conn;
   insert into mc.play_out (conn_id, data)
     select o.conn_id, mc.pkt_player_info_remove(array[p.uuid]) from mc.player o where o.conn_id is not null and o.uuid <> p.uuid order by o.entity_id;
   delete from mc.visible where viewer_eid = p.entity_id or target_eid = p.entity_id;
