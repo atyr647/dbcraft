@@ -3,6 +3,10 @@
 -- Needs the captures only for the datapack (skipped by the loaders' own notices if missing).
 \ir _net_helpers.sql
 \ir ../../sql/400_integration.sql
+-- sql/400 reinstalls the original hooks; put the login-path versions back on top of it (what a fresh migration ends with)
+\ir ../../sql/460_join_codec.sql
+\ir ../../sql/461_join_on_join.sql
+\ir ../../sql/462_join_config_burst.sql
 \! python3 tools/load_datapack.py "$(python3 tools/capture_to_tsv.py --path play_nocomp)"
 \! python3 tools/load_static_packets.py "$(python3 tools/capture_to_tsv.py --path play_nocomp)"
 \! python3 tools/load_world_ref.py

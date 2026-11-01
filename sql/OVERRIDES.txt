@@ -6,7 +6,7 @@ mc.deflate_zlib/1 | 441_deflate_native.sql | same dispatch; SQL version stays as
 mc.apply_block_actions/1 | 432_tick_perf_world.sql | tick-performance rewrite (arrays, no temp tables); byte-identical output proven in tests/sql/432
 mc.broadcast_block_events/0 | 432_tick_perf_world.sql | tick-performance rewrite
 mc.apply_player_moves/1 | 431_tick_perf_moves.sql | tick-performance rewrite
-mc.refresh_visibility/0 | 432_tick_perf_world.sql | tick-performance rewrite (original kept as mc.refresh_visibility_general for the comparison test)
+mc.refresh_visibility/0 | 465_join_visibility.sql | (432: tick-performance rewrite) 465: new pairs are recorded with ON CONFLICT DO NOTHING; the NOT EXISTS anti-join against the table being inserted into could become a quadratic nested loop (349 s for 500 joiners) when mc.visible was recorded as empty
 mc.entity_type_id/1 | 433_tick_perf_ids.sql | constant-folded reference ids (restart the gateway after reloading ref.*)
 mc.pid/1 | 433_tick_perf_ids.sql | constant-folded reference ids
 mc.sid/1 | 433_tick_perf_ids.sql | constant-folded reference ids
@@ -16,13 +16,25 @@ net.deflate_frame/2 | 440_deflate.sql | compression of frames at or above the th
 net.h_login/3 | 400_integration.sql | login checks (whitelist, bans, capacity) come from the game module
 net.hook_chunks/4 | 430_chunk_queue.sql | chunks are requested from the asynchronous generation queue
 net.hook_disconnect/1 | 400_integration.sql | wired to mc.on_leave
-net.hook_join_info/1 | 400_integration.sql | built from the real player row
+net.hook_join_info/1 | 461_join_on_join.sql | built from the real player row (400); 461: asks mc.on_join not to build the joiner's own rows and drops the unindexed DELETE that scanned the whole queue per join
 net.hook_on_join/1 | 400_integration.sql | wired to mc.on_join
 net.hook_player_loaded/1 | 400_integration.sql | wired to the game module
 net.play_begin/1 | 400_integration.sql | integration of the join burst with the game module
 net.stream_chunks/0 | 436_stream_chunks_merge.sql | the tick worker's array computation plus the chunk worker's request/delivery calls (found by merging)
 proto.f32_read/2 | 315_game_fast.sql | inlinable versions of the codec (identical results, 7x faster)
 proto.f64_read/2 | 315_game_fast.sql | inlinable versions of the codec
+proto.frame/2 | 315_game_fast.sql | inlinable versions of the codec
+proto.varint/1 | 315_game_fast.sql | inlinable versions of the codec
+proto.varint_read/4 | 460_join_codec.sql | PL/pgSQL decoder: the SQL one is re-planned on every call (158 us vs 3.4 us from PL/pgSQL); identical results and errors (tests/sql/460)
+proto.string_read/4 | 460_join_codec.sql | PL/pgSQL decoder, same reason (208 us per call before)
+net.send/3 | 460_join_codec.sql | both overloads as PL/pgSQL: the SQL INSERT was re-planned on every call (603 us vs 15 us)
+net.close/1 | 460_join_codec.sql | PL/pgSQL, same reason
+net.need/2 | 460_join_codec.sql | PL/pgSQL, same reason
+net.on_connect/2 | 460_join_codec.sql | PL/pgSQL, same reason
+mc.on_join/3 | 461_join_on_join.sql | wrapper over the new 4-argument mc.on_join (p_to_joiner = true): the original behaviour
+net.send_config_data/2 | 462_join_config_burst.sql | one cached, pre-framed row per (known packs, threshold, deflate implementation) instead of 33 rows built per joiner
+net.player_info_body/1 | 464_join_constants.sql | PL/pgSQL (plan cached) over the cached per-connection tab-entry head (net.conn_tab); same bytes, 7.4 us -> about 2 us per entry
+net.config_begin/1 | 464_join_constants.sql | the three packets that start the configuration phase as one cached framed row per (threshold, deflate implementation)
 proto.frame/2 | 480_inlining.sql | PL/pgSQL: callers pass computed bodies, so the SQL version was never inlined and re-planned its body in every statement (sql/315 is the inlinable first version)
 proto.varint/1 | 480_inlining.sql | PL/pgSQL for the same reason as proto.frame
 mc.section_blocks/2 | 291_section_compression.sql | reads the palette once per section (identical rows); keeps blocks_in fast when section rows are compressed (opt-in, docs/PERF-SCALE.md)
