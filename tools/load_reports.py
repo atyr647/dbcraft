@@ -57,6 +57,8 @@ copy("ref.packet", ["state", "direction", "name", "protocol_id"],
 # derived tables that are filled from ref.* by a function (present once the migration ran): refresh them now that the reference data exists
 run("do $$ begin if to_regproc('mc.refresh_block_class') is not null then perform mc.refresh_block_class(); end if; end $$")
 run("ANALYZE ref.block, ref.block_state, ref.registry, ref.packet")
+# the entity module derives mc.block_class from ref.block; on a fresh database the migration ran before this load, so fill it now (no-op without the entity module)
+run("do $$ begin if to_regprocedure('mc.block_class_refresh()') is not null then perform mc.block_class_refresh(); end if; end $$")
 print(f"loaded {len(brow)} blocks, {len(srow)} block states, "
       f"{sum(len(r['entries']) for r in reg.values())} registry entries, "
       f"{sum(len(ps) for dirs in pk.values() for ps in dirs.values())} packets from {report_dir}")

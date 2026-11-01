@@ -23,9 +23,15 @@ select count(*) as masks_built from (select mc.entity_build_mask('minecraft:over
   from generate_series(-50, 49) a(x), generate_series(-50, 49) b(z), generate_series(-4, -3) c(sy)
  where not exists (select 1 from mc.solid_mask m2 where m2.dimension = 'minecraft:overworld' and m2.cx = a.x and m2.cz = b.z and m2.sy = c.sy)) w;
 
+-- floor summaries of the lane steps (sql/541), built up front like the masks: a first-touch build costs about 1.7 ms per chunk and would otherwise land in the measured ticks
+select count(*) as floors_built from (select mc.entity_floor_build('minecraft:overworld', a.x, b.z)
+  from generate_series(-50, 49) a(x), generate_series(-50, 49) b(z)
+ where to_regclass('mc.entity_floor') is not null and not exists (select 1 from mc.entity_floor f where f.dimension = 'minecraft:overworld' and f.cx = a.x and f.cz = b.z and f.tops is not null)) w;
 truncate mc.play_out, mc.entity_cell_viewer, mc.entity_viewer_cell, mc.entity_tick_log;
 delete from mc.entity;
 delete from mc.player;
+create extension if not exists plpython3u;
+create or replace function public.cpu_ms() returns float8 language plpython3u as $f$ import resource; r = resource.getrusage(resource.RUSAGE_SELF); return (r.ru_utime + r.ru_stime) * 1000.0 $f$;
 select setseed(0.37);
 insert into mc.player (uuid, name, conn_id, entity_id, x, y, z, chunk_x, chunk_z, gamemode)
 select gen_random_uuid(), 'p' || i, i, nextval('mc.entity_id_seq'), x, -60, z, floor(x / 16)::int, floor(z / 16)::int, 0
@@ -43,14 +49,14 @@ from (
     union all
     select nextval('mc.entity_id_seq')::int, 'minecraft:item', (-:area + random() * 2 * :area), -50 + random() * 20, (-:area + random() * 2 * :area), false, 0, false, 0.0, 0.0, 0, 0::real from generate_series(1, :falling)
     union all
-    select nextval('mc.entity_id_seq')::int, case when random() < 0.875 then 'minecraft:cow' else 'minecraft:zombie' end, (-:area + random() * 2 * :area), -60.0, (-:area + random() * 2 * :area), true, 0, false,
+    select nextval('mc.entity_id_seq')::int, case when random() < 0.875 then 'minecraft:cow' else 'minecraft:zombie' end, (-:area + random() * 2 * :area), -60.0, (-:area + random() * 2 * :area), true, -floor(random() * 60)::int, false,
            0.0, 0.0, 1 + (random() * 60)::int, (random() * 360)::real from generate_series(1, :mobs)
 ) e;
-analyze mc.entity; analyze mc.player;
+vacuum analyze mc.entity; vacuum analyze mc.entity_lane; analyze mc.player;
 
-create temp table _t (tick int, ms_total float8, ms_ai float8, ms_phys float8, ms_trk float8, ms_pick float8, awake int, rows_out int, bytes_out bigint, wal bigint, ms_players float8);
+create temp table _t (cpu float8, tick int, ms_total float8, ms_ai float8, ms_phys float8, ms_trk float8, ms_pick float8, awake int, rows_out int, bytes_out bigint, wal bigint, ms_players float8);
 create function pg_temp.run(p_ticks int) returns void language plpgsql as $$
-declare t0 timestamptz; l0 pg_lsn; l1 pg_lsn; r record; tk bigint;
+declare c0 float8; c1 float8; t0 timestamptz; l0 pg_lsn; l1 pg_lsn; r record; tk bigint;
 begin
     for tk in 1..(p_ticks + 4) loop
         t0 := clock_timestamp();
@@ -58,11 +64,13 @@ begin
         update mc.player set chunk_x = floor(x / 16)::int, chunk_z = floor(z / 16)::int where chunk_x <> floor(x / 16)::int or chunk_z <> floor(z / 16)::int;
         truncate mc.play_out;
         l0 := pg_current_wal_lsn();
+        c0 := public.cpu_ms();
         perform mc.entity_tick(tk);
+        c1 := public.cpu_ms();
         l1 := pg_current_wal_lsn();
         select * into r from mc.entity_tick_log where tick = tk;
         if tk > 4 then
-            insert into _t select tk, r.ms_total, r.ms_ai, r.ms_physics, r.ms_tracker, r.ms_pickup, r.awake,
+            insert into _t select c1 - c0, tk, r.ms_total, r.ms_ai, r.ms_physics, r.ms_tracker, r.ms_pickup, r.awake,
                                   (select count(*) from mc.play_out), (select coalesce(sum(octet_length(data)), 0) from mc.play_out), (l1 - l0)::bigint,
                                   extract(epoch from clock_timestamp() - t0) * 1000 - r.ms_total;
         end if;
@@ -72,9 +80,9 @@ select pg_temp.run(:ticks);
 
 select 'entities: ' || (select count(*) from mc.entity) || ' (asleep ' || (select count(*) from mc.entity where deep_sleep) || '), players ' || (select count(*) from mc.player) as population;
 select phase, round(avg(v)::numeric, 2) as avg_ms, round((percentile_cont(0.5) within group (order by v))::numeric, 2) as p50, round((percentile_cont(0.99) within group (order by v))::numeric, 2) as p99, round(max(v)::numeric, 2) as max_ms
-from (select 'total entity tick' as phase, ms_total as v from _t union all select '  viewers+ai+spawn+despawn', ms_ai from _t union all select '  physics', ms_phys from _t
+from (select 'cpu: whole entity tick' as phase, cpu as v from _t union all select 'total entity tick' as phase, ms_total as v from _t union all select '  viewers+ai+spawn+despawn', ms_ai from _t union all select '  physics', ms_phys from _t
       union all select '  tracker (announce, movement, fan-out)', ms_trk from _t union all select '  pickup', ms_pick from _t) q
-group by phase order by case phase when 'total entity tick' then 0 when '  viewers+ai+spawn+despawn' then 1 when '  physics' then 2 when '  tracker (announce, movement, fan-out)' then 3 else 4 end;
+group by phase order by case phase when 'cpu: whole entity tick' then -1 when 'total entity tick' then 0 when '  viewers+ai+spawn+despawn' then 1 when '  physics' then 2 when '  tracker (announce, movement, fan-out)' then 3 else 4 end;
 select round(avg(awake)) as avg_entities_processed_per_tick, round(avg(rows_out)) as play_out_rows_per_tick, round(avg(bytes_out)) as play_out_bytes_per_tick,
        round(avg(wal)) as wal_bytes_per_tick, round(avg(ms_players)::numeric, 2) as ms_moving_the_players_not_counted from _t;
 select 'HOT updates of mc.entity: ' || n_tup_hot_upd || ' of ' || n_tup_upd || ' (' || round(100.0 * n_tup_hot_upd / greatest(n_tup_upd, 1)) || '%), dead tuples now ' || n_dead_tup as hot
