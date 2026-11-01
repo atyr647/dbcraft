@@ -10,7 +10,7 @@ SPECS=("$@")
 for r in $(seq 1 "$ROUNDS"); do
   for spec in "${SPECS[@]}"; do
     read -r LABEL PORT DB <<< "$spec"
-    WORKLOAD=tune DBCRAFT_PGPORT=$PORT DBCRAFT_BENCH_DB=$DB tests/bench/tick/run.sh 500 100 0.25 "$TICKS" "$LABEL" | head -1 | cut -c1-210
+    WORKLOAD=${WORKLOAD:-tune} DBCRAFT_PGPORT=$PORT DBCRAFT_BENCH_DB=$DB tests/bench/tick/run.sh 500 100 0.25 "$TICKS" "$LABEL" | head -1 | cut -c1-210
     PGHOST=/tmp PGPORT=$PORT PGUSER=postgres PGDATABASE=$DB psql -X -q -At -F ' ' -c "select '    slowest: tick ' || s.tick || ' wall ' || round(s.wall_ms::numeric, 1) || ' (process ' || round(l.ms_process::numeric, 1) || ' game ' || round(l.ms_game::numeric, 1) || ' chunks ' || round(l.ms_chunks::numeric, 1) || ' drain ' || round(l.ms_drain::numeric, 1) || ')' from tickbench.step s join mc.server_tick_log l using (tick) where s.tick > 20 order by s.wall_ms desc limit 3"
   done
 done

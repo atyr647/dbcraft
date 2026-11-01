@@ -1,8 +1,8 @@
 # Tick performance
 
 What was measured, what was changed in `mc.server_tick()`, what did not work, why parallel writers scaled so badly in the database comparison, and where the tick stands.
-All changes are SQL in `sql/430`-`sql/435`; every rewritten function is compared with the original on random states by `tests/sql/431_tick_perf_moves.sql` and
-`tests/sql/432_tick_perf_world.sql`, and the whole suite (788 checks: the earlier 724 plus 64 new) passes.  The e2e comparison with vanilla (`tests/e2e/run_all.sh`) was **not** run here.
+All changes are SQL in `sql/430`-`sql/437` (and in-place edits of `sql/220` and `sql/430_chunk_queue.sql`, see "Relation-file churn"); every rewritten function is compared with the original on random states by `tests/sql/431_tick_perf_moves.sql`,
+`tests/sql/432_tick_perf_world.sql` and `tests/sql/437_tick_churn.sql`, and the whole suite (1,207 checks at the last run, 64 + 115 of them these) passes.  The e2e comparison with vanilla (`tests/e2e/run_all.sh`) was **not** run here.
 
 ## Result
 
@@ -147,6 +147,89 @@ The database comparison found that four concurrent writers scaled between 0.5x a
 * The synthetic walk makes players dither across chunk borders: about 150 chunk frames (1.1 MB) per tick.  That is a worst case for the chunk and drain phases and a plausible one for a crowd that runs.
 * The e2e comparison with vanilla was not rerun; the byte-level guards are the replay tests (410, 420) and the new equivalence tests, all passing.
 
+## Relation-file churn (follow-up: what the tick still created and deleted per tick, and a slow tick found on the way)
+
+The tuning worker reported about 40 relation files created and deleted per tick and 17 `Storage CREATE` WAL records, and a RAM disk that made its 500-player trial 30% faster (docs/TUNING.md, cause 8).  The question was whether the tick can stop
+creating files at all.  **Counting first** (`tests/bench/tick/churn.sh`: `strace -f -y -e openat,unlink,unlinkat,ftruncate` on the backend that runs 100 ticks after 20 of warm-up, plus the `Storage` records of the WAL from `pg_waldump` and `pg_stat_io`),
+500 players over 100 x 100 chunks, the tuning trial's bots (25% moving, keep-alive and teleport answers; `WORKLOAD=tune`), per tick:
+
+| Code | files created | files unlinked | `ftruncate` (of temp tables) | WAL `Storage CREATE` | temp-relation extends |
+|---|---|---|---|---|---|
+| before the first tick work (`dbcraft_base`, the code the tuning trial ran) | **37.0** | 20.1 | 18.1 (14.1) | **17.0** | 38.9 |
+| main as merged into this branch (the first tick work already in) | 1.0 | 0.6 | 1.7 (1.7) | 0.45 | 0.9 |
+| after this change | **0.7** | 0.4 | **0** | 0.30 | **0** |
+
+So the tuning worker measured the code from before the first tick work: its 37 files and 17 records per tick are exactly what is in the first row, and **most of the churn was already gone** when that work was merged (the per-tick sets became arrays, so the temp tables went,
+and the queues are truncated once a second instead of every tick).  What was left, and what this change did about it:
+
+| Source (in the merged code) | Cost per tick | Change |
+|---|---|---|
+| `mc.deliver_ready_chunks`: temp table `_rdy ON COMMIT DELETE ROWS` (with its TOAST table), emptied at every commit that touched it | 1.7 `ftruncate`, plan invalidation | `sql/430_chunk_queue.sql`: five PL/pgSQL arrays |
+| `mc.broadcast_block_events`, on every tick with a block change or an acknowledgement: temp tables `_bchg`, `_bchunk`, `TRUNCATE` of `mc.pending_ack` and `mc.block_actor` | **about 10 files per tick** (with 3 block edits and 5 acknowledgements per tick: 10.9 files, 5.7 `ftruncate`, 4.45 `Storage CREATE`) | `sql/432`: arrays; the two small queues are consumed with `DELETE ... RETURNING` / `DELETE` (autovacuum keeps them clean) |
+| the once-a-second `TRUNCATE` of `mc.play_in_work`, `net.batch`, `mc.play_out` (6 relation files and their init forks: 12 files, every 20th tick) | 0.6 files per tick on average, all in one tick per second | skipped for a queue that was not written since its last truncate (its file has zero length): **an idle server creates no relation file at all** (tested).  **Kept otherwise**, see below |
+| `mc.ensure_chunk_current`: `SELECT ... FOR UPDATE` on the chunk row at every call (16% of the WAL in the tuning measurements) | one locked tuple in the WAL per call | `sql/220`: read without the lock; lock and re-read only when the chunk is dirty.  (`mc.chunk_packet` had already stopped calling it for current chunks, so the benchmark tick does not call it; `mc.generate_flat` and the chunk-build path do) |
+
+With block activity (`WORKLOAD=blocks`: the same bots, three block changes and five pending acknowledgements per tick, as if a few players were building): files created per tick 37.0 before the first tick work, **10.9** in the merged main, **0.9** now (no `ftruncate`, 0.30 `Storage CREATE`).
+What is left, 0.7-0.9 files per tick, is the once-a-second truncate of the three tick-owned queues and the free-space-map files that appear after it.
+
+**Alternatives measured for that last part, and why it stays.**
+
+* *DELETE instead of TRUNCATE, no cleanup* (the three queues only DELETEd): the 100-tick average of the standard benchmark went from 38.0 to 43.5 ms (4 interleaved runs each); the queues are scanned with their dead rows and the tick grows with the age of the table (the finding of `sql/435`, repeated: this is why they are truncated at all).
+  The once-a-second truncate burst costs in the order of 4 ms in the one tick of 20 that carries it (`tests/bench/tick/by_second.sh`, only 4 samples per position: noisy) and the truncates themselves about 0.6 ms on disk (the tuning worker's `truncate_cost.sh`: eight unlogged truncates and a commit 1.7 ms), so keeping it costs about 0.2-0.3 ms per tick on average.
+* *DELETE and let autovacuum clean the tick-owned queues*: this is the configuration of `sql/435` that produced `reltuples = 0` and one-row estimates (nested loops re-running a sort 500 times); not retried.  A VACUUM cannot run inside the tick.
+* *A rotating set of two or three queue tables*: the queues are written by name by 84 statements in 18 files (`insert into mc.play_out`), so rotating them means a view or dynamic SQL in every writer and a set of plans per table; and it removes no file creation (every table is truncated once per round), it only moves it.  Not built.
+* *Permanent UNLOGGED work tables with DELETE instead of temp tables*: a DELETEd table keeps its dead rows, a temp table is never vacuumed (a 278-row scratch table measured 450 pages), TRUNCATE makes files.  Arrays are the only option with no storage at all, and that is what the per-tick sets use.
+* *Session-persistent temp tables without ON COMMIT DELETE ROWS*: bloat without bound in a long session (nothing vacuums a temp table), and `ANALYZE` and DELETE of them still invalidate plans.
+
+**A slow tick that was not file churn: the keep-alive round.**  The tuning trial's bots answer the server's keep-alive 300 ticks after the last one, all within a tick or two (`WORKLOAD=tune`).  Tick 301 took **191-362 ms** in all seven runs (`process` phase 163-335 ms, CPU-bound, not I/O): the 500 answers go to the game *and* to
+`net.batch`, and `net.process_fast` handled each batch row with `net.handle` (a connection lookup, a packet-name lookup, a VarInt reader that is re-planned at every call, `net.h_play`: 0.3 ms per packet).  Now the answers that are well-formed and the only protocol-level packets of their live play connection
+are applied by one UPDATE (`keepalive_id`, `latency_ms`, `teleport_ok`: the only columns `net.h_play` touches for them, whatever the order) and removed from the batch; a connection with anything else in the batch, a short keep-alive, or a multi-byte teleport id
+keeps the ordered per-packet path.  The check is `exists (select 1 from net.batch)` after the main statement: free in a tick without protocol-level packets.  (A first version that classified the connections inside the main statement cost 0.8 ms in every tick and was dropped; a second, with a pre-check of the inbox, 0.4 ms.)
+Tick 301 is now below the third slowest tick of its run (41-51 ms; 38 ms in the one run where it shows), and the slowest tick of a 340-tick run went from 245-343 ms to 55-81 ms (below).  The `mc.sid()` suspicion in the tuning document (cause 7) is the same thing seen from the side: `mc.sid` is `IMMUTABLE` PL/pgSQL since `sql/433`
+and the planner folds it into the plan wherever it is called with a constant (every call on the tick's path is); the per-row calls were in `net.process()` (`sql/420`), which `mc.server_tick` no longer uses, and what cost the time was the per-packet handler.
+
+**Equivalence and tests** (`tests/sql/437_tick_churn.sql`, 115 checks, all passing; the whole suite is 1,207 checks plus the override and clean-migration checks, which also assert that the functions of the tick create no temp table).  The previous body of every rewritten function is kept in `sql/437_tick_churn.sql`
+(`mc.deliver_ready_chunks_general`, `mc.broadcast_block_events_general`, `net.process_fast_general`); random states are built, the queues snapshotted, the old function runs, the queues are restored, the new one runs, and the bytes in every connection's queue, the rows left in the queues, the connection rows and the
+return values are compared.  Chunk delivery: inline and async mode, caps 1, 3, 8 and 64, ties in the distance, gone, closing and not-yet-playing connections.  Block events: several edits of one position (some net zero), edits by the viewer, whole-section fills (a chunk re-send), acknowledgements only.
+The inbox: well-formed and malformed keep-alive answers, matching, wrong, multi-byte and missing teleport ids, moves, pongs, unknown packets, on connections in `play`, `configuration` and closing (connection rows and disconnect frames compared).  Mutations (a wrong tie-break, a missing `distinct`, `min` for `max`, an actor check without the connection, teleport confirmations dropped,
+the keep-alive never cleared, a connection taken in bulk when *any* instead of *all* of its packets are answers, a too short keep-alive accepted) are each caught.  One difference is deliberate: the chunk packets of several changed chunks that `mc.broadcast_block_events` sends to one connection used to follow the order of a `SELECT DISTINCT` (hash order: the planner's choice); they now follow the order the changes
+were recorded, and the test compares them as a set (everything else, including their position among the other frames, exactly).  `tests/sql/437` also checks that a housekeeping tick on an idle server replaces no queue file and that one after writes does, and that `mc.ensure_chunk_current` leaves a current chunk unlocked (the lock would stamp a new `xmax`).
+
+**Timings** (interleaved A/B: merged main `m0` against this change `m1`, `ab.sh` / `tune_ab.sh`; the machine was shared with the other workers, load average 3-8 during these runs, so the absolute numbers are 10-25% worse than the quiet-machine table at the top; medians of the runs.  The 20% and 2,000-player rows were measured with the previous variant of the keep-alive check, +0.4 ms in every tick; the final one costs nothing there):
+
+| Workload (500 players, 100 x 100 chunks, view distance 10 unless noted) | m0 average | m1 average | m0 p99 | m1 p99 | m0 slowest tick | m1 slowest tick |
+|---|---|---|---|---|---|---|
+| standard: all moving (8 runs of 100 ticks) | 48.9 ms | 48.0 | 99 | 90 | | |
+| standard: 20% moving (6 runs) | 17.6 | 16.6 | 35.0 | 38.4 | | |
+| standard: 2,000 players, view distance 5 (3 runs of 60 ticks) | 167.6 | 152.1 | 233 | 239 | | |
+| tuning bots, keep-alive round included (3 runs of 340 ticks) | 23.5 / 24.4 / 21.3 | 23.2 / 19.6 / 19.6 | 53.7 / 46.7 / 52.1 | 50.1 / 39.6 / 38.9 | **343 / 271 / 245 ms** | **81 / 58 / 55 ms** |
+| tuning bots + block edits and acknowledgements every tick (3 runs of 340 ticks, disk) | 27.9 / 26.3 / 24.4 | 22.8 / 22.4 / 19.5 | 60.5 / 72.0 / 52.6 | 42.6 / 52.9 / 43.6 | 313 / 143 / 149 ms | 56 / 62 / 55 ms |
+
+On the standard workloads (no block changes, no keep-alive round) the change is a wash within the noise, as it should be: they had no churn left to remove.  The gains are where the churn was: **a tick with block activity** (median average -15%, p99 -28%) and **the keep-alive round**
+(slowest tick 245-343 -> 55-81 ms: it is no longer the slowest tick of the run).
+
+**RAM disk, for reference** (the same databases copied to a cluster whose data directory is on tmpfs, port 54412, same settings, interleaved with the disk runs; `ab_ports.sh`, `tune_ab.sh`; average tick):
+
+| Code | workload | disk | RAM | difference |
+|---|---|---|---|---|
+| before the first tick work (`dbcraft_base`) | standard, all moving (4 runs) | 80.0 ms | 72.1 | -10% |
+| | tuning bots (3 runs) | 51.7 / 49.7 / 49.2 | 57.1 / 45.7 / 43.3 | median 49.7 -> 45.7 (-8%) |
+| merged main | standard, all moving (4 runs) | 40.5 | 39.9 | -1.5%, inside the noise |
+| merged main | tuning bots + blocks (3 runs) | 27.9 / 26.3 / 24.4 | 24.5 / 33.4 / 23.0 | no consistent difference |
+| this change | standard, all moving (4 runs) | 48.7 | 46.5 | -4.5%, inside the noise (43.6-49.9) |
+| this change | tuning bots (3 runs) | 23.9 / 24.4 / 20.8 | 30.6 / 26.1 / 20.5 | none |
+| this change | tuning bots + blocks (3 runs) | 22.8 / 22.4 / 19.5 | 21.3 / 23.5 / 20.5 | none |
+
+On this machine the file system costs the old code 8-10%, not the 30% the tuning worker measured on its trial (another volume and another load: that is not a contradiction), and after the change **there is no measurable difference between the disk and a RAM disk** at 500 players: the file system is no longer
+on the critical path of the tick, so a RAM disk needs no recommendation.  The objective measure is the `strace` count above: 37 -> 0.7 files per tick (0.9 with block activity, where it was 10.9).
+
+**What is not done.**
+
+* The fallback `mc.apply_player_moves_general` (taken when a connection sends two position packets between two `client_tick_end` or a malformed one, that is a player who violates the movement rules) still uses its two temp tables and an `ANALYZE`; it is kept verbatim as the reference for the equivalence tests.
+  A tick in which a player violates the rules therefore creates a few files and replans.  `net.process()` (used by tests), the `*_general` originals and the opt-in batched pipeline (`sql/38x`, another worker's) are untouched.
+* The remaining once-a-second truncate is documented above: 0.7 files per tick on average in ticks that have traffic.
+* The e2e comparison with vanilla (`tests/e2e`) was not run.
+
 ## What remains (in the order it would pay)
 
 1. **Fan-out of movement packets**: 9,700 deliveries per tick (500 movers x 19.5 viewers) cost about 9 ms (hash join, a 9,700-row sort, aggregate, insert) and building the 500 packets about 4 ms.  Viewers in the same chunk see the same targets: grouping them
@@ -168,8 +251,9 @@ The database comparison found that four concurrent writers scaled between 0.5x a
 | `sql/433_tick_perf_ids.sql` | `mc.pid` / `mc.sid` / `mc.entity_type_id` as plan-time constants |
 | `sql/434_tick_perf_shard.sql` | opt-in sharded movement prototype (not used by the server) |
 | `sql/435_tick_perf_queues.sql` | autovacuum settings of the queue tables |
-| `tests/sql/431_tick_perf_moves.sql`, `432_tick_perf_world.sql` | fast-versus-original equivalence tests (64 checks) |
-| `tests/bench/tick/` | `run.sh`, `ab.sh`, `explain.sh`, `cpu.sql` (on-CPU time per tick) |
+| `sql/437_tick_churn.sql` | the previous bodies of `mc.deliver_ready_chunks`, `mc.broadcast_block_events`, `net.process_fast` (as `*_general`) for the equivalence tests; the header lists what replaced what |
+| `tests/sql/431_tick_perf_moves.sql`, `432_tick_perf_world.sql`, `437_tick_churn.sql` | fast-versus-original equivalence tests (64 + 115 checks) |
+| `tests/bench/tick/` | `run.sh`, `ab.sh`, `explain.sh`, `cpu.sql` (on-CPU time per tick); `churn.sh` (relation files per tick: `strace` + WAL + `pg_stat_io`), `ab_ports.sh` (interleaved runs across clusters: disk against RAM disk), `tune_ab.sh` (the tuning bots, slowest ticks with their phases), `by_second.sh`, `blocks.sql` (block activity); `WORKLOAD=tune` or `blocks` in `run.sh` / `churn.sh` |
 | `tests/bench/tick/parallel/` | the pgbench scaling experiments and the sharded movement harness |
 
 Every function above replaces an earlier definition with `create or replace` (the later file wins in `tools/migrate.sh` order); the older definitions in `sql/330`, `340`, `360`, `410`, `420` are untouched.

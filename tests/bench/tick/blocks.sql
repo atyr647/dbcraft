@@ -6,8 +6,8 @@ declare i int;
 begin
   perform tune.gen(p_frac);
   for i in 1 .. 3 loop
-    perform mc.set_block('minecraft:overworld', (random() * 1500)::int, -61 + (random() * 3)::int, (random() * 1500)::int,
-                         (array['minecraft:stone', 'minecraft:air', 'minecraft:dirt'])[1 + (random() * 2.99)::int]);
+    perform mc.set_block('minecraft:overworld', (random() * 1500)::int, -61 + floor(random() * 3)::int, (random() * 1500)::int,
+                         (array['minecraft:stone', 'minecraft:air', 'minecraft:dirt'])[1 + floor(random() * 3)::int]);
   end loop;
   insert into mc.pending_ack (conn_id, sequence) select conn_id, (random() * 1000)::int from mc.player where conn_id is not null order by random() limit 5;
 end $$;
