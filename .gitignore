@@ -2,3 +2,6 @@ target/
 *.o
 *.ali
 build/
+# benchmark build outputs
+tests/bench/ada/bin/
+tests/bench/ada/obj*/
