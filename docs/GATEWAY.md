@@ -147,5 +147,13 @@ Not measured: the Rust gateway (never built), more than 300 simultaneous logins,
 3. Measure it: 500, 2,000 and 5,000 simulated clients, CPU per tick, memory per connection, tick overrun rate (the load generators of `tests/e2e` and `tests/gateway/online_load.py` are the start).
 4. The AES-NI path (`gateway/src/cipher.rs`, the `aes` crate) is written but, like the rest of `gateway/src`, never built; CFB8 *decryption* of inbound data can additionally be
    done several blocks at a time (the keystream depends only on ciphertext), and encryption of several connections can run in lockstep; both only if measurement says so.
-5. Statistics `rejected` (connections refused by a limit) is not counted yet.
-6. Secure chat (signatures), transfer packets, cookies and the real-client online path are out of scope here.
+5. **Keep three function copies in sync.**  `sql/601_online_login.sql` redefines `net.h_login` (a copy of the body in `sql/400_integration.sql` plus the online branch),
+   `mc.pie_add` (a copy of `sql/310`'s with `mc.profile_props`) and `net.conn_tab_sync` (a copy of `sql/464`'s with the properties).  They are listed in `sql/OVERRIDES.txt`; a
+   later edit of the original in its own file is silently overridden by 601 unless it is repeated there.  The clean fix is to move the online branch and the properties into the
+   original definitions once nobody else is editing them.
+6. Statistics `rejected` (connections refused by a limit) is not counted yet.
+7. **Gateway restarts.**  A process numbers its connections from 1, so it calls `net.gateway_start()` first: stale connections of the previous process are disconnected
+   through `net.on_disconnect` (the game saves and removes their players) and the queues that could carry bytes for old ids are emptied (tested in
+   `tests/sql/600_gateway_online.sql`; both gateways call it).  This assumes ONE gateway process per database; several processes behind one port would need their id ranges
+   and a per-process cleanup.
+8. Secure chat (signatures), transfer packets, cookies and the real-client online path are out of scope here.

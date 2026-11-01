@@ -41,6 +41,7 @@ except ValueError:
     priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 pub_der = priv.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
 plpy.execute(plpy.prepare("insert into net.server_key (id, public_der) values (1, $1) on conflict (id) do update set public_der = excluded.public_der, updated_at = now()", ["bytea"]), [pub_der])
+plpy.execute("select net.gateway_start()")          # stale connections of a previous process (their ids would be reused by this one)
 plpy.commit()
 
 MAX_FRAME = 2097151

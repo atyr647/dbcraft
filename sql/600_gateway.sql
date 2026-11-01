@@ -33,6 +33,27 @@ language sql stable as $$
     select c.conn_id, c.ctl_seq, c.state, c.compression, c.await_key, c.name, case when c.await_key then c.verify_token end
     from net.conn c where c.ctl_seq > p_after order by c.ctl_seq $$;
 
+------------------------------------------------------------------------------------------------ gateway start
+-- A gateway process numbers its connections from 1.  The rows of the previous process describe sockets that died with it, and anything still queued for those ids
+-- would be delivered to the NEW connections that reuse them.  So a gateway calls this once, first thing: every stale connection is disconnected through the normal path
+-- (net.on_disconnect: the game saves and removes the player, tells the others) and the queues that could still carry bytes for old ids are emptied.
+-- Returns the number of stale connections that were cleaned.
+create or replace function net.gateway_start() returns int language plpgsql as $$
+declare r record; n int := 0;
+begin
+    for r in select conn_id from net.conn order by conn_id loop
+        begin
+            perform net.on_disconnect(r.conn_id);
+        exception when others then
+            delete from net.conn where conn_id = r.conn_id;               -- a failing hook must not keep a dead row alive
+        end;
+        n := n + 1;
+    end loop;
+    delete from net.inbox; delete from net.batch; delete from net.play_inbox; delete from net.outbox; delete from net.auth_result;
+    if to_regclass('mc.play_out') is not null then execute 'delete from mc.play_out'; end if;     -- the game's queue (sql/360) feeds net.outbox at the end of the tick
+    return n;
+end $$;
+
 ------------------------------------------------------------------------------------------------ online mode: keys and verdicts
 -- The gateway publishes its RSA public key (X.509 SubjectPublicKeyInfo DER, 1024 bit like vanilla) once at start.
 create table if not exists net.server_key (id int primary key check (id = 1), public_der bytea not null, updated_at timestamptz not null default now());

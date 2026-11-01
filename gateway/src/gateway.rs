@@ -54,6 +54,11 @@ pub async fn run(cfg: Config) -> Result<(), BoxErr> {
     // the key pair: generated now, the public half published for the database to put into encryption requests
     let key = ServerKey::generate(cfg.rsa_bits)?;
     client.execute("insert into net.server_key (id, public_der) values (1, $1) on conflict (id) do update set public_der = excluded.public_der, updated_at = now()", &[&key.public_der]).await?;
+    // stale connections of a previous process: their ids would be reused by this one (one gateway process per database for now)
+    let stale: i32 = client.query_one("select net.gateway_start()", &[]).await?.get(0);
+    if stale > 0 {
+        log::warn!("cleaned {stale} stale connection(s) of a previous gateway");
+    }
     let key_pkt_id: i32 = client.query_one("select net.pkt('login', 'serverbound', 'minecraft:key')", &[]).await?.get(0);
     let session = SessionClient::new(&cfg.session_url, cfg.session_timeout_ms, cfg.session_concurrency, cfg.session_retries)?;
     let ctx = Arc::new(Ctx { cfg: cfg.clone(), key, key_pkt_id: key_pkt_id as u32, session, limits: Mutex::new(Limits::new()) });

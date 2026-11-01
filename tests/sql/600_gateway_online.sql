@@ -165,3 +165,13 @@ select max(ctl_seq) as m2 from net.conn \gset
 update net.conn set compression = 256 where conn_id = 41;
 select t.eq('a threshold change does', (select array_agg(conn_id) from net.gateway_ctl(:m2)), array[41::bigint]);
 select t.is_true('the verify token is only revealed while a key is awaited', (select verify_token is null from net.gateway_ctl(0) where conn_id = 41));
+
+------------------------------------------------------------------------------------------------ gateway start
+select t.reset_net();
+select t.player(50, 'Old1'); select t.player(51, 'Old2');
+insert into net.outbox (conn_id, data) values (50, '\x01'), (51, '\x02');
+insert into net.inbox (conn_id, payload) values (50, '\x00');
+select t.eq('gateway_start cleans every stale connection', net.gateway_start(), 2);
+select t.is_true('...its rows and the queues that could carry bytes for the old ids are empty',
+                 (select count(*) from net.conn) = 0 and (select count(*) from net.outbox) = 0 and (select count(*) from net.inbox) = 0);
+select t.eq('...and it is a no-op on a clean database', net.gateway_start(), 0);
