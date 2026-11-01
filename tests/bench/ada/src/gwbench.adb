@@ -34,6 +34,9 @@ procedure Gwbench is
    type Octets_Access is access Octets;
    type SE_Access is access Stream_Element_Array;
    procedure Free is new Ada.Unchecked_Deallocation (Octets, Octets_Access);
+   procedure Free_SE is new Ada.Unchecked_Deallocation (Stream_Element_Array, SE_Access);
+   type Int_Array is array (Positive range <>) of Integer_32;
+   type Int_Access is access Int_Array;
 
    Data_Dir : constant String := Ada.Command_Line.Argument (1);
    Reps : constant Positive :=
@@ -61,15 +64,16 @@ procedure Gwbench is
       N    : constant Natural := File_Size (Path);
       R    : constant Octets_Access := new Octets (1 .. N);
       F    : Ada.Streams.Stream_IO.File_Type;
-      Tmp  : Stream_Element_Array (1 .. Stream_Element_Offset (N));
+      Tmp  : SE_Access := new Stream_Element_Array (1 .. Stream_Element_Offset (N));
       Last : Stream_Element_Offset;
    begin
       Ada.Streams.Stream_IO.Open (F, Ada.Streams.Stream_IO.In_File, Path);
-      Ada.Streams.Stream_IO.Read (F, Tmp, Last);
+      Ada.Streams.Stream_IO.Read (F, Tmp.all, Last);
       Ada.Streams.Stream_IO.Close (F);
       for I in 1 .. N loop
          R (I) := Octet (Tmp (Stream_Element_Offset (I)));
       end loop;
+      Free_SE (Tmp);
       return R;
    end Read_Octets;
 
@@ -141,7 +145,7 @@ procedure Gwbench is
    Chunk      : Octets_Access;
    Aes_Expect : Octets_Access;
    Frames_Out : Octets_Access;
-   Vals       : array (1 .. 1_000_000) of Integer_32;
+   Vals       : constant Int_Access := new Int_Array (1 .. 1_000_000);
 
    --  sinks keep the optimiser from dropping the work
    S_Count, S_Sum  : Unsigned_64 := 0;
@@ -589,7 +593,7 @@ procedure Gwbench is
    function T_Z_Decompress is new Gw_Timing (Z_Decompress);
 
    Best : Duration;
-   Limit_Reps : constant Positive := Positive'Min (Reps, 3);
+   Limit_Reps : constant Positive := Positive'Min (Reps, 2);
 
    --  rough per-iteration calibration so the as-is encoder rows (which may be very slow) finish in about a second
    function Calibrated (Total : Natural; Probe : Natural; Probe_Time : Duration) return Natural is

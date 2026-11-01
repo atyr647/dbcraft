@@ -1,6 +1,9 @@
 /* tclsh with the dbcnative commands built in and, optionally (-DMODULE=name), a tcl-aot generated module registered as a static package. */
 #include <tcl.h>
 extern int Dbcnative_Init(Tcl_Interp *);
+extern void EpollNotifier_Install(void);
+#include <stdlib.h>
+#include <string.h>
 #ifdef MODULE
 #define CAT2(a, b) a##b
 #define CAT(a, b) CAT2(a, b)
@@ -16,4 +19,8 @@ static int AppInit(Tcl_Interp *interp) {
 #endif
     return TCL_OK;
 }
-int main(int argc, char **argv) { Tcl_Main(argc, argv, AppInit); return 0; }
+int main(int argc, char **argv) {
+    const char *n = getenv("DBC_NOTIFIER");
+    if (n && !strcmp(n, "epoll")) EpollNotifier_Install();   /* default: Tcl's own select() notifier */
+    Tcl_Main(argc, argv, AppInit); return 0;
+}

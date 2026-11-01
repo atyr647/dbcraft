@@ -1,8 +1,8 @@
 # BEAM socket server: one process per connection ({active, N}), frame counting, 50 ms tick-lateness probe, GC/schedule monitors.
-#   env: PORT NCONN DUR MODE=closed|open|pg  HOLD_MB (live refc binaries in one process)  PERCONN_KB (live buffer per connection)
+#   env: PORT NCONN DUR GW_MODE=closed|open|pg  (not MODE: the elixir launcher script overwrites it)  TICK_PRIO=high (tick process priority)  HOLD_MB (live refc binaries in one process)  PERCONN_KB (live buffer per connection)
 #        PG_PORT (default 54388) for MODE=pg
 #   elixir --erl "+S 4:4 +Q 65536" sock_server.exs
-mode = System.get_env("MODE") || "closed"
+mode = System.get_env("GW_MODE") || "closed"
 if mode == "pg", do: Mix.install([{:postgrex, "~> 0.17"}])
 
 defmodule Srv do
@@ -88,43 +88,54 @@ defmodule Srv do
   end
   defp parse_collect(<<>>, n, acc), do: {<<>>, n, :lists.reverse(acc)}
 
-  # ---- 50 ms tick probe: records (timestamp, interval - 50 ms) ----
+  # ---- 50 ms tick probe on an absolute grid: records (timestamp, lateness_us = actual - scheduled) ----
   def ticker do
-    :erlang.send_after(50, self(), :tick)
-    ticker_loop(mono(), [])
+    if System.get_env("TICK_PRIO") == "high", do: Process.flag(:priority, :high)
+    next = mono() + 50_000
+    arm(next)
+    ticker_loop(next, [])
   end
-  defp ticker_loop(prev, acc) do
+  defp arm(next), do: :erlang.send_after(max(0, div(next - mono() + 999, 1000)), self(), :tick)
+  defp ticker_loop(next, acc) do
     receive do
       :tick ->
         now = mono()
-        :erlang.send_after(50, self(), :tick)
-        ticker_loop(now, [{now, now - prev - 50_000} | acc])
-      {:get, from} -> send(from, {:ticks, acc}); ticker_loop(prev, acc)
+        nxt = next + 50_000
+        arm(nxt)
+        ticker_loop(nxt, [{now, now - next} | acc])
+      {:get, from} -> send(from, {:ticks, acc}); ticker_loop(next, acc)
     end
   end
 
-  # ---- holder of live binaries (GC pressure from a big live set) ----
-  def holder(mb) do
-    bins = for _ <- 1..(mb * 16), do: :binary.copy(<<0>>, 65_536)   # 64 KiB refc binaries, mb*16 of them
-    holder_loop(bins)
+  # ---- holder of ~mb MiB of live data in ONE process, full-sweep GC every 200 ms ----
+  #   kind "bins": 64 KiB refc binaries (off-heap); kind "heap": a list on the process heap (16 B per element), so each GC copies it all
+  def holder(mb, kind) do
+    data = if kind == "heap", do: :lists.seq(1, mb * 65_536), else: for(_ <- 1..(mb * 16), do: :binary.copy(<<0>>, 65_536))
+    holder_loop(data)
   end
-  defp holder_loop(bins) do
-    _garbage = for i <- 1..2000, do: {i, Integer.to_string(i)}
+  defp holder_loop(data) do
+    t = mono()
     :erlang.garbage_collect()
-    receive do after 200 -> holder_loop(bins) end
+    gc_us = mono() - t
+    if gc_us > 20_000, do: IO.puts("HOLDER full-sweep gc took #{div(gc_us, 1000)} ms")
+    receive do after 200 -> holder_loop(data) end
   end
 
   # ---- Postgres batching collector (MODE=pg): every 50 ms one binary COPY of everything received ----
   def collector(pg) do
-    :erlang.send_after(50, self(), :flush)
-    collector_loop(pg, [], 0, mono(), [])
+    if System.get_env("TICK_PRIO") == "high", do: Process.flag(:priority, :high)
+    next = mono() + 50_000
+    arm_flush(next)
+    collector_loop(pg, [], 0, next, [])
   end
-  defp collector_loop(pg, acc, tick, prev, stats) do
+  defp arm_flush(next), do: :erlang.send_after(max(0, div(next - mono() + 999, 1000)), self(), :flush)
+  defp collector_loop(pg, acc, tick, next, stats) do
     receive do
-      {:frames, id, bodies} -> collector_loop(pg, [{id, bodies} | acc], tick, prev, stats)
+      {:frames, id, bodies} -> collector_loop(pg, [{id, bodies} | acc], tick, next, stats)
       :flush ->
         t0 = mono()
-        :erlang.send_after(50, self(), :flush)
+        nxt = next + 50_000
+        arm_flush(nxt)
         rows =
           for {id, bodies} <- :lists.reverse(acc), b <- bodies do
             <<3::16, 8::32, tick::64, 4::32, id::32, byte_size(b)::32, b::binary>>
@@ -138,8 +149,8 @@ defmodule Srv do
         t2 = mono()
         Postgrex.query!(pg, "with c as (delete from net.inbox returning 1) select count(*) from c", [])  # stand-in for net.tick consuming the rows
         t3 = mono()
-        collector_loop(pg, [], tick + 1, t0, [{length(rows), t1 - t0, t2 - t1, t3 - t2, t3 - t0, t0 - prev - 50_000} | stats])
-      {:get, from} -> send(from, {:stats, stats}); collector_loop(pg, acc, tick, prev, stats)
+        collector_loop(pg, [], tick + 1, nxt, [{length(rows), t1 - t0, t2 - t1, t3 - t2, t3 - t0, t0 - next} | stats])
+      {:get, from} -> send(from, {:stats, stats}); collector_loop(pg, acc, tick, next, stats)
     end
   end
 
@@ -173,8 +184,8 @@ collector =
   end
 ticker = spawn_link(&Srv.ticker/0)
 if hold_mb > 0 do
-  spawn_link(fn -> Srv.holder(hold_mb) end)
-  Process.sleep(2000)
+  spawn_link(fn -> Srv.holder(hold_mb, System.get_env("HOLD_KIND") || "bins") end)
+  Process.sleep(6000)
 end
 mem0 = :erlang.memory(:total); rss0 = Srv.rss_kb()
 l = Srv.listen(port)
@@ -200,7 +211,7 @@ sorted = Enum.sort(late)
 {ngc, maxgc, nls, maxls} = Srv.drain_monitor()
 IO.puts("SOCKET mode=#{mode} conns=#{up} seconds=#{Float.round(secs, 2)} frames=#{f1 - f0} frames_per_s=#{round((f1 - f0) / secs)}")
 IO.puts("MEMORY per_conn_beam_bytes=#{div(mem1 - mem0, max(up, 1))} per_conn_rss_bytes=#{div((rss1 - rss0) * 1024, max(up, 1))} sampled_process_avg_bytes=#{div(Enum.sum(pmem), max(length(pmem), 1))} rss_mb=#{div(rss1, 1024)} beam_total_mb=#{div(mem1, 1_048_576)}")
-IO.puts("TICK50 n=#{length(late)} late_p50_us=#{Srv.pct(sorted, 0.5)} late_p99_us=#{Srv.pct(sorted, 0.99)} late_max_us=#{List.last(sorted)} (interval minus 50 ms)")
+IO.puts("TICK50 n=#{length(late)} late_p50_us=#{Srv.pct(sorted, 0.5)} late_p99_us=#{Srv.pct(sorted, 0.99)} late_max_us=#{List.last(sorted)} (actual minus scheduled time on a 50 ms grid)")
 IO.puts("MONITOR long_gc(>5ms) count=#{ngc} max_ms=#{maxgc} long_schedule(>5ms) count=#{nls} max_ms=#{maxls}")
 if collector do
   send(collector, {:get, self()})

@@ -1,0 +1,5 @@
+obj_*/
+bin/
+out/
+*.o
+*.ali
