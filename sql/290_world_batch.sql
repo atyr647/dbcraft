@@ -151,7 +151,7 @@ begin
     -- all events of the batch, in order
     if evn > 0 then
         insert into mc.block_event (dimension, x, y, z, old_state, new_state)
-        select p_dim, e.x, e.y, e.z, e.o, e.n from unnest(ev_x, ev_y, ev_z, ev_old, ev_new) with ordinality e(x, y, z, o, n, ord) order by e.ord;
+        select p_dim, e.x, e.y, e.z, e.o, e.n from unnest(ev_x, ev_y, ev_z, ev_old, ev_new) e(x, y, z, o, n);      -- unnest of several arrays yields them in order: the ids follow it
     end if;
     return total;
 end $$;

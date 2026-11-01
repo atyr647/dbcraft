@@ -180,3 +180,11 @@ tests/sql/run.sh world            # runs 200_*, 210_*, 240_*, 250_* (set DBCRAFT
 
 The oracle tests skip with a clear notice when a capture is missing; the rest of the suite does not need them.  Tools: `tools/load_world_ref.py` (biomes and dimension
 types), `tools/import_chunk_capture.py` and `tools/extract_chunk_fixture.py` (feed captured chunks to the tests), `tools/_capture.py` (shared parsing).
+
+## Chunk rebuild and batched edits (details and numbers: PERF-EDIT.md)
+
+* `mc.chunk.light_ws` / `light_top` are a **cache key**: the inputs (WORLD_SURFACE heightmap, highest non-empty section) the stored `mc.chunk_light` rows were computed from.  `mc.compute_light` does nothing when they still match
+  (and the row count is right); NULL means "recompute".  Anything that writes light rows directly (the template copy in sql/245 copies the template's key) must set or null it.
+* `mc.set_blocks` processes sections in key order through `mc.edit_section_core` with per-chunk bookkeeping and one event insert; `mc.edit_section` (one section) is a wrapper around the same core.
+  A section stores exactly `ceil(4096 / (64 / bits)) * 8` bytes of packed data (the first versions stored twice that when a few edits created a palette section; see PERF-EDIT.md for the repair statement).
+* The world code looks block states up by name through a hash index on `ref.block_state(name)`.
