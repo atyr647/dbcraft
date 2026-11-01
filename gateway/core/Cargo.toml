@@ -1,0 +1,12 @@
+[package]
+name = "dbcraft-gateway-core"
+version = "0.1.0"
+edition = "2021"
+description = "The gateway's verified core: frame splitting, inflate, AES-128-CFB8, SHA-1 and Minecraft's server hash. Standard library only."
+license = "MIT"
+
+[lib]
+name = "dbcraft_gateway_core"
+path = "src/lib.rs"
+
+[dependencies]
