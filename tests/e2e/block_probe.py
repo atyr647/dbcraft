@@ -38,6 +38,8 @@ for c in (actor, observer):
 ax, ay, az = actor.pos
 bx, by, bz = int(ax // 1) + a.off, int(ay // 1) - 1, int(az // 1)
 print(f"actor at {actor.pos}; block under it {bx},{by},{bz}")
+import json
+json.dump({"actor_pos": actor.pos, "observer_pos": observer.pos, "base": [bx, by, bz]}, open(a.out + "_meta.json", "w"))
 
 steps = []
 def step(label, fn):

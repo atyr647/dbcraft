@@ -23,6 +23,8 @@ os.makedirs(os.path.dirname(a.out), exist_ok=True)
 c = m.Client(a.host, a.port, a.name)
 c.settle(1.0, 15.0)
 x, y, z = c.pos
+import json
+json.dump({"start": c.pos}, open(a.out + "_meta.json", "w"))
 print(f"start {c.pos}, chunk {int(x // 16)},{int(z // 16)}; chunk packets so far: {len(c.since(0, {'minecraft:level_chunk_with_light'}))}")
 
 KINDS = {"minecraft:set_chunk_cache_center", "minecraft:chunk_batch_start", "minecraft:chunk_batch_finished", "minecraft:forget_level_chunk", "minecraft:level_chunk_with_light"}

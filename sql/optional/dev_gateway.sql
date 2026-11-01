@@ -1,0 +1,176 @@
+-- Development gateway, as database code: a stored procedure (untrusted PL/Python) that runs the socket loop INSIDE a Postgres backend and feeds the real tables.
+-- Not applied by default; `tools/migrate.sh --dev-gateway` applies it.  It needs `create extension plpython3u` (superuser) and, to hold more than ~1,000
+-- connections, a backend open-file limit above the default 1024 (tools/pg-dev.sh raises it; use LimitNOFILE in a service file).
+--
+--   call net.run(25565);                      -- listens on port 25565 and ticks 20 times a second until stopped
+--   update net.gateway_control set stop = true;      -- stops it after the current tick (or select pg_terminate_backend(pid))
+--
+-- What it does, per 50 ms tick (drift-free: the next tick is scheduled from the start time, not from the end of the previous one):
+--   accept new sockets                       -> select net.on_connect(conn_id, ip)
+--   read bytes, split frames (VarInt length)  -> one INSERT into net.inbox for the whole tick; inbound compressed frames are inflated here (zlib)
+--   sockets that closed                      -> select net.on_disconnect(conn_id)
+--   select mc.server_tick()                   the whole game, in SQL
+--   select * from net.drain_outbox()          -> append to each connection's write buffer; flush when writable; close when asked
+--   commit
+--
+-- What it deliberately does NOT do: no encryption and no Mojang session check (online mode is the production gateway's job; this procedure refuses to
+-- start while the `online-mode` property is true) and no deflate (SQL has no deflate, so outbound packets are never compressed: it refuses to start while
+-- `network-compression-threshold` is not -1).  Run `select mc.configure_dev_server();` first, it sets both.
+-- Not done: idle-socket timeouts (a silent connection stays until the client or the game's keep-alive timeout closes it) and a limit on write-buffer size.
+-- Crash domain: a Python exception stops the procedure (the backend survives); a segfault in a C library would restart Postgres.
+
+create extension if not exists plpython3u;
+
+create table if not exists net.gateway_control (id int primary key default 1 check (id = 1), stop boolean not null default false, ticks bigint not null default 0,
+                                                 last_tick_ms float8, max_tick_ms float8, late_ticks bigint not null default 0, connections int not null default 0);
+insert into net.gateway_control default values on conflict do nothing;
+
+create or replace procedure net.run(p_port int default 25565, p_max_ticks bigint default null, p_tick_ms int default 50, p_bind text default '0.0.0.0')
+language plpython3u as $$
+import socket, selectors, time, zlib
+
+if plpy.execute("select mc.prop('online-mode') as v")[0]["v"] == "true":
+    plpy.error("net.run is an offline-mode development gateway; set online-mode=false (select mc.configure_dev_server())")
+if plpy.execute("select mc.prop('network-compression-threshold') as v")[0]["v"] != "-1":
+    plpy.error("net.run cannot compress outbound packets (no deflate in SQL); set network-compression-threshold=-1 (select mc.configure_dev_server())")
+
+MAX_FRAME = 2097151
+tick_s = p_tick_ms / 1000.0
+sel = selectors.DefaultSelector()
+ls = socket.socket(); ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+ls.bind((p_bind, p_port)); ls.listen(4096); ls.setblocking(False)
+sel.register(ls, selectors.EVENT_READ, None)
+
+conns = {}          # id -> dict(sock, ip, inb, outb, thr, closing, last_rx)
+next_id = 1
+
+prep_connect = plpy.prepare("select net.on_connect($1, $2::inet)", ["bigint", "text"])
+prep_disc    = plpy.prepare("select net.on_disconnect($1)", ["bigint"])
+prep_inbox   = plpy.prepare("insert into net.inbox (conn_id, payload) select c, p from unnest($1::bigint[], $2::bytea[]) as u(c, p)", ["bigint[]", "bytea[]"])
+prep_tick    = plpy.prepare("select mc.server_tick() as t", [])
+prep_drain   = plpy.prepare("select conn_id, data, close from net.drain_outbox()", [])
+prep_comp    = plpy.prepare("select conn_id, compression from net.conn where compression >= 0", [])
+prep_ctl     = plpy.prepare("update net.gateway_control set ticks = ticks + 1, last_tick_ms = $1, max_tick_ms = greatest(coalesce(max_tick_ms, 0), $1), late_ticks = late_ticks + $2, connections = $3 returning stop", ["float8", "int", "int"])
+
+def varint_at(b, o):
+    """(value, next offset) or None when the buffer ends inside the VarInt; raises ValueError when it is longer than 5 bytes"""
+    v = shift = 0
+    for i in range(5):
+        if o + i >= len(b): return None
+        c = b[o + i]; v |= (c & 0x7F) << shift
+        if not c & 0x80: return v, o + i + 1
+        shift += 7
+    raise ValueError("VarInt too long")
+
+def drop(cid, notify=True):
+    c = conns.pop(cid, None)
+    if c is None: return
+    try: sel.unregister(c["sock"])
+    except Exception: pass
+    try: c["sock"].close()
+    except Exception: pass
+    if notify: dropped.append(cid)
+
+def update_events(cid):
+    c = conns.get(cid)
+    if c is None: return
+    ev = selectors.EVENT_READ | (selectors.EVENT_WRITE if c["outb"] else 0)
+    try: sel.modify(c["sock"], ev, cid)
+    except Exception: pass
+
+def flush(cid):
+    c = conns.get(cid)
+    if c is None or not c["outb"]: return
+    try:
+        n = c["sock"].send(c["outb"]); del c["outb"][:n]
+    except (BlockingIOError, InterruptedError): pass
+    except OSError: drop(cid); return
+    if not c["outb"] and c["closing"]: drop(cid, notify=False); return
+    update_events(cid)
+
+t0 = time.perf_counter(); tick = 0
+dropped = []
+while True:
+    tick += 1
+    deadline = t0 + tick * tick_s
+    now = time.perf_counter()
+    late = 0
+    if now > deadline + 5 * tick_s:          # far behind (a long pause): do not try to catch up with a burst of ticks
+        t0 = now - tick * tick_s; deadline = now
+    elif now > deadline:
+        late = 1
+    ids, payloads, accepted = [], [], []
+    dropped = []
+    # ---- I/O until the tick is due
+    while True:
+        left = deadline - time.perf_counter()
+        if left <= 0: break
+        for key, mask in sel.select(timeout=left):
+            if key.data is None:
+                try:
+                    while True:
+                        s, addr = ls.accept(); s.setblocking(False); s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                        cid = next_id; next_id += 1
+                        conns[cid] = {"sock": s, "ip": addr[0], "inb": bytearray(), "outb": bytearray(), "thr": -1, "closing": False, "last_rx": time.time()}
+                        sel.register(s, selectors.EVENT_READ, cid); accepted.append(cid)
+                except BlockingIOError: pass
+                continue
+            cid = key.data; c = conns.get(cid)
+            if c is None: continue
+            if mask & selectors.EVENT_WRITE: flush(cid)
+            if not (mask & selectors.EVENT_READ) or cid not in conns: continue
+            try: data = c["sock"].recv(65536)
+            except (BlockingIOError, InterruptedError): continue
+            except OSError: data = b""
+            if not data: drop(cid); continue
+            c["last_rx"] = time.time()
+            b = c["inb"]; b += data; pos = 0
+            try:
+                while True:
+                    r = varint_at(b, pos)
+                    if r is None: break
+                    ln, p = r
+                    if ln == 0 or ln > MAX_FRAME: raise ValueError("bad frame length %d" % ln)
+                    if p + ln > len(b): break
+                    body = bytes(b[p:p + ln]); pos = p + ln
+                    if c["thr"] >= 0:                     # compression on: [data length][zlib data or the raw packet]
+                        dl, q = varint_at(body, 0)
+                        if dl == 0: body = body[q:]
+                        else:
+                            if dl > 8388608: raise ValueError("inflated size too large")
+                            body = zlib.decompress(body[q:])
+                            if len(body) != dl: raise ValueError("inflated size mismatch")
+                    ids.append(cid); payloads.append(body)
+            except Exception as e:
+                plpy.notice("net.run: closing connection %s: %s" % (cid, e)); drop(cid); continue
+            del b[:pos]
+    # ---- database work for this tick
+    t_start = time.perf_counter()
+    try:
+        for cid in accepted:
+            if cid in conns: plpy.execute(prep_connect, [cid, conns[cid]["ip"]])
+        for cid in dropped: plpy.execute(prep_disc, [cid])
+        dropped = []
+        if ids: plpy.execute(prep_inbox, [ids, payloads])
+        plpy.execute(prep_tick, [])
+        for row in plpy.execute(prep_drain, []):
+            c = conns.get(row["conn_id"])
+            if c is None: continue
+            if row["data"]: c["outb"] += row["data"]
+            if row["close"]: c["closing"] = True
+        for row in plpy.execute(prep_comp, []):
+            c = conns.get(row["conn_id"])
+            if c is not None: c["thr"] = row["compression"]
+        ms = (time.perf_counter() - t_start) * 1000.0
+        stop = plpy.execute(prep_ctl, [ms, late, len(conns)])[0]["stop"]
+        plpy.commit()
+    except plpy.SPIError as e:
+        plpy.rollback()
+        plpy.notice("net.run: tick %d failed and was rolled back: %s" % (tick, e))
+        stop = False
+    for cid in list(conns.keys()): flush(cid)
+    if stop or (p_max_ticks is not None and tick >= p_max_ticks): break
+
+for cid in list(conns.keys()): drop(cid, notify=False)
+ls.close()
+$$;

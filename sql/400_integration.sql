@@ -136,7 +136,8 @@ begin
     before := coalesce((select max(seq) from mc.play_out), 0);
     p := mc.on_join(p_conn::int, c.uuid, c.name);
     delete from mc.play_out where seq > before and conn_id = p_conn::int;
-    update mc.player set teleport_id = 1, awaiting_teleport = null where uuid = p.uuid;
+    -- the join teleport id is 1 (the next correction uses 2); the first keep-alive is due 15 s after joining, as in vanilla, not on the first tick
+    update mc.player set teleport_id = 1, awaiting_teleport = null, keepalive_id = null, keepalive_sent_tick = gs.game_time where uuid = p.uuid;
 
     j := net.default_join_info(p_conn, p.gamemode);
     j.entity_id := p.entity_id;
@@ -172,6 +173,10 @@ create or replace function net.hook_disconnect(p_conn bigint) returns void langu
 -- The chunk coordinates in a square, nearest first.
 create or replace function net.chunk_square(p_cx int, p_cz int, p_r int) returns table (x int, z int) language sql immutable parallel safe as $$
     select p_cx + dx, p_cz + dz from generate_series(-p_r, p_r) dx, generate_series(-p_r, p_r) dz order by dx * dx + dz * dz, dx, dz $$;
+
+-- The world needs its registry ids (biomes, dimension types: tools/load_world_ref.py, from a vanilla capture) before it can encode a chunk.
+create or replace function mc.world_ready() returns boolean language sql stable as $$
+    select exists (select 1 from mc.biome) and exists (select 1 from mc.dimension_type) $$;
 
 -- The body of a chunk packet, from the world's packet cache (the cache holds the framed packet; the body starts after the length and id VarInts).
 create or replace function mc.chunk_body_cached(p_dim text, p_cx int, p_cz int) returns bytea language plpgsql volatile as $$
