@@ -17,11 +17,10 @@ insert into bstore.cc_main     select dimension, cx, cz, version, packet || ''::
 vacuum analyze bstore.cc_default; vacuum analyze bstore.cc_external; vacuum analyze bstore.cc_main;
 
 \echo -- size
-select 'cc_' || n as storage, (select count(*) from mc.chunk_cache) as rows,
-       pg_size_pretty(pg_relation_size(('bstore.cc_' || n)::regclass)) as heap, pg_size_pretty(pg_total_relation_size(('bstore.cc_' || n)::regclass)) as total_with_toast_and_indexes,
-       (select round(avg(pg_column_size(packet))) from bstore.cc_default where n = 'default' union all select round(avg(pg_column_size(packet))) from bstore.cc_external where n = 'external'
-        union all select round(avg(pg_column_size(packet))) from bstore.cc_main where n = 'main') as avg_stored_bytes_per_packet
-  from (values ('default'), ('external'), ('main')) v(n);
+select 'default' as storage, count(*) as rows, round(avg(octet_length(packet))) as avg_raw_bytes, round(avg(pg_column_size(packet))) as avg_stored_bytes,
+       pg_size_pretty(pg_relation_size('bstore.cc_default')) as heap, pg_size_pretty(pg_total_relation_size('bstore.cc_default')) as total_with_toast_and_index from bstore.cc_default
+union all select 'external', count(*), round(avg(octet_length(packet))), round(avg(pg_column_size(packet))), pg_size_pretty(pg_relation_size('bstore.cc_external')), pg_size_pretty(pg_total_relation_size('bstore.cc_external')) from bstore.cc_external
+union all select 'main', count(*), round(avg(octet_length(packet))), round(avg(pg_column_size(packet))), pg_size_pretty(pg_relation_size('bstore.cc_main')), pg_size_pretty(pg_total_relation_size('bstore.cc_main')) from bstore.cc_main;
 
 create or replace function bstore.run(p_tbl text, p_reads int, p_reps int) returns table(what text, cpu_ms float8) language plpgsql as $$
 declare i int; s0 bigint[]; s1 bigint[]; x bigint;

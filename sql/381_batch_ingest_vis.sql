@@ -48,29 +48,40 @@ end $$;
 -- Same visibility rule and the same packets as mc.refresh_visibility() (a pair is visible when the chunk coordinates differ by at most min(view-distance, 32); only
 -- pairs involving a player who changed chunk are recomputed), but with no temp tables, no ANALYZE and no TRUNCATE: a CTE chain, and ONE insert into mc.play_out so
 -- that a connection that is both told about new entities and about removed ones gets them in the baseline's order (add_entity first).
+-- The dirty players are collected in an array first, and every access to mc.visible is driven from it through the primary key (viewer_eid, target_eid) and the
+-- target_eid index, so the cost grows with the number of players that changed chunk, not with the size of mc.visible (an OR of two IN-subqueries made the planner
+-- scan the whole table: measured 20 ms worse than the baseline at 500 crowded players, 79k pairs).
 create or replace function mc.visibility_batched() returns table(added int, removed int) language plpgsql as $$
-declare r int := least(mc.prop_int('view-distance'), 32);
+declare r int := least(mc.prop_int('view-distance'), 32); d int[] := array(select entity_id from mc.player where vis_dirty and conn_id is not null);
 begin
-    if not exists (select 1 from mc.player where vis_dirty) then added := 0; removed := 0; return next; return; end if;
-    with on_ as materialized (select entity_id as eid, conn_id as conn, chunk_x as cx, chunk_z as cz, vis_dirty as dirty from mc.player where conn_id is not null),
+    if cardinality(d) = 0 then
+        update mc.player set vis_dirty = false where vis_dirty;                  -- offline players flagged dirty: nothing to compute, just clear the flag (as the baseline does)
+        added := 0; removed := 0; return next; return;
+    end if;
+    with on_ as materialized (select entity_id as eid, conn_id as conn, chunk_x as cx, chunk_z as cz from mc.player where conn_id is not null),
+    dd as materialized (select eid, conn, cx, cz from on_ where eid = any (d)),
     want as materialized (
-        select a.eid as viewer_eid, b.eid as target_eid, a.conn as viewer_conn from on_ a join on_ b on b.eid <> a.eid and abs(a.cx - b.cx) <= r and abs(a.cz - b.cz) <= r where a.dirty
+        select a.eid as viewer_eid, b.eid as target_eid, a.conn as viewer_conn from dd a join on_ b on b.eid <> a.eid and abs(a.cx - b.cx) <= r and abs(a.cz - b.cz) <= r
         union
-        select a.eid, b.eid, a.conn from on_ b join on_ a on a.eid <> b.eid and abs(a.cx - b.cx) <= r and abs(a.cz - b.cz) <= r where b.dirty),
+        select a.eid, b.eid, a.conn from dd b join on_ a on a.eid <> b.eid and abs(a.cx - b.cx) <= r and abs(a.cz - b.cz) <= r),
     ins as (
         insert into mc.visible (viewer_eid, target_eid, viewer_conn)
         select w.viewer_eid, w.target_eid, w.viewer_conn from want w
-         where not exists (select 1 from mc.visible v where v.viewer_eid = w.viewer_eid and v.target_eid = w.target_eid)
+         where (select true from mc.visible v where v.viewer_eid = w.viewer_eid and v.target_eid = w.target_eid) is null     -- per-row primary-key probe, not a scan
         returning viewer_eid, target_eid, viewer_conn),
+    cand as materialized (
+        select v.viewer_eid, v.target_eid from mc.visible v where v.viewer_eid = any (d)
+        union
+        select v.viewer_eid, v.target_eid from mc.visible v where v.target_eid = any (d)),
     del as (
-        delete from mc.visible v
-         where (v.viewer_eid in (select eid from on_ where dirty) or v.target_eid in (select eid from on_ where dirty))
+        delete from mc.visible v using cand c
+         where v.viewer_eid = c.viewer_eid and v.target_eid = c.target_eid
            and not exists (select 1 from want w where w.viewer_eid = v.viewer_eid and w.target_eid = v.target_eid)
         returning v.viewer_conn, v.target_eid),
-    addp as (
-        select i.viewer_conn, string_agg(mc.pkt_add_player_entity(t.entity_id, t.uuid, t.sent_qx / 4096.0, t.sent_qy / 4096.0, t.sent_qz / 4096.0, t.sent_yaw, t.sent_pitch, t.sent_yaw),
-                                         '\x'::bytea order by t.entity_id) as data
-          from ins i join mc.player t on t.entity_id = i.target_eid group by i.viewer_conn),
+    -- the add_entity packet depends on the target only: built once per target, then fanned out to every new viewer of it
+    tp as materialized (select t.entity_id as eid, mc.pkt_add_player_entity(t.entity_id, t.uuid, t.sent_qx / 4096.0, t.sent_qy / 4096.0, t.sent_qz / 4096.0, t.sent_yaw, t.sent_pitch, t.sent_yaw) as pkt
+                          from mc.player t where t.entity_id in (select target_eid from ins)),
+    addp as (select i.viewer_conn, string_agg(tp.pkt, '\x'::bytea order by i.target_eid) as data from ins i join tp on tp.eid = i.target_eid group by i.viewer_conn),
     remp as (select viewer_conn, mc.pkt_remove_entities(array_agg(target_eid)) as data from del group by viewer_conn),
     clr as (update mc.player set vis_dirty = false where vis_dirty returning 1),
     q as (insert into mc.play_out (conn_id, data) select conn_id, data from (select viewer_conn as conn_id, 1 as ph, data from addp union all select viewer_conn, 2, data from remp) u order by ph returning 1)

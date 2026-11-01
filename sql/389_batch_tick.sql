@@ -9,6 +9,7 @@ declare
     f_in boolean := fl like '%,all,%' or fl like '%,in,%';     f_mv boolean := fl like '%,all,%' or fl like '%,mv,%';
     f_vis boolean := fl like '%,all,%' or fl like '%,vis,%';   f_ch boolean := fl like '%,all,%' or fl like '%,ch,%';
     f_out boolean := fl like '%,all,%' or fl like '%,out,%';   f_skip boolean := fl like '%,all,%' or fl like '%,skip,%';
+    f_grid boolean := fl like '%,grid,%';                -- opt-in (sql/optional/batch_grid_vis.sql): index-driven neighbour search for visibility
     f_ref boolean := fl like '%,ref,%';                  -- opt-in experiment (sql/383): chunk packets travel as references; the gateway must call net.drain_outbox_ref()
     cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz;
     g0 timestamptz; g1 timestamptz; g2 timestamptz; g3 timestamptz; g4 timestamptz; g5 timestamptz; g6 timestamptz;
@@ -57,7 +58,7 @@ begin
         g2 := clock_timestamp();
         if n_chat or not f_skip then select * into ch from mc.apply_chat(cur); end if;
         g3 := clock_timestamp();
-        if f_vis then select * into vis from mc.visibility_batched(); else select * into vis from mc.refresh_visibility(); end if;
+        if f_grid then select * into vis from mc.visibility_batched_grid(); elsif f_vis then select * into vis from mc.visibility_batched(); else select * into vis from mc.refresh_visibility(); end if;
         g4 := clock_timestamp();
         select * into ka from mc.keepalive_due(cur);
         g5 := clock_timestamp();

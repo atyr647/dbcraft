@@ -8,17 +8,19 @@
 \! python3 tools/load_static_packets.py "$(python3 tools/capture_to_tsv.py --path play_nocomp)"
 \! python3 tools/load_world_ref.py
 \ir _batch_diff_helpers.sql
+\ir ../../sql/optional/batch_grid_vis.sql          -- the opt-in grid neighbour search (flag grid) is tested here too
 
 select t.bfresh();
 drop function if exists t.part_b(int, int, boolean);
 drop function if exists t.part_b(int, int, boolean, boolean);
+drop function if exists t.part_b(int, int, boolean, text);
 -- p_strict: scripts with at most one misbehaving connection per tick; compared byte for byte in order.  Otherwise (several connections may close in one tick) only what the
 -- baseline defines is compared: the frames of the connections that stay, as unordered sets, which connections close, and the state of players, visibility and connections.
-create or replace function t.part_b(n_trials int, n_ticks int, p_strict boolean, p_ref boolean default false) returns table(trials int, bad int, close_total int, multi_trials int) language plpgsql as $$
+create or replace function t.part_b(n_trials int, n_ticks int, p_strict boolean, p_flags text default 'all') returns table(trials int, bad int, close_total int, multi_trials int) language plpgsql as $$
 declare tr int; i int; tick_no int; sa text; sb text; cur text; bad_n int := 0; first_batched boolean; errs int; dr record; closes int := 0; multi int := 0; has_multi boolean; st text;
 begin
-    -- p_ref: the batched side runs with the reference outbox (flag ref) and is drained with net.drain_outbox_ref(), as a gateway would
-    perform set_config('mc.batch_flags', case when p_ref then 'all,ref' else 'all' end, false);
+    -- p_flags: the component flags of the batched side (mc.batch_flags); with `ref` it is drained with net.drain_outbox_ref(), as a gateway would
+    perform set_config('mc.batch_flags', p_flags, false);
     for tr in 1..n_trials loop
         perform setseed(tr / 7919.0);
         perform t.gen_state(14, true);
@@ -31,7 +33,7 @@ begin
             for tick_no in 1..n_ticks loop
                 insert into net.inbox (conn_id, payload) select conn_id, payload from t.script where t.script.tk = tick_no order by ord, conn_id;
                 if (i = 1) = first_batched then perform mc.server_tick_batched(); else perform mc.server_tick(); end if;
-                select * into dr from t.cap_drain(p_ref and (i = 1) = first_batched);
+                select * into dr from t.cap_drain(p_flags like '%ref%' and (i = 1) = first_batched);
                 if (i = 1) <> first_batched then closes := closes + dr.n_close; if dr.n_close >= 2 then has_multi := true; end if; end if;
                 st := E'\n#players\n' || t.cap_players() || E'\n#visible\n' || t.cap_visible() || E'\n#conn\n' || t.cap_conn();
                 cur := cur || E'\n#tick ' || tick_no || E'\n'
@@ -44,7 +46,7 @@ begin
         if has_multi then multi := multi + 1; end if;
         if sa is distinct from sb then
             bad_n := bad_n + 1;
-            if bad_n <= 3 then raise notice 'Part B/C (strict=%) trial % differs: %', p_strict, tr, t.first_diff(sa, sb); end if;
+            if bad_n <= 3 then raise notice 'Part B/C/D/E (flags=%, strict=%) trial % differs: %', p_flags, p_strict, tr, t.first_diff(sa, sb); end if;
         end if;
     end loop;
     perform set_config('mc.batch_flags', 'all', false);
@@ -58,7 +60,11 @@ select t.eq('Part C: with several connections closing in one tick, the surviving
 select t.is_true('Part C: the trials had ticks with several closing connections (' || (select multi_trials from _c) || ' trials)', (select multi_trials > 10 from _c));
 
 -- the reference outbox (flag ref, sql/383): chunk packets queued as references and expanded by net.drain_outbox_ref() must give the same bytes
-create temp table _d as select * from t.part_b(80, 4, true, true);
+create temp table _d as select * from t.part_b(80, 4, true, 'all,ref');
 select t.eq('Part D: with the reference outbox (flag ref + net.drain_outbox_ref) whole ticks still equal the baseline, byte for byte and in order, on 80 random trials', (select bad from _d), 0);
-create temp table _e as select * from t.part_b(80, 4, false, true);
+create temp table _e as select * from t.part_b(80, 4, false, 'all,ref');
 select t.eq('Part D: ... and with several connections closing in one tick (survivors, closes and state)', (select bad from _e), 0);
+
+-- the grid neighbour search (flag grid, sql/optional/batch_grid_vis.sql): the same pairs and packets as the default visibility refresh
+create temp table _f as select * from t.part_b(60, 4, true, 'all,grid');
+select t.eq('Part E: with the grid neighbour search (flag grid) whole ticks equal the baseline, byte for byte and in order, on 60 random trials', (select bad from _f), 0);
