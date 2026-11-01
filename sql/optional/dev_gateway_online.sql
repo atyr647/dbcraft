@@ -104,9 +104,10 @@ def session_check(cid, name, shash):
         except Exception:
             verdicts.put((cid, False, "unavailable", None, None, "[]"))
 
-def drop(cid, notify=True):
+def drop(cid, notify=True, why=""):
     c = conns.pop(cid, None)
     if c is None: return
+    if why: plpy.notice("net.run_online: connection %s dropped: %s" % (cid, why))
     try: sel.unregister(c["sock"])
     except Exception: pass
     try: c["sock"].close()
@@ -125,8 +126,8 @@ def flush(cid):
     try:
         n = c["sock"].send(c["outb"]); del c["outb"][:n]
     except (BlockingIOError, InterruptedError): pass
-    except OSError: drop(cid); return
-    if not c["outb"] and c["closing"]: drop(cid, notify=False); return
+    except OSError: drop(cid, why="write error"); return
+    if not c["outb"] and c["closing"]: drop(cid, notify=False, why="closed after its last bytes (the database asked for it)"); return
     update_events(cid)
 
 def handle_key(cid, c, body):
@@ -175,7 +176,7 @@ while True:
             try: data = c["sock"].recv(65536)
             except (BlockingIOError, InterruptedError): continue
             except OSError: data = b""
-            if not data: drop(cid); continue
+            if not data: drop(cid, why="the client closed the socket"); continue
             if c["dec"] is not None: data = c["dec"].update(data)
             b = c["inb"]; b += data; pos = 0
             try:

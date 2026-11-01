@@ -69,6 +69,7 @@ class H(BaseHTTPRequestHandler):
         self._send(200, {"id": profile_id(name), "name": shown, "properties": properties(name)})
 
 if __name__ == "__main__":
+    ThreadingHTTPServer.request_queue_size = 512      # the default backlog of 5 resets connections when many clients join at once
     srv = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H)
     srv.daemon_threads = True
     print("ready", flush=True)

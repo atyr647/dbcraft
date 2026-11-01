@@ -16,7 +16,7 @@ def one(i, g, s):
     dt = time.perf_counter() - t
     ok = r["outcome"] == "finished"
     r["client"].close()
-    return ok, dt
+    return ok, dt, (r["outcome"], r.get("error"), r.get("json"), r["client"].log[-3:])
 
 def main():
     ap = argparse.ArgumentParser()
@@ -31,8 +31,12 @@ def main():
         with ThreadPoolExecutor(max_workers=a.concurrency) as ex:
             res = list(ex.map(lambda i: one(i, a.gw_port, a.stub_port), range(a.n)))
         wall = time.perf_counter() - t0
-        lat = sorted(d for ok, d in res if ok)
-        fails = sum(1 for ok, _ in res if not ok)
+        lat = sorted(d for ok, d, _ in res if ok)
+        fails = sum(1 for ok, _, _ in res if not ok)
+        from collections import Counter
+        why = Counter((str(w[0]), str(w[1])[:60], str(w[2]), tuple(w[3])) for ok, _, w in res if not ok)
+        for k, n in why.most_common(5):
+            print("  failure x%d: outcome=%s error=%s json=%s last packets=%s" % ((n,) + k))
         def pct(p): return lat[min(len(lat) - 1, int(p * len(lat)))] * 1000 if lat else float("nan")
         print("logins: %d ok, %d failed, %d concurrent clients, compression %d" % (len(lat), fails, a.concurrency, a.compression))
         print("throughput: %.1f logins/s (%.2f s wall)" % (len(lat) / wall, wall))

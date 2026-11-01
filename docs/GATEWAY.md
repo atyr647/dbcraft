@@ -120,7 +120,24 @@ Everything here ran on a 4-CPU container shared with up to seven other workers (
 | std-only AES-128-CFB8 (T-table, one stream) | encrypt 9.3 MB/s, decrypt 7.2 MB/s at load 8.8 (`gateway/core/examples/bench_cfb8.rs`); this is the *reference* cipher, about 7x slower than AES-NI |
 | AES-CFB8 with AES-NI, from `docs/TCL-PATH.md` and `docs/GO-EVALUATION.md` | 56 to 70 MB/s serial per stream, 138 MB/s with 8 connections in lockstep, decrypt 137 to 515 MB/s |
 | consequence | at about 20 KB/s of outbound traffic per player the std-only cipher supports only a few hundred players per core on encryption alone: the production gateway is built with the `aesni` feature (default) |
-LOAD_RESULTS_PLACEHOLDER
+
+**Concurrent online-mode logins** through the PL/Python *reference* gateway (one Postgres backend, one thread) and the SQL half, with the stub session server
+(`tests/gateway/run_online.sh THRESHOLD N CONCURRENCY`, load average 8.6 to 9 on 4 CPUs, the client is Python with real RSA and AES, so beyond about 100 concurrent clients the
+CLIENT is the bottleneck and these numbers are a floor):
+
+| clients (concurrent) | compression | result | throughput | latency p50 / p95 / p99 (ms) | gateway ticks over budget |
+|---|---|---|---|---|---|
+| 100 (30) | off | 100 ok, 0 failed | 74 logins/s | 301 / 439 / 455 | 15 of 28 (the machine, not the work: max tick 109 ms) |
+| 300 (100) | threshold 256 | 300 ok, 0 failed | 122 logins/s | 618 / 1347 / 1409 | 33 of 45 (max tick 215 ms) |
+
+An uncontended login takes about 3 ticks (hello, key response, verdict): 150 to 250 ms.  `net.conn` was empty afterwards (no leaked rows) in the runs that checked it.
+
+Two things the load test found, neither a gateway bug: (1) the first runs showed 9 to 14% of logins reset right after the encryption request; the cause was the *stub*
+session server (`http.server` listens with a backlog of 5, so 30 simultaneous `join` calls overflowed it); fixed in `tests/gateway/stub_mojang.py`.  (2) One login in the
+first runs got `authservers_down`: the correct answer to a session-server timeout (1 s in the tests) on a machine at load 10.
+
+Not measured: the Rust gateway (never built), more than 300 simultaneous logins, a real Mojang round trip.  What the design estimates say about steady-state play traffic
+(not logins) is in `docs/TCL-EVALUATION.md`, `docs/GO-EVALUATION.md` and `docs/TCL-PATH.md`: about 2,600 to 3,000 players per core for a native gateway with AES-NI.
 
 ## Known gaps and next steps
 
