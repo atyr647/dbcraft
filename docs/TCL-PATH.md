@@ -11,9 +11,9 @@ Machine: 4 cores, shared with other jobs for the whole session (load average 1.2
 
 * **tcl-aot is not what stands between this gateway and the target.** Once the database decodes packets (the dbcraft design), the gateway does framing, AES-CFB8, socket
   I/O and batching.  Compiled Tcl code speeds up the Tcl loop around those by 15% to 25% (`tclonly` row below) and the work is in the native core and the event loop.
-* **A small native core plus an epoll notifier gets Tcl to about 1,500 to 1,800 players per core on real loopback sockets today** (measured; 300 lines of C, no Tcl patch), up from
+* **A small native core plus an epoll notifier gets Tcl to about 1,500 to 1,800 players per core on real loopback sockets today** (measured; about 300 lines of C in total, no Tcl patch), up from
   about 1 with pure-Tcl AES and a hard cap of about 1,000 connections per process.  With native batched socket I/O (not built; estimated 400 to 600 more lines of C) the estimate is
-  about 3,000 per core.  A Rust gateway built from the same native parts would land in the same range, because both are bound by AES-NI and the kernel.
+  about 2,600 to 3,000 per core.  A Rust gateway built from the same native parts would land in the same range, because both are bound by AES-NI and the kernel.
 * **So it can be made viable, but at that point most of the gateway is C and Tcl is configuration and database glue.** Whether that is worth doing instead of Rust is a
   preference, not a performance question (see the end).
 
@@ -50,7 +50,7 @@ Reading it:
 ### An artefact to know about (found while measuring)
 
 tcl-aot's default **lazy attach** puts a one-shot `trace add execution ... enter ::tbc::lazy` on every proc.  On the proc's first call Tcl's trace code turns the whole command into a
-string, **arguments included**: calling `split_index` once with a 640 KB buffer cost about 100 M extra instructions (a one-time 30 ms, and the first run of my callgrind
+string, **arguments included**: calling `split_index` once with a 640 KB buffer cost about 100 M extra instructions (once per proc, tens of milliseconds; the first run of my callgrind
 numbers was wrong because of it).  Gateway procs should be attached eagerly (`TBC_EAGER=1` or `tbc::attach eager`); all the compiled numbers above use eager.
 
 ### tcl-aot gaps, and the cheapest one tried
@@ -74,7 +74,7 @@ numbers was wrong because of it).  Gateway procs should be attached eagerly (`TB
 
 ## 2. Tcl as glue over a small native core
 
-`native/dbcnative.c` (about 280 lines with the AES-NI part), statically linked into a Tcl shell (`native/dbcshell.c`):
+`native/dbcnative.c` (223 lines with the AES-NI part), statically linked into a Tcl shell (`native/dbcshell.c`):
 
 | command | what it does |
 |---|---|
@@ -125,7 +125,7 @@ gateway-shaped server below: **2,000 connections crash it** (`*** bit out of ran
 
 * **Backport an epoll notifier to 8.6.14, as a patch to Tcl core:** not needed.  8.6 has a documented embedding hook, `Tcl_SetNotifier()`, which replaces the whole notifier from the
   application.  Tcl 9.0.1's own `unix/tclEpollNotfy.c` is 844 lines because it also runs a notifier thread for Tcl threads; a single-threaded version is `epoll/epollnotify.c`,
-  **about 85 lines**, installed from `main()` before `Tcl_Main` (`DBC_NOTIFIER=epoll` in my shell).  Level-triggered, one epoll set, an eventfd for `Tcl_AlertNotifier`.  Effort: one afternoon,
+  **73 lines**, installed from `main()` before `Tcl_Main` (`DBC_NOTIFIER=epoll` in my shell).  Level-triggered, one epoll set, an eventfd for `Tcl_AlertNotifier`.  Effort: one afternoon,
   done.  Limits: single-threaded Tcl only; not stress-tested beyond this benchmark (`fileevent`, `after`, `vwait`, channel close all worked in it).
 * **Several processes on one port:** Tcl 8.6 `socket -server` has no `SO_REUSEPORT`.  Cheapest options: a native listener in the C core (accept loop, `SO_REUSEPORT`, hand each fd to Tcl with
   `Tcl_MakeTcpClientChannel`), or one port per process behind the kernel/hardware balancer.  Estimated at 1 to 2 days with the native I/O loop in section 4; not built.
@@ -147,10 +147,10 @@ connection and a `puts` to each socket.  Client: one C process over loopback, ea
 | epoll | 5,000 | 3.8 | 76% | not meaningful (see below) |
 
 * **5,000 connections in one Tcl process work** (all accepted, 336,000 frames per second handled, no abort).
-* **Do not read the 2,000 and 5,000 rows as capacity.**  The load generator is one thread on a machine already shared with other jobs; it could not offer the full rate at those sizes (its
-  writes failed with EAGAIN, the server's CPU stayed below 80% of a core and its ticks ran late).  They show the process holds the connections, not how many it can serve.
+* **Do not read the 2,000 and 5,000 rows as capacity.**  The load generator is one thread on a machine already shared with other jobs; it could not offer the full rate at those sizes (many of its
+  writes were short or failed, the server's CPU stayed below 80% of a core and its ticks ran late).  They show the process holds the connections, not how many it can serve.
 * The reliable figure is CPU per connection-tick at 500 to 900 connections: **about 28 to 33 us with epoll, 45 to 60 us with select**.  About 75% is user time.  That is
-  **1,500 to 1,800 players per core at 100% busy (about 1,100 to 1,300 at 70%)**.  Of the 28 to 33 us, 8.4 us is crypto; the rest is Tcl's channel layer and event dispatch
+  **1,500 to 1,800 players per core at 100% busy (about 1,050 to 1,250 at 70%)**.  Of the 28 to 33 us, 8.4 us is crypto; the rest is Tcl's channel layer and event dispatch
   (a Tcl callback per readable socket, `read`, `puts`) plus the kernel.
 
 ## 4. Work list to reach the Rust-class number, in order
@@ -162,9 +162,9 @@ Players per core means one core, 20 TPS, 100% busy / about 70% busy, gateway wor
 | 0 | stock Tcl 8.6 + tcllib AES, select notifier | | about 1; capped at about 1,000 connections | measured (`TCL-EVALUATION.md`) |
 | 1 | C extension: AES-CFB8 (EVP) and `dbc::split` | about 150 lines C | about 2,000 compute-only | measured; with select notifier real sockets are limited to 1,000 connections |
 | 2 | AES-NI: pipelined decrypt, lockstep multi-connection encrypt | about 130 lines C | about 4,800 compute-only (2.3x step 1) | measured |
-| 3 | epoll notifier through `Tcl_SetNotifier` | about 85 lines C | **1,500 to 1,800 on real loopback sockets (1,100 to 1,300 at 70%)**; 5,000 connections held | measured |
-| 4 | native batched socket I/O: C epoll accept/read/write loop with `SO_REUSEPORT`, per-connection buffers, one native call per tick; frames appended to a native COPY-binary buffer; one libpq pipeline/`COPY` call per tick; Tcl runs O(1) per tick | 400 to 600 lines C | about 3,000 (about 2,200 at 70%) | **estimated**: crypto 8.4 us + kernel about 7 us (from the user/kernel split above) + about 1 us |
-| 5 | one process per core | trivial after step 4 | about 4 x step 4 on this box, bounded by the database | estimated |
+| 3 | epoll notifier through `Tcl_SetNotifier` | 73 lines C | **1,500 to 1,800 on real loopback sockets (1,050 to 1,250 at 70%)**; 5,000 connections held | measured |
+| 4 | native batched socket I/O: C epoll accept/read/write loop with `SO_REUSEPORT`, per-connection buffers, one native call per tick; frames appended to a native COPY-binary buffer; one libpq pipeline/`COPY` call per tick; Tcl runs O(1) per tick | 400 to 600 lines C | about 2,600 to 3,000 (about 1,800 to 2,100 at 70%) | **estimated**: crypto 8.4 us + kernel 7 to 10 us (from the user/kernel split above: 6% to 10% of a core for 300 to 700 connections) + about 1 us |
+| 5 | one process per core | trivial after step 4 | about 4 x step 4 on this box (4 cores), bounded by the database | estimated |
 | (tcl-aot) | `binary format` pure builtin; add its cases to the test suite; eager attach | 1 word + tests | speeds the Tcl loop 15% to 25%; irrelevant at step 4 | measured as above |
 
 Step 4 is where the gateway stops being Tcl in any meaningful sense: the per-event Tcl code (about 12 to 15 us of the 28 to 33 us per connection-tick) disappears into C, and
@@ -173,10 +173,10 @@ what Tcl keeps is startup, configuration, login orchestration and the database s
 ## Opinion
 
 * **Is it worth getting there?**  As a performance route, no.  Every step that matters (AES-NI interleaving, epoll, batched I/O, COPY building) is native code that Rust would use too, and
-  at the end both are bound by AES-NI and the kernel, about 3,000 players per core.  Rust gets there with one language, threads, and no pin to Tcl 8.6.14 static builds; the Tcl route needs
+  at the end both are bound by AES-NI and the kernel, an estimated 2,600 to 3,000 players per core.  Rust gets there with one language, threads, and no pin to Tcl 8.6.14 static builds; the Tcl route needs
   the notifier hook, a native I/O loop and a libpq binding, and then runs the Tcl interpreter beside them.
 * **When it is still the right call:** if you want the gateway to be a small Tcl program that you can read and change at runtime (login rules, routing, rate limits, logging), with a roughly
-  1,000-line C core underneath, and about 1,500 players per core is enough for the first milestones: it is viable today at step 3.  Moving to step 4 later does not change the Tcl side.
+  1,000-line C core underneath (about 300 lines exist; step 4 is the rest), and about 1,500 players per core is enough for the first milestones: it is viable today at step 3 (measured).  Moving to step 4 later does not change the Tcl side.
 * **What I would do for tcl-aot itself, independent of this project:** merge the `binary format` change with tests; make lazy attach avoid stringifying arguments of the first call
   (or document `TBC_EAGER`); consider inlining the other `binary scan` forms.  These help any program that parses or builds binary data in Tcl.
 
