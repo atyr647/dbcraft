@@ -102,6 +102,7 @@ class Vanilla:
         r = {"mspt_mean": sum(x["avg"] for x in s) / len(s), "mspt_p50": C.percentile([x["p50"] for x in s], 50),
              "mspt_p95": C.percentile([x["p95"] for x in s], 50), "mspt_p99": C.percentile([x["p99"] for x in s], 50),
              "mspt_worst_window_p99": max(x["p99"] for x in s), "mspt_worst_window_avg": max(x["avg"] for x in s), "samples": len(s)}
+        r["series_avg_ms"] = [round(x["avg"], 2) for x in s]          # one value per /tick query (100 ticks): how the tick time moves over the window (JVM warm-up)
         g = self.gc_pauses()
         if g:
             r.update({"gc_pauses": len(g), "gc_pause_max_ms": max(g), "gc_pause_p99_ms": C.percentile(g, 99), "gc_pause_total_ms": sum(g)})
@@ -186,6 +187,7 @@ class Dbcraft:
         out = {"mspt_mean": d["mean"], "mspt_p50": d["p50"], "mspt_p95": d["p95"], "mspt_p99": d["p99"], "mspt_p999": d["p999"], "mspt_max": d["max"],
                "ticks": len(data), "tps": len(data) / max(1e-9, time.time() - self.t0),
                "over50": sum(1 for x in tot if x > 50), "over100": sum(1 for x in tot if x > 100)}
+        out["series_avg_ms"] = [round(sum(tot[i:i + 100]) / len(tot[i:i + 100]), 2) for i in range(0, len(tot), 100)]
         for i, k in enumerate(["process", "game", "blocks", "chunks", "drain"], start=1):
             out["phase_" + k + "_mean"] = sum(r[i] for r in data) / len(data)
         try:
