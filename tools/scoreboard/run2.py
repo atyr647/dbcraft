@@ -28,21 +28,29 @@ def scenario_blocks(srv, a):
     out = {}
     if srv.name == "vanilla":
         rc = srv.rcon
-        rc.cmd("gamerule command_modification_block_limit 2000000")
         rc.cmd("forceload add -64 -64 63 63")
         time.sleep(5)
 
-        def cmd_times(cmds):
-            ts = []
+        def cmd_times(cmds, ok_words):
+            ts, bad, first = [], 0, None
             for c in cmds:
                 t = time.perf_counter()
-                rc.cmd(c)
-                ts.append((time.perf_counter() - t) * 1000.0)
-            return ts
-        single = cmd_times(["setblock %d -60 %d minecraft:%s" % (x % 90 - 45, z % 90 - 45, "stone" if (x + z) % 2 else "gold_block") for x, z in
-                            ((i * 7, i * 13) for i in range(300))])
-        f1 = cmd_times(["fill 0 -60 0 9 -51 9 minecraft:%s" % b for _ in range(8) for b in ("stone", "air")])
-        f100 = cmd_times(["fill -25 -60 -25 24 -21 24 minecraft:%s" % b for _ in range(3) for b in ("stone", "air")])
+                resp = rc.cmd(c)
+                dt = (time.perf_counter() - t) * 1000.0
+                if first is None:
+                    first = resp
+                if any(w in resp for w in ok_words):
+                    ts.append(dt)
+                else:
+                    bad += 1
+            return ts, bad, first
+        out["gamerule_response"] = rc.cmd("gamerule command_modification_block_limit 2000000")
+        single, bad_s, first_s = cmd_times(["setblock %d -60 %d minecraft:%s" % (x % 90 - 45, z % 90 - 45, "stone" if (x + z) % 2 else "gold_block") for x, z in
+                                            ((i * 7, i * 13) for i in range(300))], ("Changed the block",))
+        f1, bad_1, first_1 = cmd_times(["fill 0 -60 0 9 -51 9 minecraft:%s" % b for _ in range(8) for b in ("stone", "air")], ("Successfully filled",))
+        f100, bad_100, first_100 = cmd_times(["fill -25 -60 -25 24 -21 24 minecraft:%s" % b for _ in range(3) for b in ("stone", "air")], ("Successfully filled",))
+        out["responses"] = {"setblock": first_s, "fill1k": first_1, "fill100k": first_100}
+        out["failed_commands"] = {"setblock": bad_s, "fill1k": bad_1, "fill100k": bad_100}
         out["blocks_per_fill_1k"], out["blocks_per_fill_100k"] = 1000, 100000
     else:
         dbq("select mc.pregenerate('%s', 0, 0, 4, true)" % DIM)
@@ -100,11 +108,17 @@ def scenario_world10k(srv, a):
                 rc.cmd("forceload add %d %d %d %d" % ((cx - 50) * 16, (cz - 50) * 16, (cx - 50 + w) * 16 - 1, (cz - 50 + h) * 16 - 1))
         time.sleep(5)
         out["generate_s"] = time.time() - t0
-        rc.cmd("setblock 5 -60 5 minecraft:diamond_block")
         t = time.perf_counter()
         rc.cmd("save-all flush")
-        out["save_all_flush_s"] = time.perf_counter() - t
+        out["save_all_flush_s"] = time.perf_counter() - t               # worst case: 10,000 loaded chunks, all dirty
+        rc.cmd("forceload remove all")                                  # the forced-load tickets persist and would be reloaded at every start
+        time.sleep(8)
+        rc.cmd("save-all flush")
         out["world_bytes"] = int(sh("du", "-sb", os.path.join(C.VANILLA_DIR, "world")).split()[0])
+        rc.cmd("forceload add 0 0 15 15")                               # ONE chunk stays loaded for the edit test
+        time.sleep(2)
+        rc.cmd("setblock 5 -60 5 minecraft:diamond_block")
+        rc.cmd("save-all flush")
         # crash: another edit that was never saved, then kill -9
         rc.cmd("setblock 6 -60 5 minecraft:gold_block")
         time.sleep(1.0)
@@ -114,8 +128,7 @@ def scenario_world10k(srv, a):
         sh(os.path.join(TOOLS, "vanilla.sh"), "start", "2")
         out["recovery_to_accepting_s"] = time.time() - t_kill
         rc2 = C.Rcon()
-        rc2.cmd("forceload add 80 80 80 80")
-        time.sleep(1)
+        time.sleep(2)
         out["saved_edit_survived"] = "diamond_block" in rc2.cmd("execute if block 5 -60 5 minecraft:diamond_block")
         out["unsaved_edit_survived"] = "Test passed" in rc2.cmd("execute if block 6 -60 5 minecraft:gold_block")
         out["saved_edit_survived"] = "Test passed" in rc2.cmd("execute if block 5 -60 5 minecraft:diamond_block")
