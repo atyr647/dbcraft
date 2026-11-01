@@ -1,0 +1,68 @@
+-- The recorded vanilla session (tools/capture_vanilla.py: offline login -> configuration -> play entry -> chunks) replayed through the WHOLE server tick:
+-- net.process() -> game -> block/chunk glue -> queue drain.  Same check as 130_net_config_play, but with the real hooks (the player row from mc.player,
+-- the world's chunks) instead of the test stub, so it proves the three modules are wired together.  Skipped, loudly, when the capture is missing.
+\ir _net_helpers.sql
+\ir ../../sql/400_integration.sql
+
+create table t.cap (idx int, dir text, state text, pid int, name text, len int, hex text);
+\copy t.cap from program 'python3 tools/capture_to_tsv.py play_nocomp'
+select count(*) > 0 as have from t.cap \gset
+\if :have
+    \! python3 tools/load_datapack.py "$(python3 tools/capture_to_tsv.py --path play_nocomp)"
+    \! python3 tools/load_static_packets.py "$(python3 tools/capture_to_tsv.py --path play_nocomp)"
+    \! python3 tools/load_world_ref.py
+
+    -- the world and the player as the capturing server had them
+    truncate mc.play_out, mc.play_in, mc.play_in_work, mc.visible, mc.kick, mc.pending_ack, mc.block_actor, mc.block_event;
+    delete from mc.player; delete from mc.op; delete from mc.whitelist; delete from mc.ban;
+    select mc.configure_dev_server('vanilla-oracle', 'creative');
+    update mc.server_property set value = '5'        where key = 'max-players';
+    update mc.server_property set value = '2'        where key in ('view-distance', 'simulation-distance');
+    update mc.server_property set value = 'peaceful' where key = 'difficulty';
+    update mc.server_property set value = 'false'    where key = 'hardcore';
+    update net.setting set value = 'vanilla' where key = 'brand';
+    update mc.world set seed = x'aa7208e3219d34cc'::bigint;
+    update mc.game_state set game_time = 2984, day_time = 2984;
+    select setval('mc.entity_id_seq', 19);
+    select mc.reset_dev_world(4) > 0 as world_ok \gset
+    insert into mc.player (uuid, name, gamemode, saturation, x, y, z, chunk_x, chunk_z)
+    values (net.offline_uuid('Probe'), 'Probe', 1, 13, -6.5, -60, -5.5, -1, -1);
+
+    select net.on_connect(1);
+    select t.feed(1, hex) from t.cap where dir = 'serverbound' and state in ('handshake', 'login', 'configuration') order by idx;
+    select mc.server_tick() > 0 as ticked \gset
+    create table t.ours as
+        select idx, frame, encode(frame, 'hex') as hex, (select val from proto.varint_read(frame, (select nxt from proto.varint_read(frame, 0)))) as pid from t.frames(t.take(1));
+    create table t.theirs as select row_number() over (order by idx) - 1 as idx, name, hex
+        from t.cap where dir = 'clientbound' and idx <= (select idx from t.cap where name = 'minecraft:set_experience' and state = 'play' order by idx limit 1);
+
+    select t.is_true('the server tick ran', :'ticked'::boolean);
+    select t.eq('connection reached play', (select state from net.conn where conn_id = 1), 'play');
+    select t.eq('the player is online with the entity id the capture had', (select entity_id from mc.player where name = 'Probe'), 20);
+    select t.is_true('at least as many frames as the capture up to set_experience', (select count(*) from t.ours) >= (select count(*) from t.theirs));
+    -- login_finished through set_experience: byte for byte (the session id at the end of login_finished is random)
+    select t.eq(lpad(o.idx::text, 2, '0') || ' ' || h.name || ' byte-exact',
+                case when h.name = 'minecraft:login_finished' then left(o.hex, -32) else o.hex end,
+                case when h.name = 'minecraft:login_finished' then left(h.hex, -32) else h.hex end)
+    from t.ours o join t.theirs h using (idx) order by o.idx;
+
+    -- the chunks: batch start, 49 chunks (view distance 2 + 1 in each direction), batch finished
+    create or replace function t.chunk_key(frame bytea) returns text language sql immutable as $$
+        select encode(substring(frame from (select nxt from proto.varint_read(frame, (select nxt from proto.varint_read(frame, 0)))) + 1 for 8), 'hex') $$;
+    select net.pkt('play', 'clientbound', 'minecraft:level_chunk_with_light') as chunk_id,
+           net.pkt('play', 'clientbound', 'minecraft:chunk_batch_start') as bstart,
+           net.pkt('play', 'clientbound', 'minecraft:chunk_batch_finished') as bfin \gset
+    create table t.our_chunks   as select t.chunk_key(frame) as k, hex from t.ours where pid = :chunk_id and idx >= (select count(*) from t.theirs);
+    create table t.their_chunks as select t.chunk_key(decode(hex, 'hex')) as k, hex from t.cap where name = 'minecraft:level_chunk_with_light' and state = 'play';
+    select t.eq('49 chunks sent', (select count(*) from t.our_chunks)::int, 49);
+    select t.eq('the same chunk coordinates as the capture', (select count(*) from t.our_chunks o full join t.their_chunks c using (k) where o.k is null or c.k is null)::int, 0);
+    -- vanilla's light engine sent 3 of the 49 flat chunks in a transient form (docs/WORLD.md); every other chunk is byte-identical
+    select t.is_true('at least 46 of the 49 chunks are byte-identical to the vanilla packet',
+        (select count(*) from t.our_chunks o join t.their_chunks c using (k) where o.hex = c.hex) >= 46);
+    select t.eq('the chunk batch is framed: start before the first chunk', (select pid from t.ours where idx = (select min(idx) from t.ours where pid = :chunk_id) - 1), :bstart);
+    select t.eq('the chunk batch is framed: finished after the last, with the count',
+                (select hex from t.ours where idx = (select max(idx) from t.ours where pid = :chunk_id) + 1), encode(proto.frame(:bfin, proto.varint(49)), 'hex'));
+    select t.eq('nothing else was sent in that tick', (select count(*) from t.ours where idx >= (select count(*) from t.theirs) and pid not in (:chunk_id, :bstart, :bfin))::int, 0);
+\else
+    select t.skip('no vanilla capture (tools/capture_vanilla.py --out tests/fixtures/captured/play_nocomp.jsonl)');
+\endif

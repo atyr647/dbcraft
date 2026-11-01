@@ -16,7 +16,7 @@ for f in tests/sql/[0-9]*${1:-}*.sql; do
   if out=$(psql -X -q -v ON_ERROR_STOP=1 -f tests/sql/_harness.sql -f "$f" 2>&1); then
     echo "$out" | grep -c "NOTICE:  ok" | xargs -I{} echo "PASS $f ({} checks)"
   else
-    echo "$out" | grep -E "FAIL|ERROR|LINE" | sed 's/^psql:[^ ]* //'; echo "FAILED $f"; fail=1
+    echo "$out" | grep -E "FAIL|ERROR|LINE|error:" | sed 's/^psql:[^ ]* //'; echo "FAILED $f"; fail=1
   fi
 done
 exit $fail
