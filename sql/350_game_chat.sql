@@ -94,7 +94,7 @@ begin
 
   elsif verb = 'say' then
     if tok[2] is null then perform mc.feedback(p_conn, mc.tc_failure(mc.tc_translate('command.unknown.argument'))); return; end if;   -- unverified shape
-    insert into mc.chat_log (kind, sender, sender_name, message) values ('say', me.uuid, me.name, substr(btrim(cmd), 5));
+    insert into mc.chat_log (kind, sender, sender_name, message) values ('say', me.uuid, me.name, btrim(substr(btrim(cmd), 4)));
     insert into mc.play_out (conn_id, data)       -- (verified) disguised_chat with the say_command chat type
       select conn_id, mc.pkt_disguised_chat(btrim(substr(btrim(cmd), 4)), mc.chat_type_id('minecraft:say_command'), mc.tc_player(me.uuid, me.name))
         from mc.player where conn_id is not null order by entity_id;
