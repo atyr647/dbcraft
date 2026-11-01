@@ -199,13 +199,13 @@ def wait_quiet(max_busy, wait_s):
 
 # ---------------------------------------------------------------------------------------------------------------------------- load generator
 class LoadGens:
-    def __init__(self, port, n, moving, vd, join_spread, ready_timeout, hold, procs=None, probe=True):
+    def __init__(self, port, n, moving, vd, join_spread, ready_timeout, hold, procs=None, probe=True, first0=0):
         self.procs = []
         self.q = queue.Queue()
         per = 110
         k = procs or max(1, math.ceil(n / per))
         sizes = [n // k + (1 if i < n % k else 0) for i in range(k)]
-        first = 0
+        first = first0
         self.names = []
         for i, sz in enumerate(sizes):
             args = [sys.executable, LOADGEN, "--port", str(port), "--n", str(sz), "--first", str(first), "--join-spread", str(join_spread),
