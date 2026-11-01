@@ -91,7 +91,7 @@ def postmaster_pid():
 
 
 class Rcon:
-    def __init__(self, port=RCON_PORT, pw=RCON_PW, timeout=60):
+    def __init__(self, port=RCON_PORT, pw=RCON_PW, timeout=300):
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
         self.id = 0
         self._cmd(3, pw)

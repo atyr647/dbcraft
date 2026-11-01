@@ -40,6 +40,7 @@ white-list=false
 enforce-whitelist=false
 level-name=world
 player-idle-timeout=0
+max-tick-time=-1
 P
     : > server.log
     : > gc.log

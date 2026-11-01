@@ -112,15 +112,18 @@ class Vanilla:
         measurement is not the cost of world generation.  Returns seconds taken."""
         t0 = time.time()
         lo, hi = -r, r + 1
-        for cx in range(lo, hi, 16):
-            for cz in range(lo, hi, 16):
-                w, h = min(16, hi - cx), min(16, hi - cz)
+        # small rectangles, one at a time, each waited for: a single huge forceload makes one tick last tens of seconds (the server's watchdog
+        # kills it at 60 s; it is also disabled in vanilla.sh with max-tick-time=-1 for this setup phase)
+        S = 8
+        for cx in range(lo, hi, S):
+            for cz in range(lo, hi, S):
+                w, h = min(S, hi - cx), min(S, hi - cz)
                 self.rcon.cmd("forceload add %d %d %d %d" % (cx * 16, cz * 16, (cx + w) * 16 - 1, (cz + h) * 16 - 1))
-        corner = "execute if loaded %d 0 %d" % (r * 16, r * 16)
-        for _ in range(900):
-            if "passed" in self.rcon.cmd(corner):
-                break
-            time.sleep(1.0)
+                far = "execute if loaded %d 0 %d" % ((cx + w) * 16 - 1, (cz + h) * 16 - 1)
+                for _ in range(600):
+                    if "passed" in self.rcon.cmd(far):
+                        break
+                    time.sleep(0.2)
         time.sleep(3.0)
         self.rcon.cmd("save-all flush")
         self.rcon.cmd("forceload remove all")
