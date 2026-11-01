@@ -19,4 +19,7 @@ for f in tests/sql/[0-9]*${1:-}*.sql; do
     echo "$out" | grep -E "FAIL|ERROR|LINE|error:" | sed 's/^psql:[^ ]* //'; echo "FAILED $f"; fail=1
   fi
 done
+echo "--- structural checks"
+tools/check_overrides.py || fail=1
+tools/check_fresh_migration.sh 2>&1 | grep -E "^(ok|FAIL)" || fail=1
 exit $fail

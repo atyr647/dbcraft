@@ -1,0 +1,27 @@
+# Every function defined in more than one sql/*.sql file; the LAST file (alphabetically) wins.  Checked by tools/check_overrides.py (run by tests/sql/run.sh).
+# Format:  schema.name/argument-count | file that must be the last definition | why
+# When you add or move an override, add it here; when two optimisations touch one function, merge them by hand in a new later file (see sql/436).
+mc.adler32/1 | 441_deflate_native.sql | dispatches to the native accelerator when installed, SQL version stays as mc.adler32_sql
+mc.deflate_zlib/1 | 441_deflate_native.sql | same dispatch; SQL version stays as mc.deflate_zlib_sql
+mc.apply_block_actions/1 | 432_tick_perf_world.sql | tick-performance rewrite (arrays, no temp tables); byte-identical output proven in tests/sql/432
+mc.broadcast_block_events/0 | 432_tick_perf_world.sql | tick-performance rewrite
+mc.apply_player_moves/1 | 431_tick_perf_moves.sql | tick-performance rewrite
+mc.refresh_visibility/0 | 432_tick_perf_world.sql | tick-performance rewrite (original kept as mc.refresh_visibility_general for the comparison test)
+mc.entity_type_id/1 | 433_tick_perf_ids.sql | constant-folded reference ids (restart the gateway after reloading ref.*)
+mc.pid/1 | 433_tick_perf_ids.sql | constant-folded reference ids
+mc.sid/1 | 433_tick_perf_ids.sql | constant-folded reference ids
+mc.server_tick/0 | 430_tick_perf.sql | tick-performance rewrite of the integration tick
+mc.tick/0 | 430_tick_perf.sql | tick-performance rewrite of the game tick
+net.deflate_frame/2 | 440_deflate.sql | compression of frames at or above the threshold
+net.h_login/3 | 400_integration.sql | login checks (whitelist, bans, capacity) come from the game module
+net.hook_chunks/4 | 430_chunk_queue.sql | chunks are requested from the asynchronous generation queue
+net.hook_disconnect/1 | 400_integration.sql | wired to mc.on_leave
+net.hook_join_info/1 | 400_integration.sql | built from the real player row
+net.hook_on_join/1 | 400_integration.sql | wired to mc.on_join
+net.hook_player_loaded/1 | 400_integration.sql | wired to the game module
+net.play_begin/1 | 400_integration.sql | integration of the join burst with the game module
+net.stream_chunks/0 | 436_stream_chunks_merge.sql | the tick worker's array computation plus the chunk worker's request/delivery calls (found by merging)
+proto.f32_read/2 | 315_game_fast.sql | inlinable versions of the codec (identical results, 7x faster)
+proto.f64_read/2 | 315_game_fast.sql | inlinable versions of the codec
+proto.frame/2 | 315_game_fast.sql | inlinable versions of the codec
+proto.varint/1 | 315_game_fast.sql | inlinable versions of the codec
