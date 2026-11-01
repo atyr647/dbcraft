@@ -190,51 +190,54 @@ begin
 end $$;
 
 create or replace function mc.broadcast_block_events() returns int language plpgsql as $$
-declare r int := mc.prop_int('view-distance') + 1; i_bu int := mc.pid('block_update'); i_le int := mc.pid('level_event'); n int;
+declare r int := mc.prop_int('view-distance') + 1; i_bu int := mc.pid('block_update'); i_le int := mc.pid('level_event'); i_ack int := mc.pid('block_changed_ack'); n int;
+        a_dim text[]; a_x int[]; a_y int[]; a_z int[]; a_old int[]; a_new int[];          -- the net block changes: dimension, position, old and new state id
+        kd text[]; kx int[]; kz int[];                                        -- the chunks whose sections changed
 begin
-    -- (idle early return, the only change to this copy: no recorded block change, section change or pending acknowledgement)
+    -- (idle early return: no recorded block change, section change or pending acknowledgement)
     if not exists (select 1 from mc.block_event) and not exists (select 1 from mc.pending_ack) then return 0; end if;
-    create temp table if not exists _bchg (dimension text, x int, y int, z int, old_state text, new_state text, old_id int, new_id int) on commit delete rows;
-    create temp table if not exists _bchunk (dimension text, cx int, cz int) on commit delete rows;
-    delete from _bchg; delete from _bchunk;
+    -- The per-tick sets live in arrays, not in temp tables (sql/437: a temp table that is emptied at commit is recreated by every transaction that touches it, and its
+    -- truncate invalidates the cached plans), and the queues are consumed with DELETE ... RETURNING instead of TRUNCATE.
+    with ev as (delete from mc.block_event where kind = 'block' returning id, dimension, x, y, z, old_state, new_state),
+         g as (select dimension, x, y, z, (array_agg(old_state order by id))[1] as old_state, (array_agg(new_state order by id desc))[1] as new_state
+                 from ev group by dimension, x, y, z
+                having (array_agg(old_state order by id))[1] <> (array_agg(new_state order by id desc))[1])
+    select array_agg(dimension), array_agg(x), array_agg(y), array_agg(z), array_agg(mc.block_state_id(old_state)), array_agg(mc.block_state_id(new_state))
+      into a_dim, a_x, a_y, a_z, a_old, a_new from g;
+    n := coalesce(cardinality(a_x), 0);
 
-    with ev as (delete from mc.block_event where kind = 'block' returning id, dimension, x, y, z, old_state, new_state)
-    insert into _bchg (dimension, x, y, z, old_state, new_state)
-    select dimension, x, y, z, (array_agg(old_state order by id))[1], (array_agg(new_state order by id desc))[1]
-    from ev group by dimension, x, y, z
-    having (array_agg(old_state order by id))[1] <> (array_agg(new_state order by id desc))[1];
-    get diagnostics n = row_count;
-    update _bchg set old_id = mc.block_state_id(old_state), new_id = mc.block_state_id(new_state);
-
-    with ev as (delete from mc.block_event where kind = 'section' returning dimension, x, z)
-    insert into _bchunk (dimension, cx, cz)
-    select distinct dimension, x >> 4, z >> 4 from ev;
+    -- (the chunks in the order their first change was recorded: the temp-table version left the order to the planner)
+    with ev as (delete from mc.block_event where kind = 'section' returning id, dimension, x, z)
+    select array_agg(t.dimension order by t.first_id), array_agg(t.cx order by t.first_id), array_agg(t.cz order by t.first_id) into kd, kx, kz
+      from (select dimension, x >> 4 as cx, z >> 4 as cz, min(id) as first_id from ev group by dimension, x >> 4, z >> 4) t;
 
     if n > 0 then
         -- the break effect for everybody except the player who did it
         insert into mc.play_out (conn_id, data)
         select c.conn_id, proto.frame(i_le, proto.i32(2001) || proto.position(b.x, b.y, b.z) || proto.i32(b.old_id) || '\x00'::bytea)
-        from _bchg b
+        from unnest(a_dim, a_x, a_y, a_z, a_old, a_new) as b(dimension, x, y, z, old_id, new_id)
         join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= r and abs(c.view_cz - (b.z >> 4)) <= r
         where b.new_id = 0 and b.old_id <> 0
           and not exists (select 1 from mc.block_actor a where a.dimension = b.dimension and a.x = b.x and a.y = b.y and a.z = b.z and a.conn_id = c.conn_id)
         order by b.x, b.y, b.z;
         insert into mc.play_out (conn_id, data)
         select c.conn_id, proto.frame(i_bu, proto.position(b.x, b.y, b.z) || proto.varint(b.new_id))
-        from _bchg b
+        from unnest(a_dim, a_x, a_y, a_z, a_old, a_new) as b(dimension, x, y, z, old_id, new_id)
         join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= r and abs(c.view_cz - (b.z >> 4)) <= r
         order by b.x, b.y, b.z;
     end if;
 
-    insert into mc.play_out (conn_id, data)
-    select c.conn_id, mc.chunk_packet(k.dimension, k.cx, k.cz)
-    from _bchunk k join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= r and abs(c.view_cz - k.cz) <= r;
+    if kx is not null then
+        insert into mc.play_out (conn_id, data)
+        select c.conn_id, mc.chunk_packet(k.dimension, k.cx, k.cz)
+        from unnest(kd, kx, kz) with ordinality as k(dimension, cx, cz, ord) join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= r and abs(c.view_cz - k.cz) <= r
+        order by k.ord, c.conn_id;
+    end if;
 
     -- the acknowledgement: only the latest sequence of each connection this tick, after its block updates
-    insert into mc.play_out (conn_id, data)
-    select conn_id, proto.frame(mc.pid('block_changed_ack'), proto.varint(max(sequence))) from mc.pending_ack group by conn_id;
-    truncate mc.pending_ack;
-    truncate mc.block_actor;
+    with a as (delete from mc.pending_ack returning conn_id, sequence)
+    insert into mc.play_out (conn_id, data) select conn_id, proto.frame(i_ack, proto.varint(max(sequence))) from a group by conn_id;
+    delete from mc.block_actor;
     return n;
 end $$;
 

@@ -148,24 +148,23 @@ declare
     i_bs  int := mc.pid('chunk_batch_start');
     i_bf  int := mc.pid('chunk_batch_finished');
     n     int;
+    rc int[]; rd text[]; rx int[]; rz int[]; rdist int[];       -- what is sent now: connection, dimension, chunk, distance (kept in arrays: see sql/437 on temp tables)
 begin
     if not exists (select 1 from mc.chunk_wanted) then return 0; end if;
     delete from mc.chunk_wanted w
      where not exists (select 1 from net.conn c where c.conn_id = w.conn_id and c.state = 'play' and not c.closing and c.view_cx is not null
                           and abs(c.view_cx - w.cx) <= r and abs(c.view_cz - w.cz) <= r);
-    create temp table if not exists _rdy (conn_id int, dimension text, cx int, cz int, dist int) on commit delete rows;
-    delete from _rdy;
-    insert into _rdy
-    select q.conn_id, q.dimension, q.cx, q.cz, q.dist
+    select array_agg(q.conn_id), array_agg(q.dimension), array_agg(q.cx), array_agg(q.cz), array_agg(q.dist) into rc, rd, rx, rz, rdist
       from (select w.conn_id, w.dimension, w.cx, w.cz, w.dist, row_number() over (partition by w.conn_id order by w.dist, w.cx, w.cz) rn
               from mc.chunk_wanted w join mc.chunk c on c.dimension = w.dimension and c.cx = w.cx and c.cz = w.cz) q
      where q.rn <= cap;
-    get diagnostics n = row_count;
+    n := coalesce(cardinality(rc), 0);
     if n = 0 then return 0; end if;
-    delete from mc.chunk_wanted w using _rdy d where w.conn_id = d.conn_id and w.dimension = d.dimension and w.cx = d.cx and w.cz = d.cz;
-    insert into mc.play_out (conn_id, data) select distinct conn_id, proto.frame(i_bs, '\x') from _rdy;
-    insert into mc.play_out (conn_id, data) select conn_id, mc.chunk_packet(dimension, cx, cz) from _rdy order by conn_id, dist, cx, cz;
-    insert into mc.play_out (conn_id, data) select conn_id, proto.frame(i_bf, proto.varint(count(*)::int)) from _rdy group by conn_id;
+    delete from mc.chunk_wanted w using unnest(rc, rd, rx, rz) as d(conn_id, dimension, cx, cz)
+     where w.conn_id = d.conn_id and w.dimension = d.dimension and w.cx = d.cx and w.cz = d.cz;
+    insert into mc.play_out (conn_id, data) select distinct d.conn_id, proto.frame(i_bs, '\x') from unnest(rc) as d(conn_id);
+    insert into mc.play_out (conn_id, data) select d.conn_id, mc.chunk_packet(d.dimension, d.cx, d.cz) from unnest(rc, rd, rx, rz, rdist) as d(conn_id, dimension, cx, cz, dist) order by d.conn_id, d.dist, d.cx, d.cz;
+    insert into mc.play_out (conn_id, data) select d.conn_id, proto.frame(i_bf, proto.varint(count(*)::int)) from unnest(rc) as d(conn_id) group by d.conn_id;
     return n;
 end $$;
 

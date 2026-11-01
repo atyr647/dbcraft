@@ -230,9 +230,15 @@ declare
     c mc.chunk%rowtype;
     h record;
 begin
-    select * into c from mc.chunk k where k.dimension = p_dim and k.cx = p_cx and k.cz = p_cz for update;
+    -- The lock is only needed to serialize two callers that both find the chunk dirty, so a chunk that is current is judged without it: taking a row lock on every
+    -- call wrote the locked tuple to the WAL each time (the tuning measurements found 16% of the WAL of a 500-player tick in these locks, before mc.chunk_packet stopped
+    -- calling this function for current chunks; the other callers, such as mc.generate_flat, still do).  A dirty chunk is read again under the lock.
+    select * into c from mc.chunk k where k.dimension = p_dim and k.cx = p_cx and k.cz = p_cz;
     if not found then return false; end if;
     if not c.dirty and not c.hm_dirty and c.hm_world_surface is not null then return false; end if;
+    select * into c from mc.chunk k where k.dimension = p_dim and k.cx = p_cx and k.cz = p_cz for update;
+    if not found then return false; end if;
+    if not c.dirty and not c.hm_dirty and c.hm_world_surface is not null then return false; end if;      -- another session brought it up to date while this one waited for the lock
     if c.hm_dirty or c.hm_world_surface is null then
         select * into h from mc.compute_heightmaps(p_dim, p_cx, p_cz);
         update mc.chunk k set hm_motion_blocking = h.motion_blocking, hm_motion_blocking_no_leaves = h.motion_blocking_no_leaves,
