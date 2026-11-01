@@ -131,11 +131,11 @@ The database comparison found that four concurrent writers scaled between 0.5x a
   | players | workers | ms per tick | speed-up | pure-CPU reference |
   |---|---|---|---|---|
   | 500 | 1 / 2 / 4 | 22-28 / 19-25 / 27-29 | 1.00 / 1.15-1.18 / 0.81-1.01 | 1 / 1.6-2.05 / 2.3-3.2 |
-  | 2,000 (24 viewers each) | 1 / 2 / 4 | 230-249 / 131-136 / 91-108 | 1.00 / 1.75-1.89 / 2.3-2.6 | 1 / 2.05-2.55 / 3.5-4.7 |
+  | 2,000 (view distance 10: about 78 viewers each) | 1 / 2 / 4 | 230-249 / 131-136 / 91-108 | 1.00 / 1.75-1.89 / 2.3-2.6 | 1 / 2.05-2.55 / 3.5-4.7 |
 
   **Verdict: viable, but only for large worlds and not enough on its own.**  At 500 players it does not pay: every shard still pays the fixed costs of the call (planning, scans of the shared `mc.player` and `mc.visible`, the sort of its
-  own fan-out) and appends to one queue.  At 2,000 players four workers give 2.3-2.6x (about 0.5-0.65 of what pure CPU parallelism gives right now), but 4 workers still need 91-108 ms for the movement alone, so a 50 ms tick at 2,000
-  moving players is out of reach on this machine with this design (single worker: 230-249 ms for the movement alone in this harness; the whole tick at 2,000 players is 141.6 ms without sharding because the harness also generates the packets and discards the output).  What a real sharding needs beyond the prototype: a coordinator that gives every worker its connections (by region, not by id), runs the general path for the
+  own fan-out) and appends to one queue.  At 2,000 players four workers give 2.3-2.6x (about 0.5-0.65 of what pure CPU parallelism gives right now), but 4 workers still need 91-108 ms for the movement alone at that density, so a 50 ms tick at 2,000
+  moving players is out of reach on this machine with this design.  (The harness's 2,000-player case is the denser one, view distance 10 and about 78 viewers per player, so its 230-249 ms for a single worker is not comparable with the 141.6 ms tick of the view-distance-5 case above.)  What a real sharding needs beyond the prototype: a coordinator that gives every worker its connections (by region, not by id), runs the general path for the
   connections the sharded call rejects, and runs visibility and chunk streaming (still single-threaded: 6 and 5 ms at 500 players).  Do not enable it by default.
 * The prototype's first measurement showed a 5x single-worker slowdown and an impossible 4.7-5.7x speed-up: the `conn_id % n = k` estimate trap above.  Fixed before the numbers in the table were taken.
 
