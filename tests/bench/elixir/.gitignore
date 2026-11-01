@@ -1,0 +1,5 @@
+out/
+_build/
+deps/
+*.beam
+client/gwclient

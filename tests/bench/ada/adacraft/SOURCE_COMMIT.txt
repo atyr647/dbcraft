@@ -1,0 +1,1 @@
+adacraft commit 4d0b0969311db8005bdb61ac3892ff3133bb3d81 (https://github.com/atyr647/adacraft), files copied unmodified: src/adacraft.ads, src/protocol/adacraft-protocol{,-varnum,-buffer,-frame,-packet_encoder,-zlib}.ad[sb], generated/adacraft-protocol-ids.ads

@@ -1,0 +1,3 @@
+gwbench.adb:353:23: error: operator for type "Feed_Status" defined at adacraft-protocol-frame.ads:52 is not directly visible
+gwbench.adb:353:23: error: use clause would make operation legal
+gnatmake: "src/gwbench.adb" compilation error
