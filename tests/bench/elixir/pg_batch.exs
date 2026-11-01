@@ -1,5 +1,5 @@
 # Isolated Postgres ingest cost for one tick's packets: binary COPY vs multi-row insert from arrays. Needs a cluster on PG_PORT (default 54388).
-Mix.install([{:postgrex, "~> 0.17"}])
+Mix.install([{:postgrex, "== 0.17.5"}])
 import Bitwise
 {:ok, pg} = Postgrex.start_link(socket_dir: "/tmp", port: String.to_integer(System.get_env("PG_PORT") || "54388"), username: "postgres", database: "dbcraft", pool_size: 1)
 Postgrex.query!(pg, "create schema if not exists net", [])

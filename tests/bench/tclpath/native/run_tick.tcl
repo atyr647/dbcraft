@@ -21,15 +21,15 @@ set clients {}; for {set c 0} {$c < $N} {incr c} { lappend clients [dbc::cipher 
 set ins {}
 for {set t 0} {$t < $T} {incr t} { for {set c 0} {$c < $N} {incr c} { lappend ins [dbc::encrypt [lindex $clients $c] [frames5 [expr {$t*$N+$c}]]] } }
 set chan [open /dev/null wb]; fconfigure $chan -translation binary -buffering none
-proc fresh {N key} { set l {}; for {set c 0} {$c < $N} {incr c} { lappend l [dbc::cipher create $key] }; return $l }
-proc run {name cmd N T REPS} {
+proc fresh {N key {kind evp}} { set l {}; for {set c 0} {$c < $N} {incr c} { lappend l [expr {$kind eq "ni" ? [dbc::nicipher $key] : [dbc::cipher create $key]}] }; return $l }
+proc run {name cmd N T REPS {kind evp}} {
     set best 1e30
     for {set k 0} {$k < $REPS} {incr k} {
-        set servers [fresh $N $::key]
+        set servers [fresh $N $::key $kind]
         set t0 [clock microseconds]
         set f [uplevel #0 [list {*}$cmd $servers $::ins $::blob $::chan]]
         set dt [expr {([clock microseconds] - $t0) / 1e6}]
-        foreach s $servers { dbc::cipher free $s }
+        foreach s $servers { if {$kind eq "ni"} { dbc::nifree $s } else { dbc::cipher free $s } }
         if {$dt < $best} { set best $dt }
     }
     set ms [expr {$best * 1000.0 / $T}]
@@ -55,6 +55,7 @@ puts "CHECK split consumed=$used (expect [expr {34+4}]) ids=$i1,$i2 bodylens=[st
 run tclonly   "tk_tclonly $N $T"   $N $T $REPS
 run separate  "tk_separate $N $T"  $N $T $REPS
 run fused     "tk_fused $N $T"     $N $T $REPS
+run ni-batch  "tk_ni $N $T"        $N $T $REPS ni
 set k 2000000
 foreach {nm p} {empty-loop tk_empty nop-call tk_nop} {
     set best 1e30

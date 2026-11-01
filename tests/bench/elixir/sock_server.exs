@@ -1,9 +1,9 @@
 # BEAM socket server: one process per connection ({active, N}), frame counting, 50 ms tick-lateness probe, GC/schedule monitors.
-#   env: PORT NCONN DUR GW_MODE=closed|open|pg  (not MODE: the elixir launcher script overwrites it)  TICK_PRIO=high (tick process priority)  HOLD_MB (live refc binaries in one process)  PERCONN_KB (live buffer per connection)
+#   env: PORT NCONN DUR GW_MODE=closed|open|pg  (not MODE: the elixir launcher script overwrites it)  TICK_PRIO=high (tick process priority)  HOLD_MB HOLD_KIND=bins|heap HOLD_GC=off (live data in one process, full-sweep GC every 200 ms unless off)  PERCONN_KB (live buffer per connection)
 #        PG_PORT (default 54388) for MODE=pg
 #   elixir --erl "+S 4:4 +Q 65536" sock_server.exs
 mode = System.get_env("GW_MODE") || "closed"
-if mode == "pg", do: Mix.install([{:postgrex, "~> 0.17"}])
+if mode == "pg", do: Mix.install([{:postgrex, "== 0.17.5"}])
 
 defmodule Srv do
   @window 64
@@ -115,7 +115,7 @@ defmodule Srv do
   end
   defp holder_loop(data) do
     t = mono()
-    :erlang.garbage_collect()
+    if System.get_env("HOLD_GC") != "off", do: :erlang.garbage_collect()
     gc_us = mono() - t
     if gc_us > 20_000, do: IO.puts("HOLDER full-sweep gc took #{div(gc_us, 1000)} ms")
     receive do after 200 -> holder_loop(data) end
@@ -200,6 +200,19 @@ mem1 = :erlang.memory(:total); rss1 = Srv.rss_kb()
 pids = Enum.take(for({p} <- :ets.tab2list(:conns), do: p), 300)
 pmem = Enum.map(pids, fn p -> case Process.info(p, :memory) do {:memory, m} -> m; _ -> 0 end end)
 Srv.drain_monitor()
+killed = :counters.new(1, [])
+if System.get_env("CHAOS") == "1" do
+  # crash isolation: every second kill 20 random connection processes (brutal :kill, and an exception in a few)
+  spawn_link(fn ->
+    all = for {p} <- :ets.tab2list(:conns), do: p
+    Enum.reduce(1..dur, all, fn _, pool ->
+      Process.sleep(1000)
+      {victims, rest} = Enum.split(Enum.shuffle(pool), 20)
+      for v <- victims, do: (Process.exit(v, :kill); :counters.add(killed, 1, 1))
+      rest
+    end)
+  end)
+end
 f0 = Srv.total(); t0 = Srv.mono()
 Process.sleep(dur * 1000)
 f1 = Srv.total(); t1 = Srv.mono()
@@ -212,6 +225,7 @@ sorted = Enum.sort(late)
 IO.puts("SOCKET mode=#{mode} conns=#{up} seconds=#{Float.round(secs, 2)} frames=#{f1 - f0} frames_per_s=#{round((f1 - f0) / secs)}")
 IO.puts("MEMORY per_conn_beam_bytes=#{div(mem1 - mem0, max(up, 1))} per_conn_rss_bytes=#{div((rss1 - rss0) * 1024, max(up, 1))} sampled_process_avg_bytes=#{div(Enum.sum(pmem), max(length(pmem), 1))} rss_mb=#{div(rss1, 1024)} beam_total_mb=#{div(mem1, 1_048_576)}")
 IO.puts("TICK50 n=#{length(late)} late_p50_us=#{Srv.pct(sorted, 0.5)} late_p99_us=#{Srv.pct(sorted, 0.99)} late_max_us=#{List.last(sorted)} (actual minus scheduled time on a 50 ms grid)")
+if System.get_env("CHAOS") == "1", do: IO.puts("CHAOS killed_connection_processes=#{:counters.get(killed, 1)} alive_after=#{length(Enum.filter(for({p} <- :ets.tab2list(:conns), do: p), &Process.alive?/1))} of #{up}")
 IO.puts("MONITOR long_gc(>5ms) count=#{ngc} max_ms=#{maxgc} long_schedule(>5ms) count=#{nls} max_ms=#{maxls}")
 if collector do
   send(collector, {:get, self()})

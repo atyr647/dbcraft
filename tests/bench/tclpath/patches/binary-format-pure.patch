@@ -1,0 +1,11 @@
+--- a/src/translate.tcl	2026-11-01 01:54:58.380436145 +0000
++++ b/src/translate.tcl	2026-11-01 03:22:43.268096633 +0000
+@@ -79,7 +79,7 @@
+ 
+ # built-in commands that neither reach the variables of the calling frame nor call back into scripts: a proc that uses nothing else
+ # (and calls only such procs) is "pure": nothing can observe its frame, so it needs none of its own while it runs
+-set tbcPureBuiltins {string list lindex llength lrange lsearch join split concat format lrepeat lreverse lreplace linsert encoding abs max min}
++set tbcPureBuiltins {tcl::binary::format string list lindex llength lrange lsearch join split concat format lrepeat lreverse lreplace linsert encoding abs max min}
+ # built-ins that work on the variables of the frame they run in, and nothing else
+ # the formats of `binary scan` typed code does itself: one of c s S i I, an optional u, and *
+ set tbcScanFmt {^([cisSI])(u?)\*$}

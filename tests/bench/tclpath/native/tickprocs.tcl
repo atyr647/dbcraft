@@ -59,3 +59,22 @@ proc tk_tclonly {n ticks cids ins blob chan} {
 
 proc tk_nop {k} { for {set i 0} {$i < $k} {incr i} { dbc::nop } ; return $k }
 proc tk_empty {k} { for {set i 0} {$i < $k} {incr i} { } ; return $k }
+
+# AES-NI variant: per connection decrypt + split, then ONE lockstep batch encrypt for all connections, then the writes (cids are dbc::nicipher ids)
+proc tk_ni {n ticks cids ins blob chan} {
+    set frames 0
+    set blobs [lrepeat $n $blob]
+    for {set t 0} {$t < $ticks} {incr t} {
+        set copybuf ""
+        set base [expr {$t * $n}]
+        for {set c 0} {$c < $n} {incr c} {
+            set r [dbc::split [dbc::nidec [lindex $cids $c] [lindex $ins [expr {$base + $c}]]]]
+            foreach {id body} [lrange $r 1 end] {
+                append copybuf $c "\t" $id "\t\\\\x" [binary encode hex $body] "\n"
+                incr frames
+            }
+        }
+        foreach o [dbc::nienc_batch $cids $blobs] { puts -nonewline $chan $o }
+    }
+    return $frames
+}
