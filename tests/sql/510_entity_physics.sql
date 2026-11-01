@@ -76,6 +76,6 @@ select t.is_true('wall: max position deviation vs vanilla <= 1e-9 (' || coalesce
 select t.is_true('wall: velocity agrees on every processed tick (<= 1e-9)', coalesce(max(dvel), 0) <= 1e-9) from t.replay('wall', 0) where exists (select 1 from t.traj);
 select t.is_true('wall: on_ground agrees on every tick', coalesce(bool_and(og_ok), true)) from t.replay('wall', 0) where exists (select 1 from t.traj);
 select t.is_true('the mask was rebuilt with the wall in it (1024 floor cells + 27 wall cells + 7 row cells)',
-                 (select m.solid_cnt = 1024 + 27 + 7 from mc.solid_mask m where m.dimension = 'minecraft:overworld' and m.cx = 0 and m.cz = 0 and m.sy = -4));
+                 (select m.solid_cnt = 1024 + 27 + 7 from mc.solid_mask m where m.dimension = 'minecraft:overworld' and m.cx = 0 and m.cz = 0 and m.sy = -4)) where exists (select 1 from t.traj);   -- the mask is built by the replays: skipped with them
 
 delete from mc.entity;

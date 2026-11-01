@@ -59,16 +59,25 @@ create table if not exists mc.block_class (
     solid    boolean not null,
     friction real not null default 0.6
 );
-insert into mc.block_class (name, solid, friction)
-select b.name,
-       not (b.name ~ '^minecraft:(air|cave_air|void_air|water|lava|bubble_column|light|structure_void|short_grass|tall_grass|fern|large_fern|dead_bush|seagrass|tall_seagrass|kelp|kelp_plant|vine|glow_lichen|sculk_vein|hanging_roots|fire|soul_fire|snow|rail|powered_rail|detector_rail|activator_rail|redstone_wire|tripwire|tripwire_hook|lever|string|cobweb_unsolid|dandelion|poppy|blue_orchid|allium|azure_bluet|oxeye_daisy|cornflower|lily_of_the_valley|wither_rose|sunflower|lilac|rose_bush|peony|torchflower|pitcher_plant|brown_mushroom|red_mushroom|crimson_roots|warped_roots|nether_sprouts|spore_blossom|sweet_berry_bush|wheat|carrots|potatoes|beetroots|nether_wart|sugar_cane|bamboo_sapling|torch|wall_torch|soul_torch|soul_wall_torch|redstone_torch|redstone_wall_torch|end_rod|ladder|cobweb|scaffolding_unsolid)$'
-            or b.name ~ '(_sapling|_carpet|_sign|_wall_sign|_hanging_sign|_banner|_wall_banner|_button|_pressure_plate|_tulip|_orchid|_mushroom_unsolid|_propagule|_pressure_plate)$'),
-       case when b.name in ('minecraft:ice', 'minecraft:packed_ice', 'minecraft:frosted_ice') then 0.98::real
-            when b.name = 'minecraft:blue_ice' then 0.989::real
-            when b.name = 'minecraft:slime_block' then 0.8::real
-            else 0.6::real end
-from ref.block b
-on conflict (name) do nothing;
+-- Filled from ref.block.  The standard order is migrate THEN load the reference data (tools/load_reports.py), when ref.block is still empty at migration time:
+-- tools/load_reports.py therefore calls mc.refresh_block_class() after loading (found by the isolated test runner: entities fell through the floor on a fresh install).
+create or replace function mc.refresh_block_class() returns int language plpgsql volatile as $fn$
+declare n int;
+begin
+  insert into mc.block_class (name, solid, friction)
+  select b.name,
+         not (b.name ~ '^minecraft:(air|cave_air|void_air|water|lava|bubble_column|light|structure_void|short_grass|tall_grass|fern|large_fern|dead_bush|seagrass|tall_seagrass|kelp|kelp_plant|vine|glow_lichen|sculk_vein|hanging_roots|fire|soul_fire|snow|rail|powered_rail|detector_rail|activator_rail|redstone_wire|tripwire|tripwire_hook|lever|string|cobweb_unsolid|dandelion|poppy|blue_orchid|allium|azure_bluet|oxeye_daisy|cornflower|lily_of_the_valley|wither_rose|sunflower|lilac|rose_bush|peony|torchflower|pitcher_plant|brown_mushroom|red_mushroom|crimson_roots|warped_roots|nether_sprouts|spore_blossom|sweet_berry_bush|wheat|carrots|potatoes|beetroots|nether_wart|sugar_cane|bamboo_sapling|torch|wall_torch|soul_torch|soul_wall_torch|redstone_torch|redstone_wall_torch|end_rod|ladder|cobweb|scaffolding_unsolid)$'
+              or b.name ~ '(_sapling|_carpet|_sign|_wall_sign|_hanging_sign|_banner|_wall_banner|_button|_pressure_plate|_tulip|_orchid|_mushroom_unsolid|_propagule|_pressure_plate)$'),
+         case when b.name in ('minecraft:ice', 'minecraft:packed_ice', 'minecraft:frosted_ice') then 0.98::real
+              when b.name = 'minecraft:blue_ice' then 0.989::real
+              when b.name = 'minecraft:slime_block' then 0.8::real
+              else 0.6::real end
+  from ref.block b
+  on conflict (name) do nothing;
+  get diagnostics n = row_count;
+  return n;
+end $fn$;
+select mc.refresh_block_class();
 
 -- Solidity of every 16x16x16 section as a bitmask (bit i = entry i of the section, in wire order (y*16+z)*16+x; PostgreSQL's get_bit numbers bits LSB-first within a byte,
 -- which is exactly the order the mask is built in).  A cache: rebuilt lazily when mc.chunk.version moved.  solid_cnt = 0 means "all passable": entities skip the cell tests.

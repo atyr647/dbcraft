@@ -54,6 +54,8 @@ pk = load("packets.json")
 copy("ref.packet", ["state", "direction", "name", "protocol_id"],
      [(st, d, n, e["protocol_id"]) for st, dirs in pk.items() for d, ps in dirs.items() for n, e in ps.items()])
 
+# derived tables that are filled from ref.* by a function (present once the migration ran): refresh them now that the reference data exists
+run("do $$ begin if to_regproc('mc.refresh_block_class') is not null then perform mc.refresh_block_class(); end if; end $$")
 run("ANALYZE ref.block, ref.block_state, ref.registry, ref.packet")
 print(f"loaded {len(brow)} blocks, {len(srow)} block states, "
       f"{sum(len(r['entries']) for r in reg.values())} registry entries, "
