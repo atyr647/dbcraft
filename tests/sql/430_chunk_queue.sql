@@ -245,5 +245,20 @@ select t.eq('...the square around the new position is wanted instead', (select c
 select t.eq('...and the old requests are dropped by the generator without generating them', mc.generate_pending(1000), 49);
 select t.is_true('...only the new area exists', not exists (select 1 from mc.chunk where dimension = 'minecraft:overworld' and cx < 400) and exists (select 1 from mc.chunk where cx = 500 and cz = 500));
 
+------------------------------------------------------------------------------------------------ part 3: the BATCHED tick delivers chunks generated after the join
+-- Found by the scoreboard (docs/SCOREBOARD.md): sql/380's batched chunk streaming predates the asynchronous queue and never called mc.deliver_ready_chunks, so a joiner
+-- into an unexplored world received no chunk at all under mc.server_tick_batched() although the generator had made them all.
+select t.fresh();
+update mc.server_property set value = 'async' where key = 'dbcraft.chunk-generation';
+select t.join_client(40, 'Alice');
+select mc.server_tick_batched();
+select t.grab(40, 'bt1', true);
+select t.eq('batched tick, async: the join tick sends no chunk', t.cnt_name('bt1', 'minecraft:level_chunk_with_light'), 0);
+select t.eq('batched tick, async: the generator makes all 49 chunks', mc.generate_pending(1000), 49);
+select mc.server_tick_batched();
+select t.grab(40, 'bt2');
+select t.eq('batched tick, async: the next tick delivers all 49', t.cnt_name('bt2', 'minecraft:level_chunk_with_light'), 49);
+select t.eq('batched tick, async: ...and nothing is left wanted', (select count(*)::int from mc.chunk_wanted where conn_id = 40), 0);
+
 -- put the settings back for whatever runs next
 select t.fresh();

@@ -44,7 +44,7 @@ def scenario_blocks(srv, a):
                 else:
                     bad += 1
             return ts, bad, first
-        out["gamerule_response"] = rc.cmd("gamerule command_modification_block_limit 2000000")
+        out["gamerule_response"] = rc.cmd("gamerule max_block_modifications 2000000")
         single, bad_s, first_s = cmd_times(["setblock %d -60 %d minecraft:%s" % (x % 90 - 45, z % 90 - 45, "stone" if (x + z) % 2 else "gold_block") for x, z in
                                             ((i * 7, i * 13) for i in range(300))], ("Changed the block",))
         f1, bad_1, first_1 = cmd_times(["fill 0 -60 0 9 -51 9 minecraft:%s" % b for _ in range(8) for b in ("stone", "air")], ("Successfully filled",))
