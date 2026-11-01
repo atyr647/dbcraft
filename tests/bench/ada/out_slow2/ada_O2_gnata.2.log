@@ -47,3 +47,19 @@ BENCH z_decompress 0.001620359 1 1048576
 RESULT z_roundtrip ok=1   -- z_decompress
 CHECK z_decompress OK
 INFO z_compress clen=99485
+BENCH aes_cfb8_soft 2.353856817 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_soft
+CHECK aes_cfb8_soft OK
+BENCH aes_cfb8 0.021130497 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8
+CHECK aes_cfb8 OK
+BENCH aes_cfb8_dec 0.020259388 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_dec
+CHECK aes_cfb8_dec OK
+BENCH aes_cfb8_enc_1k_calls 0.018782159 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_enc_1k_calls
+CHECK aes_cfb8_enc_1k_calls OK
+BENCH aes_cfb8_dec_150_calls 0.016673309 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_dec_150_calls
+CHECK aes_cfb8_dec_150_calls OK
+INFO mismatches=0
