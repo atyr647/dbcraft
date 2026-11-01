@@ -5,3 +5,5 @@ build/
 # benchmark build outputs
 tests/bench/ada/bin/
 tests/bench/ada/obj*/
+# worker git worktrees
+.claude/worktrees/
