@@ -5,6 +5,9 @@ edition = "2021"
 description = "dbcraft gateway: the byte pipe between Minecraft clients and the database (frames, AES-CFB8, RSA, Mojang session check)"
 license = "MIT"
 
+[workspace]
+members = ["core"]
+
 [[bin]]
 name = "dbcraft-gateway"
 path = "src/main.rs"
@@ -14,17 +17,13 @@ name = "dbcraft_gateway"
 path = "src/lib.rs"
 
 [dependencies]
+# frames, inflate, AES-128-CFB8, SHA-1 and the server hash: the verified std-only core
+dbcraft-gateway-core = { path = "core" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "macros", "sync", "signal"] }
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
 futures-util = "0.3"
-bytes = "1"
-aes = "0.8"
-cfb8 = "0.8"
-cipher = "0.4"
 rsa = { version = "0.9", features = ["std"] }
 rand = "0.8"
-sha1 = "0.10"
-flate2 = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -32,11 +31,7 @@ toml = "0.8"
 log = "0.4"
 env_logger = "0.11"
 
-[dev-dependencies]
-proptest = "1"
-
 [profile.release]
 opt-level = 3
 lto = "thin"
 codegen-units = 1
-panic = "abort"
