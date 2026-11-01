@@ -68,3 +68,7 @@ select t.eq('Part D: ... and with several connections closing in one tick (survi
 -- the grid neighbour search (flag grid, sql/optional/batch_grid_vis.sql): the same pairs and packets as the default visibility refresh
 create temp table _f as select * from t.part_b(60, 4, true, 'all,grid');
 select t.eq('Part E: with the grid neighbour search (flag grid) whole ticks equal the baseline, byte for byte and in order, on 60 random trials', (select bad from _f), 0);
+
+-- the single-statement drain (flag out, opt-in): one outbox row per connection must still give the same bytes
+create temp table _g as select * from t.part_b(60, 4, true, 'all,out');
+select t.eq('Part F: with the one-row-per-connection drain (flag out) whole ticks equal the baseline, byte for byte and in order, on 60 random trials', (select bad from _g), 0);

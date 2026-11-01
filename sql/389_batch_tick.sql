@@ -8,7 +8,8 @@ declare
     fl text := mc.batch_flags();
     f_in boolean := fl like '%,all,%' or fl like '%,in,%';     f_mv boolean := fl like '%,all,%' or fl like '%,mv,%';
     f_vis boolean := fl like '%,all,%' or fl like '%,vis,%';   f_ch boolean := fl like '%,all,%' or fl like '%,ch,%';
-    f_out boolean := fl like '%,all,%' or fl like '%,out,%';   f_skip boolean := fl like '%,all,%' or fl like '%,skip,%';
+    f_out boolean := fl like '%,out,%';                  f_skip boolean := fl like '%,all,%' or fl like '%,skip,%';
+    -- `out` is NOT part of `all`: moving mc.play_out into net.outbox as one blob per connection costs the tick more CPU than the gateway's drain saves (docs/PERF-BATCH.md)
     f_grid boolean := fl like '%,grid,%';                -- opt-in (sql/optional/batch_grid_vis.sql): index-driven neighbour search for visibility
     f_ref boolean := fl like '%,ref,%';                  -- opt-in experiment (sql/383): chunk packets travel as references; the gateway must call net.drain_outbox_ref()
     cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz;

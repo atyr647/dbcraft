@@ -10,8 +10,8 @@
 --   * Set-based chunk lookup instead of one volatile function call (5 statements) per chunk.
 --   * Skip phases that have nothing to do (block events, chat, creative slots, visibility) instead of running them to find that out.
 --
--- Components can be switched on and off for ablation: `alter database X set mc.batch_flags = 'in,out'` (or `set mc.batch_flags = ...` in a session).  Unset or 'all' = all
--- components; 'none' = the baseline's phases (still orchestrated by this function).  Names: in, mv, vis, ch, out, skip.
+-- Components can be switched on and off for ablation: `alter database X set mc.batch_flags = 'in,mv'` (or `set mc.batch_flags = ...` in a session).  Unset or 'all' = in, mv, vis,
+-- ch, skip; 'none' = the baseline's phases (still orchestrated by this function).  Opt-in, not part of `all`: out (one outbox row per connection: measured net-negative), ref, grid.
 
 create or replace function mc.batch_flags() returns text language sql stable as $$
     select ',' || coalesce(nullif(current_setting('mc.batch_flags', true), ''), 'all') || ',' $$;
