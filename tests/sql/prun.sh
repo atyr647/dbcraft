@@ -36,6 +36,8 @@ run_one() {   # $1 = test file; prints PASS/FAILED line and details to a result 
   f="$1"; n=$(basename "$f" .sql); db="${PREFIX}_$$_${n//[^a-zA-Z0-9_]/_}"; db="${db:0:60}"
   res="$OUT/$n.res"
   psql -X -q -d postgres -c "create database \"$db\" template \"$TPL\"" >/dev/null 2>"$OUT/$n.err" || { echo "FAILED $f (cannot clone template: $(head -c 200 "$OUT/$n.err"))" >"$res"; return; }
+  # database-level settings (ALTER DATABASE ... SET) belong to one database and are NOT copied by CREATE DATABASE ... TEMPLATE: replay what the migration does
+  PGDATABASE="$db" psql -X -q -f sql/450_tuning.sql >/dev/null 2>&1
   s=$(date +%s)
   if out=$(PGDATABASE="$db" psql -X -q -v ON_ERROR_STOP=1 -f tests/sql/_harness.sql -f "$f" 2>&1); then
     k=$(printf '%s\n' "$out" | grep -c "NOTICE:  ok"); echo "PASS $f ($k checks, $(( $(date +%s) - s )) s)" >"$res"
