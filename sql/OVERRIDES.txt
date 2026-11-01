@@ -48,3 +48,9 @@ mc.world_ready/0 | 480_inlining.sql | PL/pgSQL (cached plan)
 net.pkt/3 | 480_inlining.sql | key lookup as PL/pgSQL (123 us -> 42 us per call)
 net.pkt_name/3 | 480_inlining.sql | key lookup as PL/pgSQL
 net.setting/1 | 480_inlining.sql | key lookup as PL/pgSQL
+mc.entity_active/1 | 541_entity_lanes.sql | the physics step skips entities that walk in a lane (analytic movement, docs/PERF-ENTITY.md)
+mc.entity_mask_invalidate/0 | 541_entity_lanes.sql | also drops the chunk's floor summary (lanes are validated against it)
+mc.entity_wake_on_block_event/0 | 541_entity_lanes.sql | a changed block also ends the lanes of the mobs near it
+mc.entity_viewers_refresh/1 | 541_entity_lanes.sql | the 'enters the view' announcement of a lane mob uses its viewers' delta base (it is not rewritten while it walks)
+mc.entity_tracker/2 | 542_entity_tracker_fast.sql | mob movement packets built by one tight function (mc.epkt_mob_move), byte-identical to the chain of small functions
+mc.entity_tick/1 | 541_entity_lanes.sql | the entity tick with the lane steps (dbcraft.entity_lanes = off gives the exact sweep for everybody)
