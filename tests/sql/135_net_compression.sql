@@ -9,7 +9,12 @@
 select t.eq('threshold off', encode(net.frame(-1, 2, '\xaabb'), 'hex'), '0302aabb');
 select t.eq('below threshold: data length 0', encode(net.frame(256, 2, '\xaabb'), 'hex'), '040002aabb');
 select t.eq('one below the threshold is still small', encode(net.frame(10, 2, decode(repeat('ab', 8), 'hex')), 'hex'), '0a0002' || repeat('ab', 8));
-select t.raises('at the threshold deflate is needed', $$select net.frame(10, 2, decode(repeat('ab', 9), 'hex'))$$);
+-- at the threshold the packet is compressed (sql/440 implements net.deflate_frame; its streams are judged by a real inflater in tests/sql/280): the data length is
+-- the payload (packet id + body = 10 bytes) and the packet length covers the data length VarInt and the zlib stream
+select t.eq('at the threshold deflate is used: data length is the payload length',
+            (select (proto.varint_read(f, (proto.varint_read(f, 0)).nxt)).val from (select net.frame(10, 2, decode(repeat('ab', 9), 'hex')) f) q), 10);
+select t.eq('...and the packet length matches what follows it',
+            (select (proto.varint_read(f, 0)).val = octet_length(f) - (proto.varint_read(f, 0)).nxt from (select net.frame(10, 2, decode(repeat('ab', 9), 'hex')) f) q), true);
 
 create table t.cap (idx int, dir text, state text, pid int, name text, len int, hex text);
 \copy t.cap from program 'python3 tools/capture_to_tsv.py play_comp256'

@@ -16,7 +16,7 @@
 
 ------------------------------------------------------------------------------------------------ the template
 -- Bump when the generic generation, heightmap or light code changes in a way that alters its output: it invalidates every template.
-create or replace function mc.gen_version() returns int language sql immutable parallel safe as $$ select 1 $$;
+create or replace function mc.gen_version() returns int language sql immutable parallel safe as $$ select 2 $$;
 
 create table if not exists mc.gen_template (
     dimension  text primary key,                 -- the dimension it serves
@@ -28,6 +28,12 @@ create table if not exists mc.gen_template (
     pkt_suffix bytea not null,                   -- ... and after them
     built_at   timestamptz not null default now()
 );
+-- the compressed form of the same packet (sql/440): its frame is z_prefix, the zlib header, a stored block with the 9 bytes (packet id + coordinates) of the
+-- chunk, z_rest (the rest of the packet compressed once), and the Adler-32 combined from the pieces
+alter table mc.gen_template add column if not exists z_prefix bytea;
+alter table mc.gen_template add column if not exists z_rest   bytea;
+alter table mc.gen_template add column if not exists z_a_rest bigint;
+alter table mc.gen_template add column if not exists z_l_rest int;
 comment on table mc.gen_template is 'Derived cache: the rows of one generated flat chunk per dimension, rebuilt when mc.flat_signature changes. Safe to truncate.';
 
 -- What the template depends on that no trigger watches: the generation code (mc.gen_version) and the reference data it encodes against.  Cheap (two index
@@ -68,6 +74,8 @@ declare
     pkt  bytea;
     o1   int;
     hdr  int;
+    pay  bytea;
+    zr   bytea;
 begin
     select * into t from mc.gen_template g where g.dimension = p_dim;
     if found and t.sig = sig then return t; end if;
@@ -88,15 +96,21 @@ begin
     pkt := mc.chunk_packet(tdim, 0, 0);
     o1  := (select nxt from proto.varint_read(pkt, 0));
     hdr := (select nxt from proto.varint_read(pkt, o1));                         -- bytes of [length][packet id]; the body starts with int cx, int cz
-    insert into mc.gen_template (dimension, sig, chunk, sections, light, pkt_prefix, pkt_suffix)
+    -- compressed form: payload = packet id + body; its first 9 bytes (id < 128, then the two coordinates) are spliced per chunk, the rest is compressed once
+    pay := substring(pkt from o1 + 1);
+    zr  := mc.deflate_fixed(substring(pay from 10), true);
+    insert into mc.gen_template (dimension, sig, chunk, sections, light, pkt_prefix, pkt_suffix, z_prefix, z_rest, z_a_rest, z_l_rest)
     select p_dim, sig, c,
            array(select s from mc.chunk_section s where s.dimension = tdim and s.cx = 0 and s.cz = 0 order by s.sy),
            array(select l from mc.chunk_light l where l.dimension = tdim and l.cx = 0 and l.cz = 0 order by l.idx),
-           substring(pkt from 1 for hdr), substring(pkt from hdr + 9)
+           substring(pkt from 1 for hdr), substring(pkt from hdr + 9),
+           proto.varint(octet_length(proto.varint(octet_length(pay))) + (2 + 14 + octet_length(zr) + 4)) || proto.varint(octet_length(pay)),
+           zr, mc.adler32(substring(pay from 10)), octet_length(pay) - 9
       from mc.chunk c where c.dimension = tdim and c.cx = 0 and c.cz = 0
     on conflict (dimension) do update
        set sig = excluded.sig, chunk = excluded.chunk, sections = excluded.sections, light = excluded.light,
-           pkt_prefix = excluded.pkt_prefix, pkt_suffix = excluded.pkt_suffix, built_at = now();
+           pkt_prefix = excluded.pkt_prefix, pkt_suffix = excluded.pkt_suffix, z_prefix = excluded.z_prefix, z_rest = excluded.z_rest,
+           z_a_rest = excluded.z_a_rest, z_l_rest = excluded.z_l_rest, built_at = now();
     delete from mc.chunk where dimension = tdim;
     delete from mc.flat_layer where dimension = tdim;
     delete from mc.dimension where name = tdim;
@@ -110,8 +124,10 @@ end $$;
 -- a chunk is created by exactly one of them).  Returns how many chunks this call created.
 create or replace function mc.generate_flat_batch(p_dim text, p_cxs int[], p_czs int[], p_replace boolean default false) returns int language plpgsql volatile as $$
 declare
-    t mc.gen_template;
-    n int;
+    t    mc.gen_template;
+    n    int;
+    comp boolean := mc.compression_enabled();
+    pid  bytea := proto.varint(mc.chunk_packet_id());
 begin
     if p_cxs is null or cardinality(p_cxs) = 0 then return 0; end if;
     t := mc.ensure_flat_template(p_dim);
@@ -135,9 +151,12 @@ begin
         select p_dim, i.cx, i.cz, l.idx, l.sky_kind, l.sky, l.block_kind, l.block
           from ins i cross join unnest(t.light) l),
     cch as (
-        insert into mc.chunk_cache (dimension, cx, cz, version, packet)
-        select p_dim, i.cx, i.cz, 0, t.pkt_prefix || int4send(i.cx) || int4send(i.cz) || t.pkt_suffix from ins i
-        on conflict (dimension, cx, cz) do update set version = excluded.version, packet = excluded.packet)
+        insert into mc.chunk_cache (dimension, cx, cz, version, packet, packet_z)
+        select p_dim, i.cx, i.cz, 0, t.pkt_prefix || int4send(i.cx) || int4send(i.cz) || t.pkt_suffix,
+               case when comp then t.z_prefix || '\x7801000900f6ff'::bytea || h.head || t.z_rest
+                                   || substring(int8send(mc.adler32_combine(mc.adler32(h.head), t.z_a_rest, t.z_l_rest)) from 5 for 4) end
+          from ins i cross join lateral (select pid || int4send(i.cx) || int4send(i.cz) as head) h
+        on conflict (dimension, cx, cz) do update set version = excluded.version, packet = excluded.packet, packet_z = excluded.packet_z)
     select count(*) into n from ins;
     return n;
 end $$;

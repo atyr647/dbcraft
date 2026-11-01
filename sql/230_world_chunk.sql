@@ -120,8 +120,10 @@ begin
     select k.packet into pkt from mc.chunk_cache k where k.dimension = p_dim and k.cx = p_cx and k.cz = p_cz and k.version = v;
     if found then return pkt; end if;
     pkt := proto.frame(mc.chunk_packet_id(), mc.chunk_packet_body(p_dim, p_cx, p_cz));
-    insert into mc.chunk_cache (dimension, cx, cz, version, packet) values (p_dim, p_cx, p_cz, v, pkt)
-    on conflict (dimension, cx, cz) do update set version = excluded.version, packet = excluded.packet;
+    -- with compression on, the compressed frame is cached with the packet (sql/440): payload = packet id + body = what follows the length VarInt
+    insert into mc.chunk_cache (dimension, cx, cz, version, packet, packet_z)
+    values (p_dim, p_cx, p_cz, v, pkt, case when mc.compression_enabled() then mc.z_frame(substring(pkt from (select nxt from proto.varint_read(pkt, 0)) + 1)) end)
+    on conflict (dimension, cx, cz) do update set version = excluded.version, packet = excluded.packet, packet_z = excluded.packet_z;
     return pkt;
 end $$;
 

@@ -30,13 +30,16 @@ create table if not exists mc.server_tick_log (
 
 -- Re-frame concatenated uncompressed frames for a connection with compression threshold >= 0 (frames below it get a data length of 0).
 create or replace function net.reframe(p_threshold int, p_frames bytea) returns bytea language plpgsql stable as $$
-declare pos int := 0; ln int; nx int; payload bytea; out bytea := '\x';
+declare pos int := 0; ln int; nx int; payload bytea; out bytea := '\x'; pid int; pn int;
 begin
     while pos < length(p_frames) loop
         select val, nxt into ln, nx from proto.varint_read(p_frames, pos);
         payload := substring(p_frames from nx + 1 for ln);
         if ln < p_threshold then out := out || proto.varint(ln + 1) || '\x00'::bytea || payload;
-        else perform net.deflate_frame(0, payload);       -- raises: no deflate in SQL
+        else
+            -- at or above the threshold: the packet is compressed (sql/440; a cached chunk packet is served from mc.chunk_cache.packet_z)
+            select val, nxt into pid, pn from proto.varint_read(payload, 0);
+            out := out || net.deflate_frame(pid, substring(payload from pn + 1));
         end if;
         pos := nx + ln;
     end loop;
