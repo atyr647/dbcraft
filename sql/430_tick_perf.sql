@@ -18,7 +18,8 @@ end $$;
 create or replace function net.process_fast() returns int language plpgsql as $$
 declare r record; n int; handled int[] := net.handled_play_ids();
         known int[] := (select coalesce(array_agg(protocol_id), '{}') from ref.packet where state = 'play' and direction = 'serverbound');
-        both_ids int[] := array[mc.sid('keep_alive'), mc.sid('accept_teleportation')];
+        i_ka int := mc.sid('keep_alive'); i_tp int := mc.sid('accept_teleportation');
+        both_ids int[] := array[i_ka, i_tp];
 begin
     delete from net.batch;
     with t as (delete from net.inbox returning conn_id, seq, payload),
@@ -40,6 +41,31 @@ begin
     update net.conn c set last_activity = now()
      where c.last_activity < now() - interval '1 second'
        and c.conn_id in (select conn_id from net.batch union select conn_id from mc.play_in_work);
+    -- Keep-alive answers and teleport confirmations (every connection sends one every 15 s, all within a few ticks of each other) go to the game AND to net.batch for the
+    -- connection layer.  The per-packet handler (net.handle: a connection lookup, a packet-name lookup, a re-planned VarInt reader, net.h_play) cost 0.3 ms each: 500
+    -- answers in one tick made a 200-330 ms tick.  When every packet of a live play connection in net.batch is a well-formed answer, they are applied here in one UPDATE
+    -- with the effect net.h_play has (they only touch keepalive_id, latency_ms and teleport_ok, whatever the order) and removed from the batch.  A connection with any
+    -- other protocol-level packet this tick, or a malformed answer (short keep-alive, multi-byte or missing teleport id), keeps the ordered per-packet path: a failing
+    -- packet closes the connection and the ones after it are ignored.  The check costs nothing in a tick without protocol-level packets (the batch is empty).
+    if exists (select 1 from net.batch) then
+        with b as materialized (
+               select x.conn_id, x.pid, x.body,
+                      (x.pid = i_ka and length(x.body) >= 8) or (x.pid = i_tp and length(x.body) >= 1 and get_byte(x.body, 0) < 128) as ok
+                 from (select b0.conn_id, net.pid(b0.payload) as pid,
+                              case when net.pid(b0.payload) in (i_ka, i_tp) then substring(b0.payload from net.pid_len(b0.payload) + 1) end as body
+                         from net.batch b0) x),
+             good as (select b.conn_id from b where b.conn_id in (select c.conn_id from net.conn c where c.state = 'play' and not c.closing) group by b.conn_id having bool_and(coalesce(b.ok, false))),
+             ev as (
+               select b.conn_id,
+                      coalesce(bool_or(case when b.pid = i_ka then proto.i64_read(b.body, 0) = c.keepalive_id end), false) as ka_hit,       -- CASE: no guarantee that AND stops early,
+                      coalesce(bool_or(case when b.pid = i_tp then get_byte(b.body, 0) = c.teleport_id end), false) as tp_hit               -- and the other kind's body may be too short
+                 from b join net.conn c on c.conn_id = b.conn_id where b.conn_id in (select conn_id from good) group by b.conn_id),
+             gone as (delete from net.batch x where x.conn_id in (select conn_id from good) returning 1)
+        update net.conn c set keepalive_id = case when ev.ka_hit then null else c.keepalive_id end,
+                              latency_ms = case when ev.ka_hit then greatest(0, (extract(epoch from now() - c.keepalive_sent) * 1000)::int) else c.latency_ms end,
+                              teleport_ok = c.teleport_ok or ev.tp_hit
+          from ev where c.conn_id = ev.conn_id and (ev.ka_hit or (ev.tp_hit and not c.teleport_ok));
+    end if;
     for r in select conn_id, payload from net.batch order by conn_id, seq loop
         begin
             perform net.handle(r.conn_id, r.payload);
@@ -90,7 +116,12 @@ declare
     n_in int; n_players int; n_out int; r record; framed_rows mc.drain_row[];
 begin
     -- housekeeping, once a second: the queues only the tick uses are emptied with TRUNCATE (sql/435 says why; the others are emptied with DELETE every tick)
-    if (select game_time from mc.game_state) % 20 = 19 then truncate mc.play_in_work, net.batch; end if;
+    -- (a queue that was never written since its last truncate has a zero-length file: nothing to empty, and truncating it anyway would create new files for nothing;
+    -- an idle server therefore creates no relation file at all)
+    if (select game_time from mc.game_state) % 20 = 19 then
+        if pg_relation_size('mc.play_in_work') > 0 then truncate mc.play_in_work; end if;
+        if pg_relation_size('net.batch') > 0 then truncate net.batch; end if;
+    end if;
     -- 1, 2: consume net.inbox; the game's packets land in its work queue directly
     delete from mc.play_in_work;
     n_in := net.process_fast();
@@ -146,7 +177,7 @@ begin
             perform net.close(r.conn_id);
         end;
     end loop;
-    if cur % 20 = 0 then truncate mc.play_out; end if;          -- empty after the drain above; see the housekeeping note at the top
+    if cur % 20 = 0 and pg_relation_size('mc.play_out') > 0 then truncate mc.play_out; end if;          -- empty after the drain above; see the housekeeping note at the top
     t5 := clock_timestamp();
     select count(*)::int into n_players from mc.player where conn_id is not null;
     insert into mc.server_tick_log (tick, frames_in, players, frames_out, ms_total, ms_process, ms_game, ms_blocks, ms_chunks, ms_drain)
