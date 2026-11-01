@@ -88,10 +88,15 @@ cap = find_capture()
 rows = [json.loads(l) for l in open(cap)]
 cfg = [r for r in rows if r["state"] == "configuration" and r["dir"] == "clientbound"]
 reg_rows, entry_rows, node_rows, tagreg_rows, tagdef_rows, tagmem_rows = [], [], [], [], [], []
+packs = []   # (namespace:id:version) the server offered in select_known_packs: the data below is unchanged from the first of them
 seq = 0
 for r in cfg:
     wire = bytes.fromhex(r["hex"]); _, o = vi(wire, 0); _, o = vi(wire, o)
-    if r["name"] == "minecraft:registry_data":
+    if r["name"] == "minecraft:select_known_packs":
+        n, o = vi(wire, o)
+        for _ in range(n):
+            ns, o = rstr(wire, o); pid, o = rstr(wire, o); ver, o = rstr(wire, o); packs.append(f"{ns}:{pid}:{ver}")
+    elif r["name"] == "minecraft:registry_data":
         reg, o = rstr(wire, o); n, o = vi(wire, o)
         reg_rows.append((reg, seq)); seq += 1
         for k in range(n):
@@ -130,6 +135,7 @@ sh("""INSERT INTO ref.dp_tag_member (registry, tag, ord, member)
                       (SELECT g.name FROM ref.registry g WHERE g.registry = r.registry AND g.protocol_id = r.member_id))
       FROM ref.dp_tag_member_raw r""")
 sh("DROP TABLE ref.dp_tag_member_raw")
+if packs: sh("UPDATE ref.dp_entry SET from_pack = '%s'" % packs[0])   # after the load: the row trigger clears it on every edit
 sh("ANALYZE ref.dp_node, ref.dp_entry, ref.dp_tag_member")
 print(f"loaded {len(reg_rows)} registries, {len(entry_rows)} entries, {len(node_rows)} nodes, "
       f"{len(tagreg_rows)} tag registries, {len(tagdef_rows)} tags, {len(tagmem_rows)} tag members from {cap}")

@@ -14,6 +14,7 @@ ap.add_argument("--name", default="Probe"); ap.add_argument("--seconds", type=fl
 ap.add_argument("--compression", type=int, default=-1)
 ap.add_argument("--out", default="tests/fixtures/captured/play.jsonl")
 ap.add_argument("--no-teleport-ack", action="store_true")
+ap.add_argument("--known-core", action="store_true", help="answer select_known_packs with minecraft:core (what a real client does): the server then omits registry data it assumes we have")
 ap.add_argument("--status", action="store_true", help="capture a status ping instead of a login")
 a = ap.parse_args()
 
@@ -47,6 +48,13 @@ def read_exact(sock, n):
         if not c: raise EOFError
         buf += c
     return bytes(buf)
+def body_pack_version(body):
+    # select_known_packs from the server: count, then (namespace, id, version) strings; echo the version of the first pack
+    n, o = parse_varint(body)
+    for _ in range(3):
+        l, o2 = parse_varint(body, o); v = body[o2:o2 + l].decode(); o = o2 + l
+    return v
+
 def parse_varint(b, o=0):
     v = shift = 0
     while True:
@@ -97,7 +105,7 @@ send("minecraft:login_acknowledged"); state = "configuration"
 # --- configuration
 while True:
     n, body = recv()
-    if n == "minecraft:select_known_packs": send("minecraft:select_known_packs", varint(0))   # we know no packs: server sends everything
+    if n == "minecraft:select_known_packs": send("minecraft:select_known_packs", (varint(1) + string("minecraft") + string("core") + string(body_pack_version(body))) if a.known_core else varint(0))   # default: we know no packs, so the server sends everything
     elif n == "minecraft:keep_alive": send("minecraft:keep_alive", body)
     elif n == "minecraft:ping": send("minecraft:pong", body)
     elif n == "minecraft:disconnect": sys.exit("disconnected in configuration")

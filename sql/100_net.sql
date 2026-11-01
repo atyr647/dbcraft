@@ -47,6 +47,7 @@ create unlogged table if not exists net.conn (
     chunks_per_tick real,                            -- from chunk_batch_received
     client_info    jsonb,                            -- last client_information (language, view distance ...)
     brand          text,                             -- brand the client announced
+    known_packs    text[],                           -- 'namespace:id:version' strings from the client's select_known_packs
     connected_at   timestamptz not null default now(),
     last_activity  timestamptz not null default now()
 ) with (fillfactor = 60);
