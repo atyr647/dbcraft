@@ -6,7 +6,7 @@ import re, subprocess
 
 BASE = "971e8cb"
 SRC = {
-    "sql/210_world_blocks.sql": ["set_blocks"],
+    "sql/210_world_blocks.sql": ["edit_section", "set_blocks"],
     "sql/220_world_compute.sql": ["sky_layer", "compute_light", "ensure_chunk_current"],
     "sql/230_world_chunk.sql": ["section_wire", "heightmaps_wire", "light_wire", "block_entities_wire", "chunk_packet_body", "chunk_packet_build", "chunk_packet"],
 }
@@ -27,5 +27,9 @@ for path, names in SRC.items():
 sql = "\n".join(out)
 for n in NAMES:
     sql = sql.replace("mc.%s(" % n, "mc_old.%s(" % n)
+# the original zero-fills twice the bytes a new palette section needs (repeat('00', k) is k bytes: a long is 8, not 16); every other line is the original
+bug = "decode(repeat('00', ((4096 + vpl - 1) / vpl) * 16), 'hex')"
+assert bug in sql
+sql = sql.replace(bug, "decode(repeat('00', ((4096 + vpl - 1) / vpl) * 8), 'hex')")       # (the original had * 16: twice the data)
 open("tests/bench/edit/old_impl.sql", "w").write(sql + "\n")
 print("wrote tests/bench/edit/old_impl.sql with", len(NAMES), "functions")
