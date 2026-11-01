@@ -20,7 +20,7 @@ create table if not exists mc.command (name text primary key, level int not null
 -- Only commands that are implemented are listed (not yet: msg, me, help, kill, seed, and the rest of vanilla's ~90 commands).
 insert into mc.command values
   ('list', 0, 'list'),
-  ('say', 2, 'say <message>'), ('tp', 2, 'tp <player> <x> <y> <z>'), ('teleport', 2, 'teleport <player> <x> <y> <z>'), ('gamemode', 2, 'gamemode <mode> [player]'),
+  ('say', 2, 'say <message>'), ('tp', 2, 'tp <destination> | <targets> <destination> | <x> <y> <z> | <targets> <x> <y> <z>'), ('teleport', 2, 'teleport <destination> | <targets> <destination> | <x> <y> <z> | <targets> <x> <y> <z>'), ('gamemode', 2, 'gamemode <mode> [player]'),
   ('give', 2, 'give <player> <item> [count]'), ('time', 2, 'time set|add <value>'), ('weather', 2, 'weather clear|rain|thunder'), ('difficulty', 2, 'difficulty <level>'),
   ('op', 3, 'op <player>'), ('deop', 3, 'deop <player>'), ('whitelist', 3, 'whitelist on|off|add|remove|list'), ('ban', 3, 'ban <player> [reason]'), ('pardon', 3, 'pardon <player>')
 on conflict (name) do nothing;
@@ -70,10 +70,25 @@ begin select r.val, r.nxt into val, nxt from proto.string_read(b, off) r; except
 create or replace function mc.find_player(p_name text) returns mc.player language sql stable as $$
   select p from mc.player p where p.conn_id is not null and lower(p.name) = lower(p_name) limit 1 $$;
 
+-- Code that moves a player other than by a movement packet (/tp) must make the shared "last told" position current at once: the tick's visibility step runs
+-- in the same tick and adds newly visible viewers at that position.  Found with real clients: after "/tp" the add_entity carried the OLD position (70 blocks
+-- away, in a chunk the viewer had not loaded) and the correcting teleport came a tick later; a real client keeps an entity added in an unloaded chunk hidden and
+-- never moves it, so the teleported player stayed invisible.  Viewers that already see the player get the teleport now.
+create or replace function mc.sync_entity_position(p_uuid uuid) returns void language plpgsql as $$
+declare p mc.player;
+begin
+  select * into p from mc.player where uuid = p_uuid;
+  if not found or p.entity_id is null then return; end if;
+  insert into mc.play_out (conn_id, data)
+    select v.viewer_conn, mc.pkt_teleport_entity(p.entity_id, p.x, p.y, p.z, 0, 0, 0, p.yaw, p.pitch, p.on_ground) || mc.pkt_rotate_head(p.entity_id, p.yaw)
+      from mc.visible v where v.target_eid = p.entity_id and v.viewer_conn <> p.conn_id order by v.viewer_conn;
+  update mc.player set sent_qx = mc.quant(x), sent_qy = mc.quant(y), sent_qz = mc.quant(z), sent_yaw = yaw, sent_pitch = pitch where uuid = p_uuid;
+end $$;
+
 create or replace function mc.run_command(p_conn int, cmd text) returns void language plpgsql as $$
 declare
   me mc.player; lvl int; tok text[]; verb text; need int; tgt mc.player; gm int; x float8; y float8; z float8; n int; give_item text; cur record; names text[]; bnames bytea[];
-  tid int; state int; markers jsonb := '{"day":1000,"noon":6000,"night":13000,"midnight":18000}'; oplevel int; oldval text;
+  tid int; state int; markers jsonb := '{"day":1000,"noon":6000,"night":13000,"midnight":18000}'; oplevel int; oldval text; dst mc.player;
 begin
   select * into me from mc.player where conn_id = p_conn;
   if not found then return; end if;
@@ -146,6 +161,25 @@ begin
     end if;
 
   elsif verb in ('tp', 'teleport') then
+    -- Vanilla's forms: tp <destination> | tp <targets> <destination> | tp <x> <y> <z> | tp <targets> <x> <y> <z>.  The first two were missing until a REAL client
+    -- sent "/tp Name" (docs/REAL-CLIENT.md): the code only knew the last form.  Targets and destinations are player names (no selectors yet).
+    if cardinality(tok) = 4 and tok[2] ~ '^~?-?[0-9]*(\.[0-9]+)?$' and tok[2] <> '' then       -- tp <x> <y> <z>: the sender is the target
+      tok := array[tok[1], me.name, tok[2], tok[3], tok[4]];
+    end if;
+    if cardinality(tok) in (2, 3) then
+      tgt := case when cardinality(tok) = 2 then me else mc.find_player(tok[2]) end;
+      dst := mc.find_player(tok[cardinality(tok)]);
+      if tgt.uuid is null or dst.uuid is null then perform mc.feedback(p_conn, mc.tc_failure(mc.tc_translate('argument.entity.notfound.player'))); return; end if;
+      tid := tgt.teleport_id + 1;
+      -- the target takes the destination's position AND rotation (vanilla: teleportToEntity)
+      update mc.player set x = dst.x, y = dst.y, z = dst.z, yaw = dst.yaw, pitch = dst.pitch, chunk_x = floor(dst.x / 16)::int, chunk_z = floor(dst.z / 16)::int,
+                           vis_dirty = true, teleport_id = tid, awaiting_teleport = tid
+       where uuid = tgt.uuid;
+      insert into mc.play_out (conn_id, data) values (tgt.conn_id, mc.pkt_player_position(tid, dst.x, dst.y, dst.z, 0, 0, 0, dst.yaw, dst.pitch, 0));   -- all absolute (flags 0)
+      perform mc.sync_entity_position(tgt.uuid);
+      perform mc.feedback(p_conn, mc.tc_translate('commands.teleport.success.entity.single', array[mc.tc_player(tgt.uuid, tgt.name), mc.tc_player(dst.uuid, dst.name)]));
+      return;
+    end if;
     tgt := mc.find_player(tok[2]);
     if tgt.uuid is null or tok[3] is null or tok[4] is null or tok[5] is null then perform mc.feedback(p_conn, mc.tc_failure(mc.tc_translate('argument.entity.notfound.player'))); return; end if;
     begin
@@ -161,6 +195,7 @@ begin
       from (select x, y, z) tp where uuid = tgt.uuid;
     -- (verified) player_position with the rotation kept: relative flags 0x18 (yaw and pitch relative) and zero rotation values
     insert into mc.play_out (conn_id, data) values (tgt.conn_id, mc.pkt_player_position(tid, x, y, z, 0, 0, 0, 0, 0, 24));
+    perform mc.sync_entity_position(tgt.uuid);
     perform mc.feedback(p_conn, mc.tc_translate('commands.teleport.success.location.single',
       array[mc.tc_player(tgt.uuid, tgt.name), mc.tc_arg_str(to_char(x, 'FM999999999990.000000')), mc.tc_arg_str(to_char(y, 'FM999999999990.000000')), mc.tc_arg_str(to_char(z, 'FM999999999990.000000'))]));
 
