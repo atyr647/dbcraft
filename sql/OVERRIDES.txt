@@ -25,3 +25,5 @@ proto.f32_read/2 | 315_game_fast.sql | inlinable versions of the codec (identica
 proto.f64_read/2 | 315_game_fast.sql | inlinable versions of the codec
 proto.frame/2 | 315_game_fast.sql | inlinable versions of the codec
 proto.varint/1 | 315_game_fast.sql | inlinable versions of the codec
+mc.section_blocks/2 | 291_section_compression.sql | reads the palette once per section (identical rows); keeps blocks_in fast when section rows are compressed (opt-in, docs/PERF-SCALE.md)
+mc.unpack_longs/3 | 291_section_compression.sql | binds the section data once per call (identical result, proven in tests/sql/291); the original decompressed a compressed value ~12,000 times per section
