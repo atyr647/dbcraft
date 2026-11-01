@@ -45,7 +45,14 @@ SQL
     echo "tick mode: $MODE"
     ;;
   start)
-    tools/pg-dev.sh start > /dev/null 2>&1 || true
+    # start the cluster (crash recovery included) and wait until it really accepts connections; retry the start once if it does not
+    for attempt in 1 2 3; do
+      tools/pg-dev.sh start > /dev/null 2>&1 || true
+      for i in $(seq 1 100); do
+        if psql -X -q -At -h /tmp -p $DBCRAFT_PGPORT -U postgres dbcraft -c "select 1" > /dev/null 2>&1; then break 2; fi
+        sleep 0.2
+      done
+    done
     $PSQL -c "update net.gateway_control set stop = false, ticks = 0, max_tick_ms = 0, late_ticks = 0"
     (nohup $PSQL -c "call net.run($PORT)" > "$LOG" 2>&1 &)
     for i in $(seq 1 100); do
@@ -69,12 +76,18 @@ SQL
     echo "gateway stopped"
     ;;
   kill9)
+    # an out-of-memory kill: SIGKILL to the postmaster and ALL its children at the same instant (killing the children first would let the postmaster
+    # start its own crash restart, which a second kill then interrupts)
     PM=$(head -1 $DBCRAFT_PGDATA/postmaster.pid 2>/dev/null || true)
     if [ -n "$PM" ]; then
-      pkill -9 -P "$PM" || true
-      kill -9 "$PM" || true
+      PIDS="$PM $(pgrep -P "$PM" | tr '\n' ' ')"
+      kill -9 $PIDS 2>/dev/null || true
+      for i in $(seq 1 40); do
+        if ! kill -0 "$PM" 2>/dev/null; then break; fi
+        sleep 0.1
+      done
     fi
-    sleep 1
+    sleep 0.5
     echo "postgres killed"
     ;;
   status)

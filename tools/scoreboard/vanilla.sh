@@ -8,8 +8,14 @@ pid() {
     if [ "$(readlink /proc/$p/cwd 2>/dev/null)" = "$D" ]; then echo "$p"; return; fi
   done
 }
+allpids() {
+  for p in $(pgrep -f "server.jar nogui" || true); do
+    if [ "$(readlink /proc/$p/cwd 2>/dev/null)" = "$D" ]; then echo "$p"; fi
+  done
+}
 case "${1:-}" in
   start)
+    if [ -n "$(allpids)" ]; then "$0" stop > /dev/null; fi
     VD=${2:-10}
     mkdir -p $D
     cd $D
@@ -53,19 +59,17 @@ P
     echo "vanilla started pid $(pid), $(grep -o 'Done ([0-9.]*s)' server.log | tail -1)"
     ;;
   stop)
-    p=$(pid || true)
-    if [ -n "$p" ]; then
-      kill "$p"
-      for i in $(seq 1 120); do
-        kill -0 "$p" 2>/dev/null || break
-        sleep 0.5
-      done
-    fi
+    for p in $(allpids); do kill "$p" 2>/dev/null || true; done
+    for i in $(seq 1 120); do
+      if [ -z "$(allpids)" ]; then break; fi
+      sleep 0.5
+    done
+    for p in $(allpids); do kill -9 "$p" 2>/dev/null || true; done
+    sleep 1
     echo stopped
     ;;
   kill9)
-    p=$(pid || true)
-    if [ -n "$p" ]; then kill -9 "$p"; fi
+    for p in $(allpids); do kill -9 "$p" 2>/dev/null || true; done
     sleep 1
     echo killed
     ;;
