@@ -25,7 +25,7 @@ export PGDATABASE=dbcraft POSTGRES_USER=postgres POSTGRES_DB=dbcraft DBCRAFT_HOM
 export DBCRAFT_REPORTS=${DBCRAFT_REPORTS:-/home/user/atyr647/adacraft/generated/26.3/reports} DBCRAFT_CAPTURES=${DBCRAFT_CAPTURES:-/home/user/dbcraft/tests/fixtures/captured}
 bash docker/initdb.d/10-dbcraft.sh 2>&1 | grep -v NOTICE | tail -5
 echo "--- settings as the running server reports them:"
-psql -X -At -F ' = ' -c "select name, setting || coalesce(unit, '') from pg_settings where name in ('shared_buffers','work_mem','fsync','synchronous_commit','jit','max_parallel_workers_per_gather','autovacuum_naptime','checkpoint_timeout','max_wal_size','idle_in_transaction_session_timeout','wal_level','full_page_writes','wal_compression','random_page_cost') order by name"
+psql -X -At -F ' = ' -c "select name, current_setting(name) from pg_settings where name in ('shared_buffers','work_mem','fsync','synchronous_commit','jit','max_parallel_workers_per_gather','autovacuum_naptime','checkpoint_timeout','max_wal_size','idle_in_transaction_session_timeout','wal_level','full_page_writes','wal_compression','random_page_cost') order by name"
 echo "--- database-level defaults stored by sql/450_tuning.sql:"
 psql -X -At -c "select unnest(setconfig) from pg_db_role_setting where setdatabase = (select oid from pg_database where datname = 'dbcraft') order by 1"
 echo "--- a short tick loop against it:"

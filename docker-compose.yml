@@ -23,7 +23,7 @@ services:
       - "127.0.0.1:5432:5432"           # SQL access, local only: this is the admin console of the whole server
     ulimits:
       nofile: { soft: 65536, hard: 65536 }   # the gateway backend holds one socket per player; the default 1024 stops it near 1,000 players
-    shm_size: 1gb                       # shared_buffers = 1GB lives in shared memory
+    shm_size: 256mb                     # shared_buffers is 128MB (docker/postgresql.conf)
     volumes:
       - dbcraft-data:/var/lib/postgresql/data
       - ${DBCRAFT_REPORTS_DIR:?set DBCRAFT_REPORTS_DIR}:/data/reports:ro

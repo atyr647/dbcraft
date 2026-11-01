@@ -26,12 +26,12 @@ None of it is in the image or in git.  Two read-only mounts supply it:
 The official image initialises an empty data directory and then runs `docker/initdb.d/10-dbcraft.sh`: migrate (`tools/migrate.sh`, with `--dev-gateway` when
 `DBCRAFT_DEV_GATEWAY=1`), load the reports, load the datapack from the capture, `mc.configure_dev_server()`.  `docker/entrypoint.sh` then starts PostgreSQL with
 `-c config_file=/etc/dbcraft/postgresql.conf` and keeps `call net.run(25565)` running next to it (restarting it if it ends; `update net.gateway_control set stop = true`
-stops it for good).  Later starts skip initialisation.
+stops it for good) and `tools/janitor.sh`, which vacuums and analyses the hot tables every 5 s: the gateway is one long `CALL` that never goes idle, so autovacuum cannot see its churn (docs/TUNING.md).  Later starts skip initialisation.
 
 ## Settings that matter (compose file)
 
 * `ulimits.nofile` 65536: the gateway backend holds one socket per player; the default 1024 caps it near 1,000 players.
-* `shm_size` 1 GB: `shared_buffers` is 1 GB (Docker's default 64 MB shared memory would make PostgreSQL refuse to start).
+* `shm_size` 256 MB: `shared_buffers` is deliberately small, 128 MB (a larger one makes every tick's commit slower, docs/TUNING.md); 64 MB of Docker's default shared memory would be too little.
 * Port 5432 is published on 127.0.0.1 only: a SQL session is the admin console of the whole server (it can edit the world and ban players).
 * Durability: the world (`mc.chunk*`, players, inventories, settings, bans) is WAL-logged with `fsync = on`.  `synchronous_commit = off` can lose the last
   few hundred milliseconds of ticks after an operating-system crash, never corrupt the cluster.  The per-tick queues are `UNLOGGED` (rebuilt empty after a crash).

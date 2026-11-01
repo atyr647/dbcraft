@@ -6,3 +6,7 @@ base s7_base_r2
 tmpfs s7_tmpfs_r2
 stats0 s7_stats0_r2
 wal_lz4 s7_wal_lz4_r2
+base s7_base_r3
+tmpfs s7_tmpfs_r3
+stats0 s7_stats0_r3
+wal_lz4 s7_wal_lz4_r3

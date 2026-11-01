@@ -5,18 +5,17 @@ Nothing here changes game logic: every recommendation is a configuration setting
 
 ## Read this first
 
-* **Recommended server settings:** [`docker/postgresql.conf`](../docker/postgresql.conf).  **Settings that live in the database:** [`sql/450_tuning.sql`](../sql/450_tuning.sql) (database defaults, log retention),
-  [`sql/455_storage_params.sql`](../sql/455_storage_params.sql) (column statistics), opt-in [`sql/456_player_live.sql`](../sql/456_player_live.sql) (state tiering).
-* **Server configuration is a small lever for this workload.**  Of about twenty settings compared (2-3 interleaved runs each) only four moved the tick by more than the noise, and one is dev-only:
-  `jit` on (+8 ms, **bad**), a large `shared_buffers` (+3 ms, **bad**, for a reason that is a design cost, below), `autovacuum_naptime` at the 1-minute default (**queue tables 10x bigger, +4 ms**), and `fsync` off (-6 ms, **dev only**).
-* **The large costs are in how the tick uses the database, not in PostgreSQL's settings.**  Findings for the owners of that SQL, each with its evidence, in "Root causes": stale statistics that once cost a
-  **4-second tick**; **10 ms of every tick** spent making commits cheap to read but expensive to write (temp-table and queue truncation); a chunk-cache hit that costs **430 us** and writes WAL; and autovacuum that **cannot see**
+* **Recommended server settings:** [`docker/postgresql.conf`](../docker/postgresql.conf).  **Settings that live in the database:** [`sql/450_tuning.sql`](../sql/450_tuning.sql) (database defaults, log retention), opt-in [`sql/456_player_live.sql`](../sql/456_player_live.sql) (state tiering).
+* **Server configuration is a small lever for this workload.**  Of about twenty settings compared (2-3 interleaved runs each) only a handful moved the tick by more than the noise, and one is dev-only:
+  `jit` on (+8 ms, **bad**), a large `shared_buffers` (+3 ms, **bad**, for a reason that is a design cost, below), `autovacuum_naptime` at the 1-minute default (**queue tables 10x bigger, +4 ms**), `fsync` off (-6 ms, **dev only**; it is the same file churn), `plan_cache_mode = force_custom_plan` (+8 ms, **bad**) and `track_io_timing` on (+2.6 ms).
+* **The large costs are in how the tick uses the database, not in PostgreSQL's settings.**  Findings for the owners of that SQL, each with its evidence, in "Root causes": **file churn: about 40 relation files created and deleted every tick (queue and temp-table truncation)
+  is 13.6 ms of a 45 ms tick and almost every slow tick** (the same run on a RAM disk: 31.5 ms, 12 ticks over 50 ms instead of 336); stale statistics that once cost a **4-second tick**; a chunk-cache hit that costs **430 us** and writes WAL; and autovacuum that **cannot see**
   a gateway that runs as one long `CALL`.
 * **Two operational hazards matter more than any setting:**
   1. **The PL/Python development gateway blinds autovacuum** (its queue tables grew to 65 MB in 100 s, ticks 4 ms slower).  Fixed by [`tools/janitor.sh`](../tools/janitor.sh), which the container starts next to it.
      An external gateway that sends one statement per tick does not have the problem.
   2. **One forgotten idle-in-transaction session** (a psql window): the average tick was **3x slower within 30 s and 10x within a minute**, and recovered within seconds of the session ending.  Guard: `idle_in_transaction_session_timeout = 10s`.
-* **WAL per tick (37 KB at 200 bots, 25% moving) is made of:** player-state updates 31%, row locks on the chunk table 16% (mostly full-page images), autoanalyze of payload columns 16%, catalog churn from temp tables and truncation about 30%
+* **WAL per tick (37 KB at 200 bots, 25% moving) is made of:** player-state updates 31%, row locks on the chunk table 16% (mostly full-page images), autoanalyze every 10 s 16%, catalog churn from temp tables and truncation about 30%
   (commit records and standby locks included).  What cuts each is in "WAL per tick".
 * **State tiering** (the coordinator's question, [section below](#state-tiering-for-per-player-live-state)): an UNLOGGED live table cuts the player state's WAL by 99% (119 -> 1.1 KB per tick at 500 players all moving) and costs
   "after a crash players return up to N seconds back".  It does not make the tick faster on this machine.  A narrower LOGGED table buys nothing.
@@ -55,7 +54,7 @@ The slow ticks are **statements**.
 | 5 | **A gateway that runs as one long `CALL` hides its churn from autovacuum** (below): queue tables of 65 MB after 100 s instead of 5 MB; ticks 4 ms slower and twice as many over 50 ms | matrix s3 | **configuration**: `tools/janitor.sh`, or an external gateway |
 | 6 | **A session idle inside a transaction**: tick 3x slower within 30 s (below) | matrix s4 | **configuration**: `idle_in_transaction_session_timeout` |
 | 7 | **Keep-alive answer ticks**: every 300 ticks all bots answer, 450 inbound frames instead of 250, and the *process* phase takes +100 to +167 ms (ticks 201, 501, 801, 1101 ...), in gateway mode too, with fresh statistics.  Suspect: the per-row `mc.sid()` of cause 1 (if it is the per-row calls, about 0.25 ms each) | `ms_process` of the slowest ticks of every trial | **code** (net/game) |
-| 8 | **Stalls of 100-300 ms in statements that do almost nothing**: `mc.broadcast_block_events()` took 217 ms with 140 buffer hits and 1 page written (auto_explain), the block phase spikes 56-290 ms although the benchmark has no block events.  The function truncates two unlogged tables; I/O on the shared disk is the suspect (not CPU: see jitter; not autovacuum/checkpoint). <<S7-TMPFS>> | `diag2`, `slowlog.py` | the truncates (code); fast storage |
+| 8 | **File churn: the tick creates and deletes about 40 files every tick, and the filesystem is the biggest single cost.**  Each `TRUNCATE` of a queue table creates a new relation file (an unlogged table also an init fork that is fsynced) and every written `ON COMMIT DELETE ROWS` temp table is recreated at each commit: `pg_stat_io` shows **24 relation extends and 16.6 temp-relation extends per tick**, the WAL has 17 `Storage CREATE` records per tick.  With the data directory on a RAM disk the same trial runs at **31.5 ms instead of 45.1 ms (-30%), p99 48 instead of 77 ms, ticks over 50 ms: 12 instead of 336** (matrix s7, 3 runs each, spread 0.4 and 1.2): the stalls of 100-300 ms in statements that do almost nothing (`mc.broadcast_block_events()` took 217 ms with 140 buffer hits and one page written) are filesystem metadata stalls on the shared ext4 volume - not CPU (a spinning backend never paused longer than 18.7 ms), not checkpoints, not autovacuum.  In isolation (`truncate_cost.sh`): eight unlogged truncates + commit 1.7 ms on disk against 0.5 ms on tmpfs, ten temp tables 3.3 against 1.5 ms.  What remains on tmpfs (max 332 ms, p99.9 137 ms) is causes 1 and 7 | s7 `tmpfs`; `io_probe.sh`; `truncate_cost.sh`; `jitter.sql` | **code**: consume queues without TRUNCATE (DELETE costs 0.09 ms) and use temp tables without `ON COMMIT DELETE ROWS`: this is the largest available gain (at least 5 ms measured in isolation, 13.6 ms is the upper bound).  **configuration**: fast local storage.  A tablespace on a RAM disk for `temp_tablespaces` / the unlogged queues would capture part of it but PostgreSQL documents tablespaces on temporary filesystems as unsafe (the directory must exist at startup): **not recommended, not tested** |
 | 9 | **Join and chunk-streaming bursts**: `ms_chunks` spikes of 250-390 ms when many chunks are needed in one tick; `net.drain_outbox` spills to temp files when the queued bytes exceed `work_mem` (20 simultaneous joiners queue 60 MB: 30 MB temp file with 4 MB and 16 MB, none with 64 MB) | `drain_mem.sh` | `work_mem = 64MB` (config); chunk generation off the tick (code, other worker) |
 | 10 | **Not a cause, a harness bug of mine**: bots that never answer keep-alive are kicked all at once after 30 s: 92,604 output frames in one tick, an 18 s tick.  Fixed in `tune.gen` | first calibration | - |
 
@@ -80,10 +79,10 @@ Matrix s3 (in-procedure loop, 100 s, 3 runs, medians) and s4 (gateway style, sam
 (Averages are only comparable within a matrix: the machine's load differed between s3 and s4.)
 
 * **Gateway style needs a short `autovacuum_naptime` (10 s), nothing else**: 10x smaller queues and 4 ms faster ticks than the 1-minute default.  Per-table thresholds on the queues add nothing (the default threshold is already tiny: they are re-vacuumed
-  at every pass), so `sql/455` does not set them.
+  at every pass), so no per-table setting is applied.
 * **In-procedure needs the janitor**: `tools/janitor.sh [seconds]` runs `VACUUM (ANALYZE, SKIP_LOCKED)` of the hot tables from a session of its own (the container's entrypoint starts it next to the gateway).  Cost: the vacuum of eleven tiny tables, a few
   milliseconds every 5 s.  An `autovacuum_naptime` of 5 s with no cost delay **does not** help here (`av_fast`: 54.1 ms against 50.8; the vacuum has nothing to see).
-* **Trade-off of a short naptime:** every queue table is also re-ANALYZEd each pass, which rewrites its statistics rows: 16% of the WAL (see "WAL per tick" and `sql/455`).
+* **Trade-off of a short naptime:** every table that changed is also re-ANALYZEd each pass, which rewrites its statistics rows: 16% of the WAL (see "WAL per tick").
 * A better fix is in the tick: consume a queue that is read whole with `TRUNCATE` (no dead tuples at all), or avoid long `CALL`s in the gateway.
 
 ## The idle-in-transaction stall
@@ -148,7 +147,21 @@ change nothing.  Hence the recommendation of a **long** `checkpoint_timeout` (15
 
 `track_io_timing` costs about 2.6 ms per tick (a clock read around every buffer read and write; the tick does about 188,000 backend buffer writes in 75 s): **leave it off**, turn it on for a diagnosis only.  `track_activities = off` gains nothing.
 
-<<S7-MATRIX>>
+**Matrix s7** (gateway style, 75 s, 3 runs; medians): the data directory on a RAM disk, payload statistics off, `wal_compression = lz4`:
+
+| config | avg ms | p50 | p99 | p99.9 | max | ticks > 50 ms | ticks > 100 ms | WAL KB/tick | spread |
+|---|---|---|---|---|---|---|---|---|---|
+| base (`ref` + `autovacuum_naptime = 10s`) | 45.1 | 42.4 | 76.9 | 335 | 409 | 336 | 10 | 37 | 1.2 |
+| **data directory on tmpfs** | **31.5** | **30.4** | **48.2** | **137** | 332 | **12** | 6 | 38 | 0.4 |
+| payload columns without statistics (`apply/stats0.sql`) | 49.2 | 46.4 | 81.1 | 308 | 451 | 562 | 12 | 37 | 9.1 |
+| `wal_compression = lz4` | 43.2 | 40.7 | 87.8 | 343 | 438 | 257 | 12 | 32 | 3.3 |
+
+* **tmpfs**: cause 8.  The slow ticks are file-system stalls.
+* **Payload statistics off: no effect.**  WAL 37 against 37 KB per tick (per run 37.1 / 37.8 / 36.9 against 37.1 / 37.9 / 37.3), the tick no better (49.2 against 45.1 ms, spread 9.1: noise).  My hypothesis (the 8.8 MB of `pg_statistic` WAL being most-common-value lists of `bytea` payloads) was **wrong**:
+  `analyze_wal.sh` measures one `ANALYZE` per table and the queue tables write **0 bytes** because they are empty between ticks.  What writes it: `mc.player` **77 KB per ANALYZE** (35 columns), `pg_catalog.pg_attribute` 74 KB, `pg_catalog.pg_class` 66 KB, `net.conn` 41 KB (28 columns),
+  `mc.tick_log` 25 KB, `mc.visible` 25 KB, `mc.server_tick_log` 16 KB; autovacuum repeats this for every table that changed each `autovacuum_naptime`.  I withdrew the file `sql/455_storage_params.sql` I had drafted for it: a setting with no measured effect does not belong in the repository.
+  The remedy would be per-column statistics targets on the columns no query uses (35 columns of `mc.player`, 28 of `net.conn`), but a column that is missing statistics is what produced the 4-second plan of cause 1, so this needs the owners of those queries; **not done**.
+* **`wal_compression = lz4`**: WAL -14% in steady state (32 against 37 KB), the tick not worse (43.2 against 45.1 ms; p99 within the run-to-run range 74-103 ms).  Recommended (see "Recommended configuration").
 
 Temp files were 0 in every trial at 200 bots.  `commit_delay` was not evaluated (it only helps when many sessions commit at the same moment; the gateway commits once per statement).  `huge_pages` could not be evaluated: the host had no huge pages reserved (`HugePages_Total: 0`);
 `huge_pages = try` is set and costs nothing.
@@ -160,15 +173,15 @@ Temp files were 0 in every trial at 200 bots.  `commit_delay` was not evaluated 
 | source | KB per tick | share | what cuts it |
 |---|---|---|---|
 | `mc.player` updates (`Heap HOT_UPDATE`, 179,355 records) | 11.6 | 31% | **state tiering** (an UNLOGGED live table: -99% of this, below); nothing narrower helps |
-| `mc.chunk` row locks (`Heap LOCK`, 22,429 records, 7.8 of 8.9 MB are full-page images) | 5.9 | 16% | lock-free pre-check in `ensure_chunk_current` (code; measured -16% of all WAL); `wal_compression` shrinks the full-page images |
-| `pg_statistic` (autoanalyze of the queues: every 10 s each of 8 queue tables rewrites most-common-value lists and histograms of 1 KB `bytea` values) | 5.8 | 16% | `alter column ... set statistics 0` on the payload columns (**`sql/455`**) |
+| `mc.chunk` row locks (`Heap LOCK`, 22,429 records; 7.8 of the 8.9 MB are full-page images) | 5.9 | 16% | lock-free pre-check in `ensure_chunk_current` (code; measured -16% of all WAL); `wal_compression` shrinks the full-page images |
+| `pg_statistic` (autoanalyze every 10 s: one ANALYZE writes 77 KB for `mc.player`, 41 KB for `net.conn`, 66 KB for `pg_class`; the queues write nothing, they are empty between ticks) | 5.8 | 16% | a longer `autovacuum_naptime` (the price of the 10 s: this WAL and nothing else) or fewer analysed columns (needs the query owners; payload statistics were tried: **no effect**) |
 | catalog churn: `pg_class` and its indexes (the ten temp tables and the unlogged truncates rewrite catalog rows at every commit), `Storage CREATE`: 25,500 records | about 8 | 22% | the tick's temp tables / truncates (code) |
 | commit records (3 transactions per tick, each lists the relation files to drop) | 2.2 | 6% | same |
 | `Standby LOCK` (the AccessExclusive locks of every TRUNCATE are logged for hot standbys) | 1.5 | 4% | `wal_level = minimal` (no replication then) or fewer truncates |
 | diagnostics tables (`tick_log`, `server_tick_log`, ...), `mc.game_state`, the rest | about 2.0 | 5% | unlogging them gained nothing measurable (`top_unl`: 36 against 37 KB) |
 
 **Generating new chunks** (a player exploring), `walgen.sh`, 121 new chunks: **11.8 KB of WAL per chunk**, of which `mc.chunk` 7.1 KB (620 of its 863 KB are full-page images), `mc.chunk_section` 2.3 KB, light 0.8 KB, and the packet cache only **0.3 KB** (the cached packets of
-flat chunks compress to a few hundred bytes), so **UNLOGGED `mc.chunk_cache` saves 2.4%: not worth it** (a crash would empty it).  **`wal_compression` cuts it by 46%** (6.4 KB per chunk, `lz4` and `pglz` alike, generation time unchanged).  <<S7-LZ4>>
+flat chunks compress to a few hundred bytes), so **UNLOGGED `mc.chunk_cache` saves 2.4%: not worth it** (a crash would empty it).  **`wal_compression` cuts it by 46%** (6.4 KB per chunk, `lz4` and `pglz` alike, generation time unchanged).  In steady state `wal_compression = lz4` cut the WAL by 14% (32 against 37 KB per tick) at no visible cost (matrix s7).
 
 ## Table layout
 
@@ -183,9 +196,7 @@ From the golden database (`inspect.sql`) and the counters of the runs:
   to **119 MB**.  Not recommended.
 * **Retention**: `mc.tick_log` and `mc.server_tick_log` grow by two rows per tick (about 100 bytes each: 17 MB a day each at 20 ticks a second) and `mc.error_log` by the errors; `sql/450_tuning.sql` adds `mc.prune_logs(keep, chat_keep)` (default 7 days; chat only when asked) to be run from a
   maintenance session outside the tick.  No partitioning: at this rate a week is 120 MB.
-* **Payload statistics**: `sql/455_storage_params.sql` sets statistics target 0 on the eight packet payload columns (see WAL).
-
-<<S7-STATS>>
+* **No storage parameter changed the tick**, so there is no `sql/455` (an earlier draft set statistics target 0 on the payload columns; it had no effect and was withdrawn, matrix s7).
 
 ## State tiering for per-player live state
 
@@ -241,7 +252,7 @@ simpler and the tick time is the same.  (b) is never worth it.
 
 ## Recommended configuration
 
-`docker/postgresql.conf` (server level) and `sql/450_tuning.sql` / `sql/455_storage_params.sql` (database level), with the **risk of every non-default setting**:
+`docker/postgresql.conf` (server level) and `sql/450_tuning.sql` (database level), with the **risk of every non-default setting**:
 
 | setting | value | why (evidence) | risk |
 |---|---|---|---|
@@ -249,7 +260,7 @@ simpler and the tick time is the same.  (b) is never worth it.
 | `synchronous_commit` | **off** (server and database) | no tick-time gain measured on local NVMe-class storage; it keeps a slow flush (network disk) out of every tick | after an OS crash or power loss the last few hundred ms (`wal_writer_delay` 200 ms, up to 3 rounds) of committed ticks can be lost; the cluster is **never** corrupted.  Set `on` where zero loss matters more |
 | `full_page_writes` | on | off saves 16% WAL, no time | torn pages after power loss |
 | `wal_level` | replica (default) | `minimal` saves 4 KB of 37 per tick | `minimal` forbids base backups and replication |
-| `wal_compression` | <<S7-WALC>> | -46% WAL for chunk generation (full-page images) | CPU on the tick's path |
+| `wal_compression` | **lz4** | -14% WAL in steady state, -46% while chunks are generated (full-page images); no tick cost visible | a little CPU per full-page image |
 | `shared_buffers` | **128MB** | larger makes every commit slower (cause 3); the OS page cache holds the world | misses read from the OS cache (microseconds); raise it only after the truncates leave the tick |
 | `work_mem` | 64MB | 20 simultaneous joiners spill 30 MB at 4-16 MB | up to 64 MB per sort/hash node: with a handful of sessions no concern |
 | `maintenance_work_mem` | 128MB | vacuum, index builds | none |
@@ -257,12 +268,11 @@ simpler and the tick time is the same.  (b) is never worth it.
 | `jit` | off (server and database) | +8 ms and 3x the ticks over 100 ms when on | none for this workload |
 | `max_parallel_workers_per_gather` | 0 (server and database) | no gain, start-up cost per short statement | a large analytic query run by hand would not parallelise: `set` it for that session |
 | `random_page_cost`, `effective_cache_size` | 1.1, 4GB | planner hints for the big world tables; no tick effect measured | none |
-| `autovacuum_naptime` | **10s** | queue tables 5.5 MB instead of 53 MB, tick -4 ms | a vacuum worker looks at the database every 10 s: negligible; more analyze WAL (fixed by `sql/455`) |
+| `autovacuum_naptime` | **10s** | queue tables 5.5 MB instead of 53 MB, tick -4 ms | a vacuum worker looks at the database every 10 s: negligible; about 16% more WAL from the re-analysis |
 | `idle_in_transaction_session_timeout` | **10s** (server and database) | one idle transaction: 3x slower within 30 s | kills an admin's idle session after 10 s; `set ... = 0` for it |
 | `track_io_timing`, `track_activities` | defaults (off / on) | +2.6 ms when on / no gain when off | - |
 | logging | `log_checkpoints`, `log_autovacuum_min_duration = 1s`, `log_lock_waits`, `log_temp_files = 8MB`, `log_min_duration_statement = 250ms` | what is needed to find a slow tick afterwards | a little log volume |
 | `huge_pages` | try | none were available to test | none |
-| column statistics of payload columns | target 0 (`sql/455`) | 16% of the WAL <<S7-STATSV>> | the planner has no statistics on columns it never uses |
 | `tools/janitor.sh` | with the development gateway | queues 65 MB -> 5 MB, ticks -4 ms | a session of its own; skip it for an external gateway |
 
 ## What did not help
@@ -273,7 +283,10 @@ simpler and the tick time is the same.  (b) is never worth it.
 ## Container packaging
 
 `docker/` (Dockerfile on `postgres:16` + `postgresql-plpython3-16`, `entrypoint.sh`, `initdb.d/10-dbcraft.sh`, `postgresql.conf`, README) and `docker-compose.yml` (ulimit nofile 65536, shm_size, ports, the read-only mounts for the generator reports and a vanilla capture; Mojang data is never in the image or in git).
-**Docker is not available where this was written (a client, no daemon), so the image was not built and the compose file was not run.**  <<VALIDATE>>
+**Docker is not available where this was written (a client, no daemon), so the image was not built and the compose file was not run.**  What **was** run (`tests/bench/tuning/validate_docker.sh`): `bash -n` on the entrypoint scripts; a real PostgreSQL 16 cluster started with `docker/postgresql.conf` exactly as the image starts it (`-c config_file=...`); `docker/initdb.d/10-dbcraft.sh` executed against it with the environment variables the image sets
+(schema with `--dev-gateway`, 1,286 blocks / 35,723 block states / 260 packets, 32 registries / 773 tags / 19,662 tag members from the mounted capture, `mc.configure_dev_server`); the settings read back from the running server and from the database (they match: `shared_buffers` 128 MB, `work_mem` 64 MB, `jit` off,
+`synchronous_commit` off, `idle_in_transaction_session_timeout` 10 s, `autovacuum_naptime` 10 s, `checkpoint_timeout` 15 min, `max_wal_size` 4 GB, ...; and `sql/450_tuning.sql`'s four database defaults); and a short tick loop (100 players, 100 ticks: median 52.5 ms, max 607 ms, cold, no warm-up).
+**Not run:** `docker build`, `docker compose up`, the entrypoint's gateway loop and janitor start (they need the official image's `docker-entrypoint.sh`), the `shm_size` / `ulimit` settings.
 
 ## Operating-system notes (documentation only, not tested)
 
@@ -291,5 +304,5 @@ tests/bench/tuning/matrix.sh TAG 3 100 200 0.25 'a=ref' 'b=ref,av_nap10|MODE=top
 tests/bench/tuning/live_state.sh 1200                           # state tiering
 tests/bench/tuning/truncate_cost.sh ; chunkpath.sh ; drain_mem.sh ; walgen.sh ; xmin_probe.sh 45 200
 tests/bench/tuning/validate_docker.sh                           # the container pieces without a Docker daemon
-DBCRAFT_TESTDB=dbcraft_tuning tests/sql/run.sh                  # the SQL suite (450, 455 and 456 are the new tests)
+DBCRAFT_TESTDB=dbcraft_tuning tests/sql/run.sh                  # the SQL suite (450 and 456 are the new tests)
 ```
