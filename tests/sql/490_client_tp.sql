@@ -107,3 +107,20 @@ select t.is_true('...and no add_entity at the old position was sent',
 select t.is_true('C, who no longer sees B, is told to remove it',
   position(mc.pkt_remove_entities(array[(select entity_id from mc.player where name = 'B')]) in t.out(3)) > 0);
 select t.reset();
+
+------------------------------------------------------------------------------------------------ a SHORT teleport stays what it was: a relative move from the next movement step
+-- (tests/sql/36 pins those bytes; the fix above only concerns jumps vanilla sends as teleport_entity)
+update mc.player set x = 0.5, y = -60, z = 0.5 where name = 'B';
+update mc.player set x = 2.5, y = -60, z = 0.5 where name = 'C';          -- C stands next to B: a real viewer
+update mc.player set chunk_x = floor(x / 16)::int, chunk_z = floor(z / 16)::int, vis_dirty = true,
+                     sent_qx = mc.quant(x), sent_qy = mc.quant(y), sent_qz = mc.quant(z), sent_yaw = yaw, sent_pitch = pitch where name in ('B', 'C');
+truncate mc.visible;
+select mc.refresh_visibility();
+select t.is_true('C sees B before the short teleport', exists (select 1 from mc.visible v join mc.player c on c.entity_id = v.viewer_eid join mc.player b on b.entity_id = v.target_eid where c.name = 'C' and b.name = 'B'));
+select t.reset();
+select t.send(1, 'chat_command', proto.string('tp B ~ ~ ~3'));
+select mc.apply_chat(21);
+select t.eq('/tp B ~ ~ ~3: B moved 3 blocks', (select z from mc.player where name = 'B'), 3.5::float8);
+select t.eq('...C (a viewer) is told nothing about B yet (the movement step sends the relative move)', t.out(3), '\x'::bytea);
+select t.eq('...the shared position still waits for that step', (select sent_qz from mc.player where name = 'B'), 2048::bigint);
+select t.reset();

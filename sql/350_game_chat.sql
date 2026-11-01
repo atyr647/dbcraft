@@ -79,6 +79,10 @@ declare p mc.player;
 begin
   select * into p from mc.player where uuid = p_uuid;
   if not found or p.entity_id is null then return; end if;
+  -- Only a jump that vanilla's entity tracker sends as a TELEPORT (a delta that does not fit in a short, more than 8 blocks: the movement step's own test) is
+  -- handled here.  A shorter /tp stays a relative move sent by the next movement step, exactly as before (tests/sql/36 pins those bytes, vanilla does the same),
+  -- and the stale base is then at most 8 blocks from the real position, which a new viewer's loaded area still contains.
+  if abs(mc.quant(p.x) - p.sent_qx) <= 32767 and abs(mc.quant(p.y) - p.sent_qy) <= 32767 and abs(mc.quant(p.z) - p.sent_qz) <= 32767 then return; end if;
   insert into mc.play_out (conn_id, data)
     select v.viewer_conn, mc.pkt_teleport_entity(p.entity_id, p.x, p.y, p.z, 0, 0, 0, p.yaw, p.pitch, p.on_ground) || mc.pkt_rotate_head(p.entity_id, p.yaw)
       from mc.visible v where v.target_eid = p.entity_id and v.viewer_conn <> p.conn_id order by v.viewer_conn;
