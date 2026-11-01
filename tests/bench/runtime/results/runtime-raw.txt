@@ -1,0 +1,120 @@
+1 B t500_all load=6.91 t500_all players=500 moving=1.0 load=6.70 | n 60 | wall avg 61.6 p10 35.6 p50 58.7 p95 97.2 p99 114.4 max 123.2 | cpu avg 38.1 p10 28.6 p50 35.9 p95 52.8 p99 57.5 | runq-wait avg 21.5 | phases process 4.4 game 39.7 blocks 0.2 chunks 12.8 drain 4.2 | out rows 894 KB 1340
+1 B t500_20 load=6.91 t500_20 players=500 moving=0.2 load=6.70 | n 60 | wall avg 26.9 p10 14.2 p50 24.5 p95 48.2 p99 50.6 max 52.1 | cpu avg 17.9 p10 11.5 p50 18.3 p95 25.8 p99 29.1 | runq-wait avg 7.2 | phases process 3.2 game 16.3 blocks 0.2 chunks 3.8 drain 2.7 | out rows 566 KB 208
+1 B t2000 load=6.91 t2000 players=2000 moving=1.0 load=6.25 | n 60 | wall avg 117.2 p10 93.1 p50 114.0 p95 174.8 p99 182.1 max 189.3 | cpu avg 108.7 p10 89.7 p50 106.0 p95 147.0 p99 160.7 | runq-wait avg 5.9 | phases process 11.7 game 78.1 blocks 0.4 chunks 18.1 drain 8.0 | out rows 2850 KB 2526
+1 B join441 load=6.91 value=128.9345356
+1 B setblock load=6.91 value=250.80350166666668
+1 B gen64 load=6.91 value=11.814837
+1 C t500_all load=6.25 t500_all players=500 moving=1.0 load=6.15 | n 60 | wall avg 45.4 p10 31.4 p50 37.1 p95 79.8 p99 90.6 max 97.4 | cpu avg 32.8 p10 26.5 p50 32.2 p95 43.3 p99 47.3 | runq-wait avg 10.6 | phases process 3.8 game 28.8 blocks 0.2 chunks 9.3 drain 3.0 | out rows 828 KB 1140
+1 C t500_20 load=6.25 t500_20 players=500 moving=0.2 load=6.13 | n 60 | wall avg 14.2 p10 9.4 p50 13.7 p95 20.7 p99 24.1 max 24.3 | cpu avg 12.1 p10 7.8 p50 11.7 p95 17.5 p99 20.8 | runq-wait avg 0.4 | phases process 2.3 game 8.2 blocks 0.2 chunks 1.7 drain 1.5 | out rows 554 KB 167
+1 C t2000 load=6.25 t2000 players=2000 moving=1.0 load=5.81 | n 60 | wall avg 109.1 p10 79.5 p50 110.9 p95 143.5 p99 145.0 max 145.9 | cpu avg 101.1 p10 73.2 p50 101.2 p95 129.8 p99 135.9 | runq-wait avg 6.0 | phases process 12.5 game 72.3 blocks 0.4 chunks 15.8 drain 7.5 | out rows 2856 KB 2557
+1 C join441 load=6.25 value=89.9023461
+1 C setblock load=6.25 value=191.255376
+1 C gen64 load=6.25 value=10.820293
+1 A t500_all load=5.81 t500_all players=500 moving=1.0 load=5.74 | n 60 | wall avg 41.0 p10 25.6 p50 33.6 p95 79.9 p99 95.3 max 103.5 | cpu avg 32.8 p10 23.3 p50 30.9 p95 48.0 p99 56.1 | runq-wait avg 6.3 | phases process 3.3 game 25.2 blocks 0.1 chunks 8.9 drain 3.1 | out rows 840 KB 1178
+1 A t500_20 load=5.81 t500_20 players=500 moving=0.2 load=5.60 | n 60 | wall avg 16.8 p10 10.5 p50 15.7 p95 26.9 p99 29.5 max 32.3 | cpu avg 13.9 p10 9.2 p50 13.1 p95 22.9 p99 26.3 | runq-wait avg 0.9 | phases process 3.1 game 9.6 blocks 0.1 chunks 2.0 drain 1.7 | out rows 558 KB 180
+1 A t2000 load=5.81 t2000 players=2000 moving=1.0 load=5.43 | n 60 | wall avg 114.9 p10 72.8 p50 120.5 p95 161.1 p99 170.4 max 171.3 | cpu avg 106.8 p10 70.9 p50 109.2 p95 148.4 p99 156.2 | runq-wait avg 5.9 | phases process 12.0 game 76.9 blocks 0.3 chunks 17.1 drain 7.8 | out rows 2879 KB 2615
+1 A join441 load=5.81 value=112.8815021
+1 A setblock load=5.81 value=171.739723
+1 A gen64 load=5.81 value=11.52579
+1 D t500_all load=5.47 t500_all players=500 moving=1.0 load=5.47 | n 60 | wall avg 27.5 p10 20.7 p50 25.9 p95 42.6 p99 50.3 max 50.8 | cpu avg 23.7 p10 18.7 p50 23.3 p95 34.6 p99 36.3 | runq-wait avg 1.9 | phases process 2.1 game 17.2 blocks 0.2 chunks 5.9 drain 1.8 | out rows 841 KB 1181
+1 D t500_20 load=5.47 t500_20 players=500 moving=0.2 load=5.36 | n 60 | wall avg 11.2 p10 7.3 p50 11.3 p95 16.4 p99 20.6 max 21.6 | cpu avg 9.0 p10 4.6 p50 9.4 p95 13.3 p99 17.6 | runq-wait avg 0.3 | phases process 1.8 game 6.5 blocks 0.1 chunks 1.4 drain 1.1 | out rows 554 KB 169
+1 D t2000 load=5.47 t2000 players=2000 moving=1.0 load=5.25 | n 60 | wall avg 75.0 p10 59.8 p50 68.3 p95 110.2 p99 127.0 max 137.9 | cpu avg 68.8 p10 54.2 p50 63.8 p95 99.8 p99 107.9 | runq-wait avg 3.5 | phases process 7.2 game 51.1 blocks 0.3 chunks 10.6 drain 5.4 | out rows 2796 KB 2365
+1 D join441 load=5.47 value=90.3950772
+1 D setblock load=5.47 value=169.05768866666668
+1 D gen64 load=5.47 value=11.139397
+2 B t500_all load=5.15 t500_all players=500 moving=1.0 load=5.15 | n 60 | wall avg 37.7 p10 26.5 p50 33.8 p95 61.1 p99 72.5 max 72.7 | cpu avg 31.6 p10 22.8 p50 30.0 p95 46.0 p99 51.2 | runq-wait avg 4.0 | phases process 3.4 game 23.7 blocks 0.2 chunks 7.4 drain 2.8 | out rows 827 KB 1131
+2 B t500_20 load=5.15 t500_20 players=500 moving=0.2 load=5.22 | n 60 | wall avg 16.1 p10 11.6 p50 14.9 p95 23.9 p99 27.7 max 29.5 | cpu avg 13.8 p10 9.2 p50 13.2 p95 19.8 p99 26.8 | runq-wait avg 0.4 | phases process 2.6 game 9.4 blocks 0.1 chunks 2.2 drain 1.5 | out rows 562 KB 194
+2 B t2000 load=5.15 t2000 players=2000 moving=1.0 load=5.03 | n 60 | wall avg 101.2 p10 86.8 p50 94.2 p95 134.1 p99 144.2 max 150.5 | cpu avg 95.4 p10 82.8 p50 90.3 p95 124.1 p99 133.0 | runq-wait avg 3.4 | phases process 10.7 game 67.9 blocks 0.3 chunks 14.8 drain 7.0 | out rows 2870 KB 2586
+2 B join441 load=5.15 value=102.5754816
+2 B setblock load=5.15 value=10.781218333333333
+2 B gen64 load=5.15 value=7.906707
+2 D t500_all load=5.03 t500_all players=500 moving=1.0 load=5.03 | n 60 | wall avg 29.5 p10 22.3 p50 29.0 p95 39.6 p99 42.6 max 45.9 | cpu avg 25.9 p10 19.9 p50 25.9 p95 35.5 p99 37.5 | runq-wait avg 1.1 | phases process 2.7 game 18.7 blocks 0.1 chunks 5.8 drain 2.0 | out rows 841 KB 1172
+2 D t500_20 load=5.03 t500_20 players=500 moving=0.2 load=5.03 | n 60 | wall avg 12.2 p10 6.7 p50 10.8 p95 22.3 p99 34.8 max 41.1 | cpu avg 10.0 p10 4.9 p50 9.5 p95 19.0 p99 30.2 | runq-wait avg 0.4 | phases process 2.2 game 6.6 blocks 0.1 chunks 1.8 drain 1.2 | out rows 568 KB 207
+2 D t2000 load=5.03 t2000 players=2000 moving=1.0 load=4.94 | n 60 | wall avg 76.4 p10 60.9 p50 74.8 p95 103.3 p99 107.3 max 107.6 | cpu avg 71.1 p10 56.7 p50 70.1 p95 91.2 p99 99.0 | runq-wait avg 3.2 | phases process 7.6 game 51.2 blocks 0.3 chunks 11.3 drain 5.3 | out rows 2836 KB 2489
+2 D join441 load=5.03 value=61.9617236
+2 D setblock load=5.03 value=11.963651666666667
+2 D gen64 load=5.03 value=10.967226
+2 A t500_all load=4.94 t500_all players=500 moving=1.0 load=5.11 | n 60 | wall avg 36.4 p10 25.9 p50 33.7 p95 51.5 p99 57.0 max 59.0 | cpu avg 33.1 p10 24.1 p50 31.6 p95 47.6 p99 50.2 | runq-wait avg 1.5 | phases process 3.2 game 22.0 blocks 0.1 chunks 8.2 drain 2.4 | out rows 889 KB 1322
+2 A t500_20 load=4.94 t500_20 players=500 moving=0.2 load=5.11 | n 60 | wall avg 16.6 p10 9.6 p50 15.8 p95 23.9 p99 35.6 max 40.9 | cpu avg 13.4 p10 7.4 p50 12.9 p95 20.8 p99 24.4 | runq-wait avg 1.3 | phases process 2.7 game 9.4 blocks 0.1 chunks 2.2 drain 1.8 | out rows 562 KB 188
+2 A t2000 load=4.94 t2000 players=2000 moving=1.0 load=5.02 | n 60 | wall avg 100.8 p10 75.0 p50 94.3 p95 140.1 p99 151.0 max 152.5 | cpu avg 93.7 p10 70.4 p50 89.1 p95 132.5 p99 133.9 | runq-wait avg 4.1 | phases process 9.7 game 67.2 blocks 0.3 chunks 16.0 drain 7.0 | out rows 2886 KB 2638
+2 A join441 load=4.94 value=105.8830118
+2 A setblock load=4.94 value=13.316737666666667
+2 A gen64 load=4.94 value=11.610217
+2 C t500_all load=4.93 t500_all players=500 moving=1.0 load=4.93 | n 60 | wall avg 29.1 p10 24.3 p50 28.5 p95 36.4 p99 43.2 max 46.0 | cpu avg 26.0 p10 21.4 p50 25.3 p95 31.6 p99 34.1 | runq-wait avg 0.8 | phases process 2.7 game 17.8 blocks 0.1 chunks 6.0 drain 2.0 | out rows 829 KB 1140
+2 C t500_20 load=4.93 t500_20 players=500 moving=0.2 load=5.02 | n 60 | wall avg 13.5 p10 10.4 p50 12.5 p95 20.2 p99 21.4 max 21.5 | cpu avg 11.2 p10 8.1 p50 10.9 p95 17.7 p99 19.0 | runq-wait avg 0.5 | phases process 2.1 game 7.7 blocks 0.1 chunks 2.1 drain 1.3 | out rows 572 KB 219
+2 C t2000 load=4.93 t2000 players=2000 moving=1.0 load=5.02 | n 60 | wall avg 90.9 p10 71.9 p50 86.9 p95 120.7 p99 148.8 max 165.8 | cpu avg 83.2 p10 69.8 p50 81.6 p95 112.5 p99 117.1 | runq-wait avg 5.0 | phases process 9.5 game 61.3 blocks 0.3 chunks 13.3 drain 5.9 | out rows 2865 KB 2564
+2 C join441 load=4.93 value=107.4429696
+2 C setblock load=4.93 value=10.609799666666667
+2 C gen64 load=4.93 value=10.54475
+3 C t500_all load=5.02 t500_all players=500 moving=1.0 load=5.02 | n 60 | wall avg 28.7 p10 21.7 p50 27.7 p95 40.3 p99 42.9 max 44.9 | cpu avg 25.4 p10 19.2 p50 25.5 p95 34.0 p99 37.6 | runq-wait avg 1.1 | phases process 2.5 game 18.1 blocks 0.1 chunks 5.7 drain 1.9 | out rows 831 KB 1145
+3 C t500_20 load=5.02 t500_20 players=500 moving=0.2 load=5.02 | n 60 | wall avg 11.4 p10 8.7 p50 11.0 p95 16.8 p99 18.7 max 18.7 | cpu avg 9.1 p10 5.6 p50 8.7 p95 14.9 p99 17.5 | runq-wait avg 0.1 | phases process 1.9 game 6.5 blocks 0.1 chunks 1.6 drain 1.1 | out rows 565 KB 199
+3 C t2000 load=5.02 t2000 players=2000 moving=1.0 load=4.79 | n 60 | wall avg 95.5 p10 79.4 p50 88.9 p95 131.2 p99 139.6 max 140.5 | cpu avg 91.5 p10 74.2 p50 84.7 p95 126.6 p99 135.9 | runq-wait avg 1.6 | phases process 11.8 game 62.5 blocks 0.4 chunks 13.6 drain 6.6 | out rows 2814 KB 2417
+3 C join441 load=5.02 value=99.162578
+3 C setblock load=5.02 value=13.27135
+3 C gen64 load=5.02 value=13.921423
+3 B t500_all load=4.79 t500_all players=500 moving=1.0 load=4.65 | n 60 | wall avg 38.7 p10 27.0 p50 37.8 p95 50.4 p99 62.5 max 65.8 | cpu avg 36.4 p10 25.6 p50 34.7 p95 49.4 p99 59.6 | runq-wait avg 0.1 | phases process 3.7 game 24.3 blocks 0.2 chunks 7.6 drain 2.6 | out rows 829 KB 1140
+3 B t500_20 load=4.79 t500_20 players=500 moving=0.2 load=4.65 | n 60 | wall avg 12.7 p10 9.6 p50 12.6 p95 18.6 p99 19.9 max 20.1 | cpu avg 10.8 p10 7.3 p50 10.1 p95 17.9 p99 19.6 | runq-wait avg 0.0 | phases process 2.1 game 7.3 blocks 0.1 chunks 1.7 drain 1.3 | out rows 568 KB 210
+3 B t2000 load=4.79 t2000 players=2000 moving=1.0 load=4.49 | n 60 | wall avg 105.2 p10 87.1 p50 100.6 p95 139.4 p99 144.1 max 146.6 | cpu avg 102.0 p10 84.3 p50 96.5 p95 136.8 p99 141.6 | runq-wait avg 0.3 | phases process 10.6 game 70.8 blocks 0.4 chunks 15.6 drain 7.1 | out rows 2887 KB 2641
+3 B join441 load=4.79 value=132.3717501
+3 B setblock load=4.79 value=12.095469333333334
+3 B gen64 load=4.79 value=8.010028
+3 A t500_all load=4.49 t500_all players=500 moving=1.0 load=4.37 | n 60 | wall avg 40.5 p10 30.2 p50 37.5 p95 57.2 p99 64.2 max 68.4 | cpu avg 37.7 p10 28.3 p50 34.7 p95 53.5 p99 59.4 | runq-wait avg 0.5 | phases process 3.7 game 25.6 blocks 0.2 chunks 7.8 drain 2.8 | out rows 829 KB 1140
+3 A t500_20 load=4.49 t500_20 players=500 moving=0.2 load=4.37 | n 60 | wall avg 14.4 p10 9.9 p50 13.8 p95 21.9 p99 24.3 max 24.5 | cpu avg 12.6 p10 7.8 p50 12.0 p95 20.3 p99 22.6 | runq-wait avg 0.1 | phases process 2.3 game 8.1 blocks 0.1 chunks 2.1 drain 1.6 | out rows 577 KB 237
+3 A t2000 load=4.49 t2000 players=2000 moving=1.0 load=4.24 | n 60 | wall avg 96.9 p10 81.2 p50 94.5 p95 125.7 p99 142.1 max 153.9 | cpu avg 93.5 p10 80.2 p50 91.3 p95 114.9 p99 138.1 | runq-wait avg 0.3 | phases process 11.1 game 64.6 blocks 0.3 chunks 13.6 drain 6.5 | out rows 2827 KB 2470
+3 A join441 load=4.49 value=119.27948
+3 A setblock load=4.49 value=12.081827333333333
+3 A gen64 load=4.49 value=13.902909
+3 D t500_all load=4.24 t500_all players=500 moving=1.0 load=4.14 | n 60 | wall avg 27.7 p10 22.0 p50 26.3 p95 37.0 p99 44.5 max 44.7 | cpu avg 25.1 p10 20.7 p50 24.2 p95 35.2 p99 41.8 | runq-wait avg 0.4 | phases process 2.5 game 17.1 blocks 0.1 chunks 5.7 drain 1.9 | out rows 853 KB 1210
+3 D t500_20 load=4.24 t500_20 players=500 moving=0.2 load=4.14 | n 60 | wall avg 11.0 p10 7.9 p50 10.8 p95 16.2 p99 18.0 max 18.9 | cpu avg 9.0 p10 5.5 p50 8.4 p95 15.1 p99 15.8 | runq-wait avg 0.1 | phases process 1.9 game 6.3 blocks 0.1 chunks 1.4 drain 1.1 | out rows 553 KB 167
+3 D t2000 load=4.24 t2000 players=2000 moving=1.0 load=3.96 | n 60 | wall avg 72.6 p10 55.7 p50 70.6 p95 95.0 p99 102.1 max 102.9 | cpu avg 69.6 p10 52.6 p50 69.4 p95 92.4 p99 100.7 | runq-wait avg 0.4 | phases process 7.2 game 48.4 blocks 0.3 chunks 11.0 drain 5.1 | out rows 2866 KB 2579
+3 D join441 load=4.24 value=81.3499098
+3 D setblock load=4.24 value=8.964606
+3 D gen64 load=4.24 value=10.87613
+4 C t500_all load=3.96 t500_all players=500 moving=1.0 load=3.97 | n 60 | wall avg 30.6 p10 19.2 p50 28.9 p95 43.1 p99 46.2 max 46.2 | cpu avg 27.8 p10 17.9 p50 26.3 p95 40.6 p99 44.2 | runq-wait avg 0.4 | phases process 2.9 game 19.0 blocks 0.1 chunks 6.2 drain 2.0 | out rows 829 KB 1140
+4 C t500_20 load=3.96 t500_20 players=500 moving=0.2 load=3.97 | n 60 | wall avg 11.9 p10 8.8 p50 11.6 p95 18.3 p99 19.4 max 19.5 | cpu avg 9.8 p10 6.1 p50 9.2 p95 15.7 p99 18.9 | runq-wait avg 0.1 | phases process 2.0 game 6.8 blocks 0.1 chunks 1.5 drain 1.1 | out rows 552 KB 167
+4 C t2000 load=3.96 t2000 players=2000 moving=1.0 load=3.82 | n 60 | wall avg 84.3 p10 69.4 p50 81.7 p95 105.3 p99 118.3 max 121.5 | cpu avg 80.2 p10 65.6 p50 78.1 p95 100.9 p99 106.3 | runq-wait avg 0.5 | phases process 8.3 game 56.2 blocks 0.3 chunks 12.8 drain 6.2 | out rows 2854 KB 2542
+4 C join441 load=3.96 value=93.4941139
+4 C setblock load=3.96 value=12.577260666666668
+4 C gen64 load=3.96 value=11.809114
+4 D t500_all load=3.82 t500_all players=500 moving=1.0 load=3.75 | n 60 | wall avg 27.2 p10 22.2 p50 26.4 p95 37.8 p99 39.5 max 40.1 | cpu avg 24.3 p10 19.2 p50 23.6 p95 33.1 p99 35.6 | runq-wait avg 0.5 | phases process 2.8 game 16.5 blocks 0.1 chunks 5.7 drain 1.8 | out rows 884 KB 1306
+4 D t500_20 load=3.82 t500_20 players=500 moving=0.2 load=3.75 | n 60 | wall avg 11.5 p10 7.4 p50 11.1 p95 16.5 p99 21.2 max 25.3 | cpu avg 9.4 p10 5.8 p50 8.8 p95 15.5 p99 19.7 | runq-wait avg 0.0 | phases process 1.9 game 6.4 blocks 0.1 chunks 1.8 drain 1.1 | out rows 577 KB 237
+4 D t2000 load=3.82 t2000 players=2000 moving=1.0 load=3.64 | n 60 | wall avg 71.5 p10 63.5 p50 70.2 p95 82.1 p99 88.7 max 95.6 | cpu avg 67.4 p10 60.5 p50 65.6 p95 75.7 p99 84.4 | runq-wait avg 1.8 | phases process 6.9 game 47.7 blocks 0.3 chunks 10.9 drain 5.2 | out rows 2848 KB 2534
+4 D join441 load=3.82 value=75.3070548
+4 D setblock load=3.82 value=8.000400666666666
+4 D gen64 load=3.82 value=11.771818
+4 B t500_all load=3.64 t500_all players=500 moving=1.0 load=3.58 | n 60 | wall avg 35.8 p10 27.8 p50 33.9 p95 50.6 p99 51.2 max 51.6 | cpu avg 33.8 p10 25.8 p50 31.7 p95 47.2 p99 49.8 | runq-wait avg 0.1 | phases process 3.3 game 21.7 blocks 0.2 chunks 7.7 drain 2.5 | out rows 862 KB 1244
+4 B t500_20 load=3.64 t500_20 players=500 moving=0.2 load=3.58 | n 60 | wall avg 14.5 p10 9.6 p50 13.9 p95 20.4 p99 26.6 max 27.4 | cpu avg 12.4 p10 7.0 p50 11.8 p95 19.7 p99 24.3 | runq-wait avg 0.0 | phases process 2.3 game 8.4 blocks 0.1 chunks 2.0 drain 1.4 | out rows 560 KB 188
+4 B t2000 load=3.64 t2000 players=2000 moving=1.0 load=3.49 | n 60 | wall avg 99.7 p10 73.2 p50 98.0 p95 137.1 p99 154.0 max 154.7 | cpu avg 96.2 p10 69.4 p50 94.3 p95 134.5 p99 151.1 | runq-wait avg 0.3 | phases process 9.7 game 67.2 blocks 0.3 chunks 15.0 drain 6.9 | out rows 2910 KB 2709
+4 B join441 load=3.64 value=120.9926416
+4 B setblock load=3.64 value=11.409473333333333
+4 B gen64 load=3.64 value=11.970222
+4 A t500_all load=3.45 t500_all players=500 moving=1.0 load=3.45 | n 60 | wall avg 34.4 p10 28.3 p50 32.3 p95 52.6 p99 56.0 max 56.5 | cpu avg 31.9 p10 24.1 p50 30.4 p95 49.7 p99 54.8 | runq-wait avg 0.0 | phases process 3.1 game 21.2 blocks 0.2 chunks 7.2 drain 2.4 | out rows 863 KB 1240
+4 A t500_20 load=3.45 t500_20 players=500 moving=0.2 load=3.50 | n 60 | wall avg 13.3 p10 9.7 p50 12.3 p95 22.3 p99 25.3 max 27.4 | cpu avg 11.4 p10 7.5 p50 10.3 p95 18.4 p99 23.7 | runq-wait avg 0.2 | phases process 2.2 game 7.4 blocks 0.1 chunks 1.9 drain 1.3 | out rows 575 KB 229
+4 A t2000 load=3.45 t2000 players=2000 moving=1.0 load=3.42 | n 60 | wall avg 101.0 p10 84.1 p50 97.4 p95 136.5 p99 147.2 max 149.6 | cpu avg 97.9 p10 80.5 p50 93.5 p95 134.9 p99 144.6 | runq-wait avg 0.2 | phases process 11.6 game 67.7 blocks 0.4 chunks 14.0 drain 6.8 | out rows 2823 KB 2440
+4 A join441 load=3.45 value=109.304084
+4 A setblock load=3.45 value=11.799418333333334
+4 A gen64 load=3.45 value=14.17174
+5 B t500_all load=3.42 t500_all players=500 moving=1.0 load=3.39 | n 60 | wall avg 34.3 p10 28.7 p50 33.4 p95 46.1 p99 56.1 max 56.4 | cpu avg 32.3 p10 27.0 p50 30.9 p95 45.6 p99 54.3 | runq-wait avg 0.1 | phases process 3.1 game 20.1 blocks 0.2 chunks 8.1 drain 2.5 | out rows 907 KB 1385
+5 B t500_20 load=3.42 t500_20 players=500 moving=0.2 load=3.39 | n 60 | wall avg 16.8 p10 10.4 p50 15.9 p95 24.7 p99 28.4 max 28.7 | cpu avg 14.9 p10 7.6 p50 14.8 p95 22.8 p99 26.1 | runq-wait avg 0.0 | phases process 2.6 game 9.6 blocks 0.1 chunks 2.5 drain 1.6 | out rows 577 KB 237
+5 B t2000 load=3.42 t2000 players=2000 moving=1.0 load=3.49 | n 60 | wall avg 98.3 p10 81.9 p50 94.8 p95 129.9 p99 143.9 max 144.0 | cpu avg 95.1 p10 77.3 p50 92.6 p95 126.8 p99 140.6 | runq-wait avg 0.3 | phases process 10.8 game 65.4 blocks 0.4 chunks 14.5 drain 6.7 | out rows 2863 KB 2566
+5 B join441 load=3.42 value=114.1100282
+5 B setblock load=3.42 value=16.754774666666666
+5 B gen64 load=3.42 value=11.99965
+5 D t500_all load=3.49 t500_all players=500 moving=1.0 load=3.37 | n 60 | wall avg 25.8 p10 20.9 p50 24.2 p95 36.0 p99 42.3 max 46.3 | cpu avg 23.6 p10 19.1 p50 22.2 p95 34.9 p99 37.8 | runq-wait avg 0.2 | phases process 2.3 game 16.2 blocks 0.1 chunks 5.1 drain 1.9 | out rows 814 KB 1088
+5 D t500_20 load=3.49 t500_20 players=500 moving=0.2 load=3.37 | n 60 | wall avg 12.0 p10 7.8 p50 11.3 p95 17.1 p99 19.7 max 20.4 | cpu avg 9.8 p10 5.9 p50 9.3 p95 15.0 p99 18.4 | runq-wait avg 0.2 | phases process 2.1 game 6.9 blocks 0.1 chunks 1.4 drain 1.2 | out rows 553 KB 161
+5 D t2000 load=3.49 t2000 players=2000 moving=1.0 load=3.39 | n 60 | wall avg 68.4 p10 61.2 p50 66.6 p95 80.0 p99 108.1 max 118.4 | cpu avg 65.9 p10 59.3 p50 64.1 p95 78.4 p99 105.7 | runq-wait avg 0.3 | phases process 6.9 game 45.4 blocks 0.3 chunks 10.5 drain 4.7 | out rows 2867 KB 2572
+5 D join441 load=3.49 value=96.78258
+5 D setblock load=3.49 value=9.781723666666666
+5 D gen64 load=3.49 value=9.621366
+5 C t500_all load=3.39 t500_all players=500 moving=1.0 load=3.43 | n 60 | wall avg 31.9 p10 25.9 p50 30.4 p95 44.9 p99 48.9 max 52.0 | cpu avg 28.8 p10 21.3 p50 27.2 p95 39.8 p99 47.9 | runq-wait avg 0.9 | phases process 3.1 game 19.4 blocks 0.2 chunks 6.7 drain 2.2 | out rows 827 KB 1131
+5 C t500_20 load=3.39 t500_20 players=500 moving=0.2 load=3.43 | n 60 | wall avg 13.5 p10 8.2 p50 11.6 p95 24.1 p99 26.4 max 26.6 | cpu avg 11.7 p10 6.1 p50 10.8 p95 23.0 p99 24.0 | runq-wait avg 0.1 | phases process 2.1 game 8.0 blocks 0.1 chunks 1.7 drain 1.2 | out rows 554 KB 164
+5 C t2000 load=3.39 t2000 players=2000 moving=1.0 load=3.52 | n 60 | wall avg 89.7 p10 63.5 p50 89.5 p95 122.2 p99 128.1 max 129.2 | cpu avg 84.1 p10 59.7 p50 83.4 p95 118.3 p99 121.2 | runq-wait avg 2.8 | phases process 10.6 game 59.5 blocks 0.4 chunks 12.5 drain 6.0 | out rows 2792 KB 2354
+5 C join441 load=3.39 value=117.4213107
+5 C setblock load=3.39 value=15.060203333333334
+5 C gen64 load=3.39 value=11.973152
+5 A t500_all load=3.72 t500_all players=500 moving=1.0 load=3.72 | n 60 | wall avg 33.1 p10 27.7 p50 32.7 p95 41.3 p99 46.7 max 46.8 | cpu avg 31.1 p10 26.1 p50 30.7 p95 39.6 p99 44.5 | runq-wait avg 0.1 | phases process 3.0 game 20.7 blocks 0.2 chunks 6.5 drain 2.4 | out rows 841 KB 1178
+5 A t500_20 load=3.72 t500_20 players=500 moving=0.2 load=3.66 | n 60 | wall avg 14.9 p10 8.5 p50 13.6 p95 24.4 p99 27.2 max 29.4 | cpu avg 12.7 p10 6.2 p50 11.7 p95 22.2 p99 25.3 | runq-wait avg 0.1 | phases process 2.2 game 8.3 blocks 0.1 chunks 2.6 drain 1.5 | out rows 593 KB 292
+5 A t2000 load=3.72 t2000 players=2000 moving=1.0 load=3.79 | n 60 | wall avg 101.9 p10 76.2 p50 98.1 p95 149.0 p99 180.6 max 192.8 | cpu avg 97.9 p10 71.3 p50 92.8 p95 145.2 p99 174.8 | runq-wait avg 1.7 | phases process 9.8 game 69.1 blocks 0.4 chunks 14.6 drain 7.3 | out rows 2853 KB 2537
+5 A join441 load=3.72 value=156.4095622
+5 A setblock load=3.72 value=13.293258
+5 A gen64 load=3.72 value=15.97956
