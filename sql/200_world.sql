@@ -110,11 +110,12 @@ create table if not exists mc.chunk_cache (
 -- Block changes for the tick to broadcast.  Transient, hence unlogged.
 create unlogged table if not exists mc.block_event (
     id        bigint generated always as identity primary key,
+    kind      text not null default 'block' check (kind in ('block', 'section')),   -- 'section': a whole section was replaced; x, y, z = its lowest corner
     dimension text not null,
     x         int  not null,
     y         int  not null,
     z         int  not null,
-    old_state text not null,
+    old_state text not null,                 -- '*' for a section event
     new_state text not null,
     at        timestamptz not null default now()
 );
