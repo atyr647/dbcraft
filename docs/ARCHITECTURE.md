@@ -67,7 +67,7 @@ breaker, and `block_changed_ack` last.  Chunk streaming: a player in another chu
 ## Verified against the real vanilla 26.3 server
 
 Vanilla was run (jar SHA-1 `33680f5f...`, offline, flat, view distance 2) and a scripted client recorded what it sends; the same client then talked to dbcraft
-over TCP and `tests/e2e/compare_*.py` compared the two (`tests/e2e/run_all.sh`, about two minutes; 46 comparisons, all passing):
+over TCP and `tests/e2e/compare_*.py` compared the two (`tests/e2e/run_all.sh`, about two minutes; 47 comparisons, all passing):
 
 | Scenario | Compared | Result |
 |---|---|---|
