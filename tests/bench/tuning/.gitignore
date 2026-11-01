@@ -1,0 +1,5 @@
+# raw per-trial output (latency CSVs, server logs, snapshots) is large; the matrix summaries are kept
+results/*
+!results/matrix_*.txt
+!results/matrix_*.names
+!results/*.md
