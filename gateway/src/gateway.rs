@@ -143,6 +143,11 @@ impl Gateway {
         let key_pkt = db.exec("select net.pkt('login', 'serverbound', 'minecraft:key')").map_err(|e| e.to_string())?.int(0, 0).ok_or("net.pkt returned no id")? as u32;
         let has_control = db.exec("select to_regclass('net.gateway_control') is not null").map_err(|e| e.to_string())?.boolean(0, 0).unwrap_or(false);
 
+        // a stop request that predates this process (left by an earlier run's shutdown) must not stop it at its first tick
+        if has_control {
+            db.exec("update net.gateway_control set stop = false").map_err(|e| e.to_string())?;
+        }
+
         let rsa = RsaKey::generate(cfg.rsa_bits)?;
         let pub_der = rsa.public_der()?;
         db.query(
