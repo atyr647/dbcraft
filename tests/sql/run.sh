@@ -22,4 +22,5 @@ done
 echo "--- structural checks"
 tools/check_overrides.py || fail=1
 tools/check_fresh_migration.sh 2>&1 | grep -E "^(ok|FAIL)" || fail=1
+if out=$(tools/check_inlining.sh 2>&1); then echo "ok   inlining guard: $(echo "$out" | grep -c "^ok") hot functions keep their inlining behaviour"; else echo "$out" | grep -v "^ok"; echo "FAIL inlining guard"; fail=1; fi
 exit $fail

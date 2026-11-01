@@ -23,7 +23,16 @@ net.play_begin/1 | 400_integration.sql | integration of the join burst with the 
 net.stream_chunks/0 | 436_stream_chunks_merge.sql | the tick worker's array computation plus the chunk worker's request/delivery calls (found by merging)
 proto.f32_read/2 | 315_game_fast.sql | inlinable versions of the codec (identical results, 7x faster)
 proto.f64_read/2 | 315_game_fast.sql | inlinable versions of the codec
-proto.frame/2 | 315_game_fast.sql | inlinable versions of the codec
-proto.varint/1 | 315_game_fast.sql | inlinable versions of the codec
+proto.frame/2 | 480_inlining.sql | PL/pgSQL: callers pass computed bodies, so the SQL version was never inlined and re-planned its body in every statement (sql/315 is the inlinable first version)
+proto.varint/1 | 480_inlining.sql | PL/pgSQL for the same reason as proto.frame
 mc.section_blocks/2 | 291_section_compression.sql | reads the palette once per section (identical rows); keeps blocks_in fast when section rows are compressed (opt-in, docs/PERF-SCALE.md)
 mc.unpack_longs/3 | 291_section_compression.sql | binds the section data once per call (identical result, proven in tests/sql/291); the original decompressed a compressed value ~12,000 times per section
+mc.chat_type_id/1 | 480_inlining.sql | key lookup as PL/pgSQL (cached plan; the SQL version re-planned per statement, 90 us)
+mc.permission_level/1 | 480_inlining.sql | key lookup as PL/pgSQL
+mc.prop/1 | 480_inlining.sql | key lookup as PL/pgSQL
+mc.prop_bool/1 | 480_inlining.sql | key lookup as PL/pgSQL
+mc.prop_int/1 | 480_inlining.sql | key lookup as PL/pgSQL
+mc.world_ready/0 | 480_inlining.sql | PL/pgSQL (cached plan)
+net.pkt/3 | 480_inlining.sql | key lookup as PL/pgSQL (123 us -> 42 us per call)
+net.pkt_name/3 | 480_inlining.sql | key lookup as PL/pgSQL
+net.setting/1 | 480_inlining.sql | key lookup as PL/pgSQL

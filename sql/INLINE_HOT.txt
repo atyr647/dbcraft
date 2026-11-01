@@ -1,0 +1,29 @@
+# Hot-path functions whose inlining behaviour must not regress.  Checked by tools/check_inlining.sh (run by tests/sql/run.sh) against a clean migration.
+# Format:  schema.name/argument-count | mode | why
+#   inline      LANGUAGE sql and inlined when the argument is a column, constant or variable
+#   inline_any  ... and also when the argument is an expensive expression (the parameter appears once in the body)
+#   plpgsql     must stay PL/pgSQL.  Their parameters appear several times in the body, every call site passes a computed expression, and a LANGUAGE sql function
+#               that cannot be inlined parses and plans its body again in every statement execution (proto.frame: about 100 us per statement).  As PL/pgSQL the
+#               plan is cached.  See docs/PERF-INLINE.md and sql/480_inlining.sql before changing any of these.
+proto.frame/2        | plpgsql    | called with computed packet bodies everywhere; a SQL version costs about 100 us per statement execution
+proto.varint/1       | plpgsql    | called with computed lengths (octet_length(...) of builder expressions); the SQL version cost 2.8 us per call and was not inlined there
+proto.i8/1           | inline_any | wrapper of set_byte, parameter used once
+proto.i32/1          | inline_any | int4send
+proto.i64/1          | inline_any | int8send
+proto.f32/1          | inline_any | float4send
+proto.f64/1          | inline_any | float8send
+proto.bool/1         | inline_any | one CASE
+proto.position/3     | inline_any | packed block position, every packet with a position
+mc.cb/2              | inline_any | clientbound packet builder used by every pkt_* function
+mc.angle_byte/1      | inline_any | movement packets
+mc.quant/1           | inline_any | movement packets (position quantisation)
+proto.i16/1          | inline     | cheap arguments only (parameter used twice)
+proto.uuid/1         | inline     | hex decode of the text form
+proto.string/1       | inline     | STABLE on purpose: convert_to is STABLE, an IMMUTABLE marking blocked inlining (sql/480)
+proto.frame_small_compressed/2 | inline | compressed-connection framing
+net.frame/3          | inline     | 300 us -> 8 ns once inlinable (NET worker); keep it free of volatile calls
+proto.i32_read/2     | inline     | packet decoding of movement input
+proto.i64_read/2     | inline     | packet decoding
+proto.f64_read/2     | inline     | packet decoding
+proto.f32_read/2     | inline     | packet decoding
+proto.u16_read/2     | inline     | packet decoding
