@@ -140,7 +140,8 @@ begin
        from (select distinct c.dimension, c.cx0 + d.i as cx, c.cz0 + d2.i as cz
                from mc.entity_lane_cand(p_tick, p_ids) c, (values (0), (1), (2)) d(i), (values (0), (1), (2)) d2(i)
               where c.cx1 - c.cx0 <= 2 and c.cz1 - c.cz0 <= 2 and c.cx0 + d.i <= c.cx1 and c.cz0 + d2.i <= c.cz1
-                and not exists (select 1 from mc.entity_floor f where f.dimension = c.dimension and f.cx = c.cx0 + d.i and f.cz = c.cz0 + d2.i and f.tops is not null)) m;
+                and not exists (select 1 from mc.entity_floor f where f.dimension = c.dimension and f.cx = c.cx0 + d.i and f.cz = c.cz0 + d2.i and f.tops is not null)
+              order by 1, 2, 3 limit 8) m;      -- at most 8 floor builds (about 1.7 ms each) per call: mobs in chunks not summarised yet take the exact sweep and get their lane a tick later
     -- Valid when every column the walk covers has its highest solid cell exactly under the feet.  Fast path: all footprint chunks are uniform at that level (two integer
     -- comparisons per chunk).  Otherwise the columns are checked one by one against the chunk's column table: a flat patch inside a bumpy chunk still qualifies.
     select array_agg(q.id), array_agg(q.lend), array_agg(q.every), array_agg(q.slot) into ids, gus, evs, sls
@@ -355,7 +356,7 @@ declare vr int := mc.prop_int('view-distance'); cc int[]; ncx int[]; ncz int[]; 
         rm_conn int[]; rm_cx int[]; rm_cz int[]; rm_ox int[]; rm_oz int[];      -- cells that left a view (and the old centre of that view)
         ad_conn int[]; ad_cx int[]; ad_cz int[]; ad_nx int[]; ad_nz int[];      -- cells that entered a view (and the new centre)
 begin
-    with gone as (delete from mc.entity_viewer_cell vc where not exists (select 1 from mc.player pl where pl.conn_id = vc.conn_id) returning conn_id)
+    with gone as (delete from mc.entity_viewer_cell vc where vc.conn_id not in (select pl.conn_id from mc.player pl where pl.conn_id is not null) returning conn_id)      -- NOT IN (hashed): the function-level enable_hashjoin = off turned the NOT EXISTS anti-join into 500 x 500 comparisons (8 ms per tick at 500 players)
     delete from mc.entity_cell_viewer v using gone g where v.conn_id = g.conn_id;
     select array_agg(pl.conn_id), array_agg(pl.chunk_x), array_agg(pl.chunk_z), array_agg(vc.cx), array_agg(vc.cz) into cc, ncx, ncz, ocx, ocz
       from mc.player pl left join mc.entity_viewer_cell vc on vc.conn_id = pl.conn_id
