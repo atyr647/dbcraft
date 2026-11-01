@@ -111,6 +111,32 @@ select t.is_true('D: with lanes the cow was in a lane before the block and the s
 select t.is_true('D: and it ends exactly where the exact sweep ends', (select abs(a.x - b.x) < 1e-9 and abs(a.z - b.z) < 1e-9 from t.walk_on a, t.walk_off b));
 select t.is_true('D: it is not in a lane any more (the chunk floor is no longer uniform)', (select not in_lane from t.walk_on));
 
+------------------------------------------------------------------------------------------------ G  a flat patch inside a bumpy chunk (the per-column check)
+-- chunk (1, 0) has a one-block pillar at column (20, 5): the chunk is not uniform, so the quick check fails and the columns of each walk are checked one by one
+create table if not exists t.lane_at_2 (id int, in_lane boolean);
+create or replace function t.patch(p_lanes boolean) returns table (id int, x float8, z float8, in_lane boolean) language plpgsql as $$
+begin
+    perform set_config('dbcraft.entity_lanes', case when p_lanes then 'on' else 'off' end, false);
+    delete from mc.entity; delete from mc.entity_lane; delete from mc.play_out; delete from mc.entity_floor; delete from mc.solid_mask;
+    perform mc.set_block('minecraft:overworld', 20, -60, 5, 'minecraft:stone');
+    perform mc.entity_build_mask('minecraft:overworld', cx, cz, sy) from generate_series(-4, 4) cx, generate_series(-4, 4) cz, generate_series(-4, -1) sy;
+    insert into mc.entity (id, uuid, type, type_id, x, y, z, on_ground, born_tick, phys_tick, cx, cz, gx, gz, goal_until, last_sent_tick, sent_cx, sent_cz, sent_qx, sent_qy, sent_qz, yaw)
+    select v.id, gen_random_uuid(), 'minecraft:cow', mc.entity_type_id('minecraft:cow'), 17.5, -60, v.z, true, 0, 0, 1, 0, 0.05, 0, v.goal, 1, 1, 0, round(17.5 * 4096), round(-60 * 4096.0), round(v.z * 4096), 0
+      from (values (5101, 0.5, 40), (5102, 5.5, 70)) v(id, z, goal);
+    for tk in 1..60 loop
+        perform mc.entity_tick(tk);
+        if tk = 2 then delete from t.lane_at_2; insert into t.lane_at_2 select e.id, e.lane_until > 0 from mc.entity e; end if;
+    end loop;
+    return query select l.id, l.x, l.z, l.in_lane from mc.entity_live l order by l.id;
+end $$;
+create table t.patch_off as select * from t.patch(false);
+create table t.patch_on as select * from t.patch(true);
+select t.is_true('G: the cow walking along the flat strip (z = 0.5) of the bumpy chunk got a lane at the start', (select in_lane from t.lane_at_2 where id = 5101));
+select t.is_true('G: the cow walking toward the pillar column (z = 5.5) did not (its footprint covers the column whose highest solid cell is one higher)', (select not in_lane from t.lane_at_2 where id = 5102));
+select t.is_true('G: the strip cow ends where the exact sweep ends (its goal ends at tick 40 and the AI re-aims it; both modes do so identically)', (select abs(a.x - b.x) < 1e-9 and abs(a.z - b.z) < 1e-9 from t.patch_on a join t.patch_off b using (id) where id = 5101));
+select t.is_true('G: the cow that walks into the pillar stops at it, exactly like the exact sweep (centre x = 20 - 0.45 = 19.55)', (select abs(a.x - b.x) < 1e-9 and abs(a.x - 19.55) < 1e-6 from t.patch_on a join t.patch_off b using (id) where id = 5102));
+select mc.set_block('minecraft:overworld', 20, -60, 5, 'minecraft:air');
+
 ------------------------------------------------------------------------------------------------ E  the viewer's reconstruction equals the delta base of the state
 create or replace function t.moves(b bytea) returns table (eid int, kind text, a bigint, bb bigint, c bigint) language plpgsql as $$
 declare o int := 0; o2 int; ln int; pid int; r record; nm text; e int; q int; nx int;

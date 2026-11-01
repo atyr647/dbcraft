@@ -23,7 +23,7 @@ alter table mc.entity add column if not exists lane_until bigint not null defaul
 -- of a millisecond whatever the statistics say.  Partial indexes on mc.entity were tried first: statistics collected while no lane existed made the planner pick the wrong
 -- index and scan 1,000 entries to find 60 (30 ms instead of 0.3).
 create table if not exists mc.entity_lane (
-    id         int primary key,
+    id         int primary key references mc.entity(id) on delete cascade,       -- a lane row never outlives its entity (despawn, pickup, deletes: the cascade removes it)
     goal_until bigint not null,                  -- the lane ends at this tick (the goal's end, or earlier: before the entity's centre would leave its chunk)
     every      smallint not null,                -- tracker update interval of the type and the phase of the entity in it (born_tick mod interval)
     slot       smallint not null,
@@ -42,11 +42,13 @@ drop index if exists mc.entity_awake_idx;                                       
 create unlogged table if not exists mc.entity_floor (
     dimension text not null, cx int not null, cz int not null,
     top_min int, top_max int,
+    tops smallint[],                -- the highest solid y of each of the 256 columns, index (z & 15) * 16 + (x & 15) + 1; -32768: no solid cell in the column
     primary key (dimension, cx, cz)
 ) with (fillfactor = 90);
+alter table mc.entity_floor add column if not exists tops smallint[];
 
 create or replace function mc.entity_floor_build(p_dim text, p_cx int, p_cz int) returns void language plpgsql volatile as $$
-declare tmin int; tmax int; cnt int; r record;
+declare tmin int; tmax int; cnt int; r record; tops smallint[];
 begin
     for r in select s.sy from mc.chunk_section s
               where s.dimension = p_dim and s.cx = p_cx and s.cz = p_cz
@@ -59,9 +61,15 @@ begin
               from mc.solid_mask m cross join lateral generate_series(0, 4095) k
              where m.dimension = p_dim and m.cx = p_cx and m.cz = p_cz and m.solid_cnt > 0 and get_bit(m.mask, k) = 1
              group by 1, 2) q;
-    insert into mc.entity_floor (dimension, cx, cz, top_min, top_max)
-    values (p_dim, p_cx, p_cz, case when cnt = 256 then tmin end, case when cnt = 256 then tmax end)
-    on conflict (dimension, cx, cz) do update set top_min = excluded.top_min, top_max = excluded.top_max;
+    select array_agg(coalesce(c.t, -32768)::smallint order by g.k) into tops
+      from generate_series(0, 255) g(k)
+      left join (select (k & 15) + ((k >> 4) & 15) * 16 as col, max(m.sy * 16 + (k >> 8)) as t
+                   from mc.solid_mask m cross join lateral generate_series(0, 4095) k
+                  where m.dimension = p_dim and m.cx = p_cx and m.cz = p_cz and m.solid_cnt > 0 and get_bit(m.mask, k) = 1
+                  group by 1) c on c.col = g.k;
+    insert into mc.entity_floor (dimension, cx, cz, top_min, top_max, tops)
+    values (p_dim, p_cx, p_cz, case when cnt = 256 then tmin end, case when cnt = 256 then tmax end, tops)
+    on conflict (dimension, cx, cz) do update set top_min = excluded.top_min, top_max = excluded.top_max, tops = excluded.tops;
 end $$;
 
 -- the mask invalidation (sql/510) also drops the floor summary of the chunk
@@ -99,24 +107,24 @@ create or replace function mc.entity_lanes_enabled() returns boolean language sq
 -- The footprint chunks are those the bounding box of the whole walk (start to the position at the end of the goal, plus the entity width) touches.
 drop function if exists mc.entity_lane_cand(bigint, int[]);
 create or replace function mc.entity_lane_cand(p_tick bigint, p_ids int[])
-returns table (id int, dimension text, fy int, lend bigint, cx0 int, cx1 int, cz0 int, cz1 int, every int, slot int) language sql stable as $$
-  select c.id, c.dimension, c.fy, c.lend,
-         floor(least(c.x, c.x + c.gx * (c.lend - c.phys_tick)) - c.hw - 1e-6)::int >> 4, floor(greatest(c.x, c.x + c.gx * (c.lend - c.phys_tick)) + c.hw + 1e-6)::int >> 4,
-         floor(least(c.z, c.z + c.gz * (c.lend - c.phys_tick)) - c.hw - 1e-6)::int >> 4, floor(greatest(c.z, c.z + c.gz * (c.lend - c.phys_tick)) + c.hw + 1e-6)::int >> 4,
-         c.every, c.slot
-    from (select e.id, e.dimension, floor(e.y)::int as fy, e.x, e.z, e.gx, e.gz, e.phys_tick, p.width / 2 as hw, p.update_interval as every,
-                 ((e.born_tick % p.update_interval) + p.update_interval)::int % p.update_interval as slot,
-                 -- the lane ends with the goal, or one tick before the centre would be in another chunk (so cx, cz, and with them who sees the entity, stay exact for the whole lane)
-                 least(e.goal_until,
-                       e.phys_tick + case when e.gx > 0 then ceil((16 * (e.cx + 1) - e.x) / e.gx)::bigint when e.gx < 0 then floor((e.x - 16 * e.cx) / -e.gx)::bigint + 1 else 1000000 end - 1,
-                       e.phys_tick + case when e.gz > 0 then ceil((16 * (e.cz + 1) - e.z) / e.gz)::bigint when e.gz < 0 then floor((e.z - 16 * e.cz) / -e.gz)::bigint + 1 else 1000000 end - 1) as lend
-            from (select distinct i from unnest(p_ids) i) u(id)
-            cross join lateral (select e0.* from mc.entity e0 where e0.id = u.id offset 0) e         -- offset 0: one primary-key probe per id (the planner scanned the goal index instead)
-            join mc.entity_type_param p on p.type = e.type
-           where p.kind = 'mob' and e.on_ground and not e.deep_sleep and e.lane_until = 0 and e.vy = 0
-             and (e.gx <> 0 or e.gz <> 0) and e.y = floor(e.y)
-             and e.last_sent_tick > 0 and e.sent_cx = e.cx and e.sent_cz = e.cz and e.pitch = e.sent_pitch and e.cx = floor(e.x / 16)::int and e.cz = floor(e.z / 16)::int) c
-   where c.lend > p_tick + 1
+returns table (id int, dimension text, fy int, lend bigint, cx0 int, cx1 int, cz0 int, cz1 int, every int, slot int, x0 int, x1 int, z0 int, z1 int) language sql stable as $$
+  select c.id, c.dimension, c.fy, c.lend, c.x0 >> 4, c.x1 >> 4, c.z0 >> 4, c.z1 >> 4, c.every, c.slot, c.x0, c.x1, c.z0, c.z1
+    from (select q.id, q.dimension, q.fy, q.lend, q.every, q.slot,
+                 floor(least(q.x, q.x + q.gx * (q.lend - q.phys_tick)) - q.hw - 1e-6)::int as x0, floor(greatest(q.x, q.x + q.gx * (q.lend - q.phys_tick)) + q.hw + 1e-6)::int as x1,
+                 floor(least(q.z, q.z + q.gz * (q.lend - q.phys_tick)) - q.hw - 1e-6)::int as z0, floor(greatest(q.z, q.z + q.gz * (q.lend - q.phys_tick)) + q.hw + 1e-6)::int as z1
+            from (select e.id, e.dimension, floor(e.y)::int as fy, e.x, e.z, e.gx, e.gz, e.phys_tick, p.width / 2 as hw, p.update_interval as every,
+                         ((e.born_tick % p.update_interval) + p.update_interval)::int % p.update_interval as slot,
+                         -- the lane ends with the goal, or one tick before the centre would be in another chunk (so cx, cz, and with them who sees the entity, stay exact for the whole lane)
+                         least(e.goal_until,
+                               e.phys_tick + case when e.gx > 0 then ceil((16 * (e.cx + 1) - e.x) / e.gx)::bigint when e.gx < 0 then floor((e.x - 16 * e.cx) / -e.gx)::bigint + 1 else 1000000 end - 1,
+                               e.phys_tick + case when e.gz > 0 then ceil((16 * (e.cz + 1) - e.z) / e.gz)::bigint when e.gz < 0 then floor((e.z - 16 * e.cz) / -e.gz)::bigint + 1 else 1000000 end - 1) as lend
+                    from (select distinct i from unnest(p_ids) i) u(id)
+                    cross join lateral (select e0.* from mc.entity e0 where e0.id = u.id offset 0) e         -- offset 0: one primary-key probe per id (the planner scanned the goal index instead)
+                    join mc.entity_type_param p on p.type = e.type
+                   where p.kind = 'mob' and e.on_ground and not e.deep_sleep and e.lane_until = 0 and e.vy = 0
+                     and (e.gx <> 0 or e.gz <> 0) and e.y = floor(e.y)
+                     and e.last_sent_tick > 0 and e.sent_cx = e.cx and e.sent_cz = e.cz and e.pitch = e.sent_pitch and e.cx = floor(e.x / 16)::int and e.cz = floor(e.z / 16)::int) q
+           where q.lend > p_tick + 1) c
 $$;
 
 -- Start lanes for the candidates among p_ids whose whole footprint lies on uniform floors at their feet level.  Returns how many started.
@@ -132,15 +140,21 @@ begin
        from (select distinct c.dimension, c.cx0 + d.i as cx, c.cz0 + d2.i as cz
                from mc.entity_lane_cand(p_tick, p_ids) c, (values (0), (1), (2)) d(i), (values (0), (1), (2)) d2(i)
               where c.cx1 - c.cx0 <= 2 and c.cz1 - c.cz0 <= 2 and c.cx0 + d.i <= c.cx1 and c.cz0 + d2.i <= c.cz1
-                and not exists (select 1 from mc.entity_floor f where f.dimension = c.dimension and f.cx = c.cx0 + d.i and f.cz = c.cz0 + d2.i)) m;
+                and not exists (select 1 from mc.entity_floor f where f.dimension = c.dimension and f.cx = c.cx0 + d.i and f.cz = c.cz0 + d2.i and f.tops is not null)) m;
+    -- Valid when every column the walk covers has its highest solid cell exactly under the feet.  Fast path: all footprint chunks are uniform at that level (two integer
+    -- comparisons per chunk).  Otherwise the columns are checked one by one against the chunk's column table: a flat patch inside a bumpy chunk still qualifies.
     select array_agg(q.id), array_agg(q.lend), array_agg(q.every), array_agg(q.slot) into ids, gus, evs, sls
       from (select c.id, c.lend, c.every, c.slot
               from mc.entity_lane_cand(p_tick, p_ids) c
              where c.cx1 - c.cx0 <= 2 and c.cz1 - c.cz0 <= 2
-               and not exists (select 1 from (values (0), (1), (2)) d(i) cross join (values (0), (1), (2)) d2(i)
-                                left join lateral (select f0.top_min, f0.top_max from mc.entity_floor f0
-                                                    where f0.dimension = c.dimension and f0.cx = c.cx0 + d.i and f0.cz = c.cz0 + d2.i offset 0) f on true
-                               where c.cx0 + d.i <= c.cx1 and c.cz0 + d2.i <= c.cz1 and (f.top_min is distinct from c.fy - 1 or f.top_max is distinct from c.fy - 1))) q;
+               and (not exists (select 1 from (values (0), (1), (2)) d(i) cross join (values (0), (1), (2)) d2(i)
+                                 left join lateral (select f0.top_min, f0.top_max from mc.entity_floor f0
+                                                     where f0.dimension = c.dimension and f0.cx = c.cx0 + d.i and f0.cz = c.cz0 + d2.i offset 0) f on true
+                                where c.cx0 + d.i <= c.cx1 and c.cz0 + d2.i <= c.cz1 and (f.top_min is distinct from c.fy - 1 or f.top_max is distinct from c.fy - 1))
+                    or not exists (select 1 from generate_series(c.x0, c.x1) gx(x) cross join generate_series(c.z0, c.z1) gz(z)
+                                    left join lateral (select f1.tops[((gz.z & 15) * 16 + (gx.x & 15)) + 1] as top from mc.entity_floor f1
+                                                        where f1.dimension = c.dimension and f1.cx = gx.x >> 4 and f1.cz = gz.z >> 4 offset 0) f on true
+                                   where f.top is distinct from (c.fy - 1)))) q;
     if ids is null then return 0; end if;
     insert into mc.entity_lane (id, goal_until, every, slot, chase, sqx, sqy, sqz, syaw, last_tick)
     select u.id, u.gu, u.ev, u.sl, e.type = 'minecraft:zombie', e.sent_qx, e.sent_qy, e.sent_qz, e.sent_yaw, e.last_sent_tick
@@ -263,14 +277,14 @@ end $$;
 
 -- The AI of sql/520 returning the ids it touched (so they can start lanes in the same tick).
 create or replace function mc.entity_ai_ids(p_tick bigint) returns int[] language plpgsql volatile as $$
-declare a int[]; b int[];
+declare a int[]; b int[]; wp float8 := coalesce(nullif(current_setting('dbcraft.entity_walk_prob', true), '')::float8, 0.6);     -- share of new goals that are walks (the rest: stand still); benchmarks set 1.0
 begin
     with u as (
         update mc.entity e set gx = g.gx, gz = g.gz, goal_until = p_tick + g.dur, yaw = g.yaw, deep_sleep = false,
                                phys_tick = case when e.deep_sleep then p_tick - 1 else e.phys_tick end
-          from (select q.id, case when q.r1 < 0.6 then -sin(radians(q.r2 * 360)) * q.speed else 0 end as gx, case when q.r1 < 0.6 then cos(radians(q.r2 * 360)) * q.speed else 0 end as gz,
-                       case when q.r1 < 0.6 then 20 + floor(q.r4 * 60)::int else 40 + floor(q.r4 * 100)::int end as dur,
-                       case when q.r1 < 0.6 then (q.r2 * 360)::real else q.yaw end as yaw
+          from (select q.id, case when q.r1 < wp then -sin(radians(q.r2 * 360)) * q.speed else 0 end as gx, case when q.r1 < wp then cos(radians(q.r2 * 360)) * q.speed else 0 end as gz,
+                       case when q.r1 < wp then 20 + floor(q.r4 * 60)::int else 40 + floor(q.r4 * 100)::int end as dur,
+                       case when q.r1 < wp then (q.r2 * 360)::real else q.yaw end as yaw
                   from (select e2.id, e2.yaw, p.walk_speed * (0.6 + 0.4 * h.r3) as speed, h.r1, h.r2, h.r4
                           from mc.entity e2 join mc.entity_type_param p on p.type = e2.type
                           cross join lateral (select abs(hashtextextended(e2.id::text || ':' || p_tick::text, 0)) as hv) hh
@@ -306,6 +320,7 @@ create or replace function mc.entity_tick(p_tick bigint default null) returns in
 declare t bigint := coalesce(p_tick, (select game_time from mc.game_state limit 1), 0); ids int[]; lids int[] := '{}'; fl int[] := '{}'; ai int[];
         t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; nsent int; npick int; lanes boolean := mc.entity_lanes_enabled();
 begin
+    if coalesce(current_setting('dbcraft.entity_impl', true), '') = 'proto' then return mc.entity_tick_proto(t); end if;       -- the original prototype (tests/bench/entity/proto_baseline.sql), for comparison only
     perform set_config('dbcraft.entity_tick', t::text, false);
     perform mc.entity_viewers_refresh(t);
     if lanes then fl := mc.entity_lane_flush(t); else perform mc.entity_lane_flush_all(t); end if;
