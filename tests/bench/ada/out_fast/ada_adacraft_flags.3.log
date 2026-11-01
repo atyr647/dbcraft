@@ -1,0 +1,7 @@
+INFO ada reps=5
+BENCH vi_decode_asis 0.026679313 1000000 1349809
+RESULT vi_decode count=1000000 sum=55142023054   -- vi_decode_asis
+CHECK vi_decode_asis OK
+BENCH vi_decode_tight 0.006861425 1000000 1349809
+RESULT vi_decode count=1000000 sum=55142023054   -- vi_decode_tight
+CHECK vi_decode_tight OK

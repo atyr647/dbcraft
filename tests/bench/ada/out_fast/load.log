@@ -8,3 +8,8 @@ round 2 load: 0.97 2.56 2.77 1/126 14396
   O2_nochecks load: 0.97 2.56 2.77 1/124 18404
   O2_gnata load: 1.05 2.55 2.77 1/121 22406
   adacraft_flags load: 1.04 2.53 2.76 1/120 26417
+round 3 load: 1.04 2.50 2.75 2/125 30601
+  O2 load: 1.04 2.50 2.75 1/123 30603
+  O2_nochecks load: 1.12 2.49 2.74 1/123 2143
+  O2_gnata load: 1.12 2.49 2.74 1/123 6149
+  adacraft_flags load: 1.11 2.47 2.73 1/123 10168
