@@ -1,6 +1,6 @@
 -- sql/450_tuning.sql: database-level defaults and log retention.
 select t.is_true('database defaults are stored',
-    (select array['jit=off', 'synchronous_commit=off', 'max_parallel_workers_per_gather=0', 'idle_in_transaction_session_timeout=60s'] <@ s.setconfig
+    (select array['jit=off', 'synchronous_commit=off', 'max_parallel_workers_per_gather=0', 'idle_in_transaction_session_timeout=10s'] <@ s.setconfig
        from pg_db_role_setting s where s.setdatabase = (select oid from pg_database where datname = current_database()) and s.setrole = 0));
 
 -- retention: old diagnostics go, recent ones stay, chat is kept unless asked for

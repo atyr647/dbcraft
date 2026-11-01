@@ -11,6 +11,9 @@ gateway_loop() {
   until pg_isready -q -h "$PGHOST"; do sleep 1; done
   # the first pg_isready can come from the temporary server that initialises the data directory; wait until the dbcraft schema exists and stays up
   until psql -X -q -At -c "select 1 from pg_namespace where nspname = 'net'" 2>/dev/null | grep -q 1; do sleep 2; done
+  # The gateway is one long CALL that never goes idle, so PostgreSQL never receives its table statistics and autovacuum/autoanalyze never see its queue churn
+  # (docs/TUNING.md, "autovacuum is blind to a long CALL"): a session of its own vacuums and analyzes the hot tables every few seconds instead.
+  "${DBCRAFT_HOME:-/opt/dbcraft}/tools/janitor.sh" "${DBCRAFT_JANITOR_SECONDS:-5}" &
   while true; do
     stop=$(psql -X -q -At -c "select stop from net.gateway_control" 2>/dev/null || echo f)
     if [ "$stop" = "t" ]; then echo "dbcraft: gateway stopped on request (net.gateway_control.stop)"; sleep 5; continue; fi

@@ -15,10 +15,11 @@ begin
     execute format('alter database %I set jit = off', db);
     -- * no parallel query: the statements are short, and a parallel plan costs worker start-up on every execution.
     execute format('alter database %I set max_parallel_workers_per_gather = 0', db);
-    -- * a session that sits idle inside a transaction holds back vacuum for every table in the database (a forgotten psql window made the per-tick updates 17x slower
-    --   in tests/bench/db).  After 60 s the server ends such a session.  The gateway is not affected: between ticks it is running a CALL, not waiting for a client.
-    --   A session that needs longer (an interactive admin) can `set idle_in_transaction_session_timeout = 0` for itself.
-    execute format('alter database %I set idle_in_transaction_session_timeout = ''60s''', db);
+    -- * a session that sits idle inside a transaction holds back vacuum for every table in the database.  Measured (tests/bench/tuning, docs/TUNING.md): with one such session the
+    --   average tick is 2x slower after 10 s, 3x after 30 s and about 10x (400+ ms) after a minute, and it recovers within seconds of the session ending; the guard keeps it at normal.
+    --   The server ends such a session after 10 s.  The gateway is not affected: between ticks it is running a CALL (or has no open transaction), not waiting for a client.
+    --   A session that needs longer (an interactive admin, a migration with a pause) can `set idle_in_transaction_session_timeout = 0` for itself.
+    execute format('alter database %I set idle_in_transaction_session_timeout = ''10s''', db);
 end $$;
 
 -- Retention for the tables that grow forever.  tick_log, server_tick_log and error_log are diagnostics (about 100 bytes per tick each, 17 MB a day at 20 ticks a second);
