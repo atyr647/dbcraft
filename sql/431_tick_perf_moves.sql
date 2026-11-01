@@ -140,12 +140,19 @@ begin
   delete from mc.play_in_work where packet_id in (i_pos, i_pr, i_rot, i_st, i_te, i_tp);
   return next;
 end $$;
+-- row type of the per-tick movement input kept between the statements of mc.apply_player_moves (an array of these, see there); created once
+do $$ begin
+    if not exists (select 1 from pg_type where typname = 'move_fin' and typnamespace = 'mc'::regnamespace) then
+        create type mc.move_fin as (conn_id int, x float8, y float8, z float8, has_pos boolean, yaw real, pitch real, has_rot boolean, on_ground boolean, bad boolean);
+    end if;
+end $$;
+
 create or replace function mc.apply_player_moves(cur_tick bigint) returns table(moved int, corrected int, kicked int) language plpgsql as $$
 declare
   i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot'); i_rot int := mc.sid('move_player_rot');
   i_st int := mc.sid('move_player_status_only'); i_te int := mc.sid('client_tick_end'); i_tp int := mc.sid('accept_teleportation');
   c_pos int := mc.pid('move_entity_pos'); c_pr int := mc.pid('move_entity_pos_rot'); c_rot int := mc.pid('move_entity_rot'); c_head int := mc.pid('rotate_head');
-  slow boolean; kicked_conns int[];
+  slow boolean; kicked_conns int[]; fin mc.move_fin[];
 begin
   select coalesce(count(*) filter (where m.packet_id in (i_pos, i_pr)) <> count(distinct m.conn_id) filter (where m.packet_id in (i_pos, i_pr)), false)
          or coalesce(bool_or((m.packet_id = i_pos and length(m.body) <> 25) or (m.packet_id = i_pr and length(m.body) <> 33)
@@ -156,10 +163,9 @@ begin
     return;
   end if;
 
-  create temp table if not exists _fin2 (conn_id int, x float8, y float8, z float8, has_pos boolean, yaw real, pitch real, has_rot boolean, on_ground boolean, bad boolean) on commit preserve rows;
-  delete from _fin2;
-  -- 1. the last position, rotation and on-ground flag of each connection that sent movement input; bad = a NaN/infinite value in any of its packets
-  insert into _fin2
+  -- 1. the last position, rotation and on-ground flag of each connection that sent movement input; bad = a NaN/infinite value in any of its packets.
+  -- Kept in an array of mc.move_fin rows for the next few statements (no scratch table: see sql/430 on temp tables that are emptied with DELETE).
+  select coalesce(array_agg(row(r.conn_id, r.x, r.y, r.z, r.has_pos, r.yaw, r.pitch, r.has_rot, r.on_ground, r.bad)::mc.move_fin), '{}') into fin from (
   with d as materialized (
     select m.conn_id, m.seq,
            case when m.packet_id = i_pos then 'p' when m.packet_id = i_pr then 'b' when m.packet_id = i_rot then 'r' else 's' end as kind,
@@ -176,15 +182,15 @@ begin
   lf as (select distinct on (conn_id) conn_id, flags from d order by conn_id, seq desc),
   nb as (select conn_id from d where x in ('NaN', 'Infinity', '-Infinity') or y in ('NaN', 'Infinity', '-Infinity') or z in ('NaN', 'Infinity', '-Infinity')
                                   or yaw in ('NaN', 'Infinity', '-Infinity') or pitch in ('NaN', 'Infinity', '-Infinity') group by conn_id)
-  select lf.conn_id, lp.x, lp.y, lp.z, lp.conn_id is not null, lr.yaw, lr.pitch, lr.conn_id is not null, (lf.flags & 1) = 1, nb.conn_id is not null
-    from lf left join lp on lp.conn_id = lf.conn_id left join lr on lr.conn_id = lf.conn_id left join nb on nb.conn_id = lf.conn_id;
+  select lf.conn_id, lp.x, lp.y, lp.z, lp.conn_id is not null as has_pos, lr.yaw, lr.pitch, lr.conn_id is not null as has_rot, (lf.flags & 1) = 1 as on_ground, nb.conn_id is not null as bad
+    from lf left join lp on lp.conn_id = lf.conn_id left join lr on lr.conn_id = lf.conn_id left join nb on nb.conn_id = lf.conn_id) r;
 
   -- 2. rule violation: NaN / infinite values disconnect the player and ignore its input
-  select coalesce(array_agg(conn_id), '{}') into kicked_conns from _fin2 where bad;
+  select coalesce(array_agg(f.conn_id), '{}') into kicked_conns from unnest(fin) f where f.bad;
   kicked := coalesce(array_length(kicked_conns, 1), 0);
   if kicked > 0 then
     perform mc.kick(c, 'multiplayer.disconnect.invalid_player_movement') from unnest(kicked_conns) c;
-    delete from _fin2 where bad;
+    fin := array(select f from unnest(fin) f where not f.bad);
   end if;
 
   -- 3. teleport confirmations clear the "awaiting" state
@@ -193,15 +199,15 @@ begin
    where p.conn_id = a.conn_id and p.awaiting_teleport = a.tid;
 
   -- 4. players still waiting for a teleport confirmation are ignored (like vanilla); moved too quickly: ignore the move, teleport back under a new id
-  delete from _fin2 f using mc.player p where p.conn_id = f.conn_id and p.awaiting_teleport is not null;
+  fin := array(select f from unnest(fin) f join mc.player p on p.conn_id = f.conn_id where p.awaiting_teleport is null);
   with bad as (
     select p.conn_id, p.x, p.y, p.z, p.yaw, p.pitch, p.teleport_id + 1 as tid
-      from _fin2 f join mc.player p on p.conn_id = f.conn_id
+      from unnest(fin) f join mc.player p on p.conn_id = f.conn_id
      where f.has_pos and ((f.x - p.x) ^ 2 + (f.y - p.y) ^ 2 + (f.z - p.z) ^ 2) > 100),
   upd as (update mc.player p set teleport_id = bad.tid, awaiting_teleport = bad.tid from bad where p.conn_id = bad.conn_id returning p.conn_id),
   outq as (insert into mc.play_out (conn_id, data) select conn_id, mc.pkt_player_position(tid, x, y, z, 0, 0, 0, yaw, pitch, 0) from bad returning 1)
   select count(*)::int into corrected from upd;
-  if corrected > 0 then delete from _fin2 f using mc.player p where p.conn_id = f.conn_id and p.awaiting_teleport is not null; end if;
+  if corrected > 0 then fin := array(select f from unnest(fin) f join mc.player p on p.conn_id = f.conn_id where p.awaiting_teleport is null); end if;
 
   -- 5. apply the moves (coordinates clamped like vanilla: x,z to +-3.0E7, y to +-2.0E7; pitch to +-90) and tell the viewers, in one statement.
   -- nv = every online player with its new state; mv = who must be broadcast: everybody whose stored position or rotation differs from what the
@@ -221,7 +227,7 @@ begin
            case when f.has_pos then floor(greatest(-3.0e7, least(3.0e7, f.x)) / 16)::int else p.chunk_x end as ncx,
            case when f.has_pos then floor(greatest(-3.0e7, least(3.0e7, f.z)) / 16)::int else p.chunk_z end as ncz,
            p.vis_dirty or coalesce(f.has_pos and (floor(f.x / 16)::int <> p.chunk_x or floor(f.z / 16)::int <> p.chunk_z), false) as nvd
-      from mc.player p left join _fin2 f on f.conn_id = p.conn_id
+      from mc.player p left join unnest(fin) f on f.conn_id = p.conn_id
      where p.conn_id is not null),
   mv as materialized (
     select nv.*, mc.quant(nx) - sent_qx as dx, mc.quant(ny) - sent_qy as dy, mc.quant(nz) - sent_qz as dz,

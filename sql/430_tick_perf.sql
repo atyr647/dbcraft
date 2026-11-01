@@ -8,6 +8,13 @@
 --   mc.tick_core()       the body of mc.tick() without the claim of mc.play_in; mc.tick() = claim + tick_core().
 --   mc.server_tick()     uses both, and drains mc.play_out into net.outbox with one aggregate per connection (one row per connection instead of one per packet).
 
+-- row type used to carry the frames of compressing connections through the drain (see mc.server_tick); created once
+do $$ begin
+    if not exists (select 1 from pg_type where typname = 'drain_row' and typnamespace = 'mc'::regnamespace) then
+        create type mc.drain_row as (conn_id int, comp int, data bytea);
+    end if;
+end $$;
+
 create or replace function net.process_fast() returns int language plpgsql as $$
 declare r record; n int; handled int[] := net.handled_play_ids();
         known int[] := (select coalesce(array_agg(protocol_id), '{}') from ref.packet where state = 'play' and direction = 'serverbound');
@@ -80,7 +87,7 @@ end $$;
 create or replace function mc.server_tick() returns bigint language plpgsql as $$
 declare
     cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz;
-    n_in int; n_players int; n_out int; r record;
+    n_in int; n_players int; n_out int; r record; framed_rows mc.drain_row[];
 begin
     -- 1, 2: consume net.inbox; the game's packets land in its work queue directly
     delete from mc.play_in_work;
@@ -119,16 +126,16 @@ begin
         insert into mc.error_log (tick, step, message) values (cur, 'kicks', sqlerrm); raise warning 'kicks failed: %', sqlerrm;
     end;
     -- 8: mc.play_out -> net.outbox, one row per connection (concatenated in generation order).  Connections without compression (the common case) are written
-    -- straight to net.outbox by the same statement; connections with compression go through _drain for net.reframe, as before.
-    create temp table if not exists _drain (seq bigint, conn_id int, data bytea, comp int) on commit preserve rows;
-    delete from _drain;
+    -- straight to net.outbox by the same statement; the frames of connections with compression come back in an array (no scratch table: a temp table emptied
+    -- with DELETE is never vacuumed and grows for as long as the session lives) and go through net.reframe, as before.
     with o as (delete from mc.play_out returning seq, conn_id, data),
          j as (select o.seq, o.conn_id, o.data, c.compression as comp from o join net.conn c on c.conn_id = o.conn_id and c.state = 'play'),
          plain as (insert into net.outbox (conn_id, data)
-                   select conn_id, string_agg(data, ''::bytea order by seq) from j where comp < 0 group by conn_id returning 1),
-         framed as (insert into _drain select seq, conn_id, data, comp from j where comp >= 0 returning 1)
-    select count(*)::int into n_out from j;
-    for r in select conn_id, comp, string_agg(data, ''::bytea order by seq) as data from _drain group by conn_id, comp loop
+                   select conn_id, string_agg(data, ''::bytea order by seq) from j where comp < 0 group by conn_id returning 1)
+    select count(*)::int, coalesce(array_agg(row(j.conn_id, j.comp, j.data)::mc.drain_row order by j.seq) filter (where j.comp >= 0), '{}')
+      into n_out, framed_rows from j;
+    for r in select d.conn_id, d.comp, string_agg(d.data, ''::bytea order by d.ord) as data
+               from unnest(framed_rows) with ordinality as d(conn_id, comp, data, ord) group by d.conn_id, d.comp loop
         begin
             insert into net.outbox (conn_id, data) values (r.conn_id, net.reframe(r.comp, r.data));
         exception when others then

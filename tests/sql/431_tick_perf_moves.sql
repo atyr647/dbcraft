@@ -27,6 +27,7 @@ begin
     kind := (random() * 9)::int;
     nx := r.x + (random() - .5) * 0.8; ny := r.y; nz := r.z + (random() - .5) * 0.8;
     if p_flavour = 2 and random() < .2 then nx := r.x + 11 + random() * 20; end if;           -- too fast
+    if p_flavour = 10 and random() < .3 then nx := r.x + 8.5 + random(); end if;               -- accepted (under 10 blocks) but over the 16-bit delta: teleport packet
     if p_flavour = 6 and random() < .1 then nx := 'NaN'; end if;                                -- kick
     if p_flavour = 7 and random() < .2 then nz := 'Infinity'; end if;
     if kind in (0, 1, 2, 3, 4) then   -- position + rotation
@@ -95,7 +96,27 @@ begin
 end $$;
 
 select t.eq('flavour ' || f || ' seed ' || s, t.compare_moves(s / 10.0, f), 'same')
-  from generate_series(1, 9) f, unnest(array[1, 2, 3]) s;
+  from unnest(array[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) f, unnest(array[1, 2, 3]) s;
 select t.eq('ordinary ticks, 20 more seeds', (select count(*) filter (where t.compare_moves(s::float8 / 100, 1) <> 'same') from generate_series(10, 29) s)::int, 0);
--- the fast path really took the fast branch for ordinary input: only the fast path creates its scratch table
-select t.is_true('ordinary input uses the fast path (its scratch table exists)', (select count(*) from pg_class where relname = '_fin2' and relpersistence = 't') = 1);
+-- which path ran: the function call counters of the current transaction show whether the general version was called
+set track_functions = 'all';
+create or replace function t.general_calls() returns bigint language sql as $$
+  select coalesce(pg_stat_get_xact_function_calls('mc.apply_player_moves_general(bigint)'::regprocedure), 0) $$;
+do $$ declare before bigint; r record;
+begin
+  perform t.build_moves(0.3, 1);
+  before := t.general_calls();
+  select * into r from mc.apply_player_moves(1000);
+  if t.general_calls() <> before then raise exception 'FAIL ordinary input fell back to the general path'; end if;
+  raise notice 'ok   ordinary input stays on the fast path';
+  perform t.build_moves(0.3, 8);                                  -- some connections send two position packets
+  before := t.general_calls();
+  select * into r from mc.apply_player_moves(1000);
+  if t.general_calls() = before then raise exception 'FAIL two position packets did not take the general path'; end if;
+  raise notice 'ok   two position packets take the general path';
+  perform t.build_moves(0.3, 9);                                  -- a malformed length
+  before := t.general_calls();
+  select * into r from mc.apply_player_moves(1000);
+  if t.general_calls() = before then raise exception 'FAIL a malformed packet did not take the general path'; end if;
+  raise notice 'ok   a malformed packet takes the general path';
+end $$;
