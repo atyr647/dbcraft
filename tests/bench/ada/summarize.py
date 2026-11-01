@@ -53,6 +53,7 @@ ROWS = [
     ("VarInt decode, adacraft `Varnum.Decode_Varint` as-is", "vi_decode_asis", "vi_decode", "ops"),
     ("VarInt decode, hand-written Ada loop", "vi_decode_tight", "vi_decode", "ops"),
     ("VarInt encode, adacraft `Varnum.Encode` as-is (limited N, see notes)", "vi_encode_asis", "vi_encode", "ops"),
+    ("VarInt encode, adacraft `Varnum.Encode` as-is, 5-byte scratch like its own callers", "vi_encode_asis_small", "vi_encode", "ops"),
     ("VarInt encode, hand-written Ada loop", "vi_encode_tight", "vi_encode", "ops"),
     ("frame split, adacraft `Frame.Decode_Frame`, no body copy", "split_index_asis", "split_index", "ops"),
     ("frame split, `Decode_Frame` + heap copy of each body", "split_scan_asis", "split_scan", "ops"),

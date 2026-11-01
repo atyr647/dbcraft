@@ -1,0 +1,65 @@
+INFO ada reps=5
+BENCH vi_decode_asis 0.024164977 1000000 1349809
+RESULT vi_decode count=1000000 sum=55142023054   -- vi_decode_asis
+CHECK vi_decode_asis OK
+BENCH vi_decode_tight 0.006443324 1000000 1349809
+RESULT vi_decode count=1000000 sum=55142023054   -- vi_decode_tight
+CHECK vi_decode_tight OK
+BENCH vi_encode_asis 0.710064193 6084 8197
+CHECK vi_encode_asis PARTIAL n=6084 prefix_ok=1
+BENCH vi_encode_asis_small 0.045608286 1000000 1349809
+RESULT vi_encode len=1349809 ok=1   -- vi_encode_asis_small
+CHECK vi_encode_asis_small OK
+BENCH vi_encode_tight 0.010497465 1000000 1349809
+RESULT vi_encode len=1349809 ok=1   -- vi_encode_tight
+CHECK vi_encode_tight OK
+BENCH split_index_asis 0.012217998 200000 8387541
+RESULT split_index frames=200000 idsum=18565468 bodybytes=7945204   -- split_index_asis
+CHECK split_index_asis OK
+BENCH split_scan_asis 0.015647727 200000 8387541
+RESULT split_scan frames=200000 idsum=18565468 bodybytes=7945204   -- split_scan_asis
+CHECK split_scan_asis OK
+BENCH split_tight 0.004536554 200000 8387541
+RESULT split_scan frames=200000 idsum=18565468 bodybytes=7945204   -- split_tight
+CHECK split_tight OK
+BENCH split_stream_asis 0.026618753 200000 8387541
+RESULT split_scan frames=200000 idsum=18565468 bodybytes=7945204   -- split_stream_asis
+CHECK split_stream_asis OK
+BENCH pos_decode 0.012042658 200000 6600000
+RESULT pos_decode sx=21606521.547338 flags=25914400   -- pos_decode
+CHECK pos_decode OK
+BENCH build_tight 0.024143186 200000 6400000
+RESULT build_frames len=6400000 ok=1   -- build_tight
+CHECK build_tight OK
+BENCH build_asis 0.931240249 14830 474560
+CHECK build_asis PARTIAL n=14830 prefix_ok=1
+BENCH coro_plain 0.001619579 200000 0
+RESULT coro moves=97000 chats=48500 other=48500 bytes=5900000   -- coro_plain
+CHECK coro_plain OK
+BENCH coro_tasks_local 0.141355879 200000 0
+RESULT coro moves=97000 chats=48500 other=48500 bytes=5900000   -- coro_tasks_local
+CHECK coro_tasks_local OK
+BENCH coro_tasks_rdv 10.056024004 200000 0
+RESULT coro moves=97000 chats=48500 other=48500 bytes=5900000   -- coro_tasks_rdv
+CHECK coro_tasks_rdv OK
+BENCH z_compress 0.012531135 1 1048576
+BENCH z_decompress 0.001594213 1 1048576
+RESULT z_roundtrip ok=1   -- z_decompress
+CHECK z_decompress OK
+INFO z_compress clen=99485
+BENCH aes_cfb8_soft 20.317343366 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_soft
+CHECK aes_cfb8_soft OK
+BENCH aes_cfb8 0.016700097 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8
+CHECK aes_cfb8 OK
+BENCH aes_cfb8_dec 0.015845468 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_dec
+CHECK aes_cfb8_dec OK
+BENCH aes_cfb8_enc_1k_calls 0.016687371 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_enc_1k_calls
+CHECK aes_cfb8_enc_1k_calls OK
+BENCH aes_cfb8_dec_150_calls 0.019569204 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_dec_150_calls
+CHECK aes_cfb8_dec_150_calls OK
+INFO mismatches=0
