@@ -1,0 +1,116 @@
+{
+ "sqlite": {
+  "a_set_update_10k_ms": 2.95,
+  "b_client_loop_not_in_db_ms": 49.33,
+  "load_200k_varints_s": 0.39,
+  "c3_inline_expr_200k_ms": 376.13,
+  "checksum": 164162695881,
+  "d_bulk_load_10k_ms": 5.6,
+  "e_churn": {
+   "default": {
+    "round1": 1.7,
+    "round50": 1.5,
+    "round100": 1.4,
+    "total_s": 0.16,
+    "size_before_kb": 3926,
+    "size_after_kb": 7668
+   },
+   "open_snapshot": {
+    "round1": 1.4,
+    "round50": 1.6,
+    "round100": 3.0,
+    "total_s": 0.17,
+    "size_before_kb": 7668,
+    "size_after_kb": 36001
+   }
+  },
+  "parallel_4_regions": {
+   "workers1_wall_ms": 40.5,
+   "workers4_wall_ms": 217.6,
+   "throughput_speedup": 0.74
+  }
+ },
+ "pg": {
+  "a_set_update_10k_ms": 62.22,
+  "b_loop_update_10k_ms": 129.11,
+  "load_200k_varints_s": 0.72,
+  "c1_stored_fn_200k_ms": 185.23,
+  "c3_inline_expr_200k_ms": 22.07,
+  "checksum": 164162695881,
+  "d_bulk_load_10k_ms": 9.1,
+  "e_churn": {
+   "ff100": {
+    "round1": 46.5,
+    "round50": 31.0,
+    "round100": 38.0,
+    "total_s": 5.44,
+    "size_before_kb": 1024,
+    "size_after_kb": 67752
+   },
+   "ff60": {
+    "round1": 33.4,
+    "round50": 8.6,
+    "round100": 9.1,
+    "total_s": 1.2,
+    "size_before_kb": 1480,
+    "size_after_kb": 2232
+   },
+   "ff60_index_on_tick": {
+    "round1": 43.9,
+    "round50": 62.1,
+    "round100": 50.0,
+    "total_s": 5.89,
+    "size_before_kb": 1560,
+    "size_after_kb": 44144
+   },
+   "ff100_open_snapshot": {
+    "round1": 59.2,
+    "round50": 216.7,
+    "round100": 384.2,
+    "total_s": 21.86,
+    "size_before_kb": 1024,
+    "size_after_kb": 83528
+   }
+  },
+  "parallel_4_regions": {
+   "workers1_wall_ms": 797.3,
+   "workers4_wall_ms": 2544.3,
+   "throughput_speedup": 1.25
+  }
+ },
+ "mariadb": {
+  "a_set_update_10k_ms": 9.94,
+  "b_loop_update_10k_ms": 106.95,
+  "load_200k_varints_s": 0.95,
+  "c1_stored_fn_200k_ms": 1405.17,
+  "c3_inline_expr_200k_ms": 52.48,
+  "checksum": 164162695881,
+  "d_bulk_load_10k_ms": 52.4,
+  "d_loaddata_10k_ms": 31.3,
+  "e_churn": {
+   "default": {
+    "round1": 12.9,
+    "round50": 13.0,
+    "round100": 15.6,
+    "total_s": 1.63,
+    "size_before_kb": 1712,
+    "size_after_kb": 1712,
+    "datadir_growth_kb": 65536
+   },
+   "open_snapshot": {
+    "round1": 13.3,
+    "round50": 14.1,
+    "round100": 12.8,
+    "total_s": 1.49,
+    "size_before_kb": 1712,
+    "size_after_kb": 1712,
+    "datadir_growth_kb": 65536
+   }
+  },
+  "parallel_4_regions": {
+   "workers1_wall_ms": 490.3,
+   "workers4_wall_ms": 2111.0,
+   "throughput_speedup": 0.93
+  }
+ }
+}
