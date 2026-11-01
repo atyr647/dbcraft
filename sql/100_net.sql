@@ -11,17 +11,19 @@
 ------------------------------------------------------------------------------------------------ settings
 -- Defaults only; the game layer may replace this table with a view over its own server properties (same columns).
 create table if not exists net.setting (key text primary key, value text not null);
-insert into net.setting(key, value) values
-    ('motd',                   'A dbcraft server'),
-    ('max_players',            '20'),
-    ('version_name',           '26.3'),
-    ('protocol_version',       '777'),
-    ('brand',                  'dbcraft'),
-    ('compression_threshold',  '-1'),      -- network-compression-threshold; -1 = off
-    ('online_mode',            'false'),
-    ('view_distance',          '10'),
-    ('simulation_distance',    '10')
-on conflict (key) do nothing;
+create or replace function net.default_settings() returns table (key text, value text) language sql immutable as $$
+    values ('motd',                  'A dbcraft server'),
+           ('max_players',           '20'),
+           ('version_name',          '26.3'),
+           ('protocol_version',      '777'),
+           ('brand',                 'dbcraft'),
+           ('compression_threshold', '-1'),                 -- network-compression-threshold; -1 = off
+           ('online_mode',           'false'),
+           ('view_distance',         '10'),
+           ('simulation_distance',   '10'),
+           ('gamemode',              'survival'),
+           ('enabled_features',      'minecraft:vanilla') $$;
+insert into net.setting (key, value) select key, value from net.default_settings() on conflict (key) do nothing;
 
 create or replace function net.setting(k text) returns text language sql stable as $$ select value from net.setting where key = k $$;
 

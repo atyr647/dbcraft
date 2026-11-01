@@ -3,8 +3,6 @@
 --   on select_known_packs:   registry_data x32, update_tags (from ref.dp_* rows, cached per known-pack combination), finish_configuration
 --   on finish_configuration: the client has confirmed -> state play -> net.play_begin()
 
-insert into net.setting(key, value) values ('enabled_features', 'minecraft:vanilla') on conflict (key) do nothing;
-
 create or replace function net.config_begin(p_conn bigint) returns void language plpgsql as $$
 declare feats text[] := string_to_array(net.setting('enabled_features'), ',');
         ver text := net.setting('version_name');

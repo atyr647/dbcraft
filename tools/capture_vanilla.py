@@ -13,6 +13,7 @@ ap.add_argument("--name", default="Probe"); ap.add_argument("--seconds", type=fl
 ap.add_argument("--compression", type=int, default=-1, help="ignored: the threshold is learned from the server's login_compression packet")
 ap.add_argument("--out", default="tests/fixtures/captured/play.jsonl")
 ap.add_argument("--no-teleport-ack", action="store_true")
+ap.add_argument("--bad-teleport", action="store_true", help="send a truncated accept_teleportation (id only) to provoke vanilla's disconnect, for its text format")
 ap.add_argument("--known-core", action="store_true", help="answer select_known_packs with minecraft:core (what a real client does): the server then omits registry data it assumes we have")
 ap.add_argument("--status", action="store_true", help="capture a status ping instead of a login")
 a = ap.parse_args()
@@ -122,7 +123,7 @@ while time.time() < end:
         if not a.no_teleport_ack:
             # 26.3 layout (read from the class bytecode): accept_teleportation = id VarInt, x y z (doubles), yRot xRot (floats).
             # player_position = id VarInt, x y z, delta x y z (doubles), yRot xRot (floats), relative-flags int.
-            tid, o = parse_varint(body); send("minecraft:accept_teleportation", body[:o] + body[o:o + 24] + body[o + 48:o + 56])
+            tid, o = parse_varint(body); send("minecraft:accept_teleportation", body[:o] if a.bad_teleport else body[:o] + body[o:o + 24] + body[o + 48:o + 56])
         if not loaded_sent: send("minecraft:player_loaded"); loaded_sent = True
     elif n == "minecraft:chunk_batch_finished": send("minecraft:chunk_batch_received", struct.pack(">f", 20.0))
     elif n == "minecraft:disconnect": print("disconnected in play"); break

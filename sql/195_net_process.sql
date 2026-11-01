@@ -66,9 +66,10 @@ begin
     update net.conn c set last_activity = now() from (select distinct conn_id from net.batch) b where c.conn_id = b.conn_id;
     -- hot path: forward unhandled play packets in bulk
     with fwd as (
-        delete from net.batch b using net.conn c
+        delete from net.batch b using net.conn c, ref.packet pk
         where c.conn_id = b.conn_id and c.state = 'play' and not c.closing
-          and net.pid(b.payload) is not null and not (net.pid(b.payload) = any (handled))
+          and pk.state = 'play' and pk.direction = 'serverbound' and pk.protocol_id = net.pid(b.payload)    -- the id exists; unknown ids take the slow path and get the sender disconnected
+          and not (net.pid(b.payload) = any (handled))
         returning b.conn_id, b.seq, b.payload)
     insert into net.play_inbox (conn_id, seq, packet_id, body)
     select conn_id, seq, net.pid(payload), substring(payload from net.pid_len(payload) + 1) from fwd;

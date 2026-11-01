@@ -54,7 +54,7 @@ begin
     elsif p_name = 'minecraft:chunk_batch_received' then
         perform net.need(body, 4);
         v := proto.f32_read(body, 0);
-        update net.conn set chunks_per_tick = case when v = v and v > 0.01 then least(v, 64) else 0.01 end where conn_id = p_conn;   -- (v = v) rejects NaN
+        update net.conn set chunks_per_tick = case when v <> 'NaN'::real and v > 0.01 then least(v, 64) else 0.01 end where conn_id = p_conn;   -- Postgres: NaN = NaN and NaN > everything, so test it explicitly
     elsif p_name = 'minecraft:player_loaded' then
         update net.conn set loaded = true where conn_id = p_conn;
         perform net.hook_player_loaded(p_conn);

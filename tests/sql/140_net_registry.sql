@@ -1,4 +1,6 @@
 -- Registry data and tags: rows loaded from a vanilla capture, re-encoded in SQL, compared byte for byte with what the server sent.
+\ir _net_helpers.sql
+
 create table t.cap_play (idx int, dir text, state text, pid int, name text, len int, hex text);
 \copy t.cap_play from program 'python3 tools/capture_to_tsv.py play_nocomp'
 select count(*) > 0 as have from t.cap_play \gset

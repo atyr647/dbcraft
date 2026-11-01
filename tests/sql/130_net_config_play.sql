@@ -1,25 +1,6 @@
 -- Replay a captured vanilla 26.3 session (offline login -> configuration -> play entry) through net.process() and compare every clientbound
 -- packet, in order, with what the real server sent.  Needs the captures and a vanilla datapack capture (skipped with a notice otherwise).
-create or replace function t.feed(p_conn bigint, p_hex text) returns void language sql as $$
-    insert into net.inbox(conn_id, payload)
-    select p_conn, substring(b from (proto.varint_read(b)).nxt + 1) from (select decode(p_hex, 'hex') as b) s $$;
-create or replace function t.take(p_conn bigint) returns bytea language plpgsql as $$
-declare h bytea;
-begin
-    select string_agg(data, ''::bytea order by seq) into h from net.outbox where conn_id = p_conn;
-    delete from net.outbox where conn_id = p_conn;
-    return coalesce(h, '\x');
-end $$;
-create or replace function t.skip(why text) returns void language plpgsql as $$ begin raise notice 'SKIP %', why; end $$;
--- split concatenated wire frames
-create or replace function t.frames(b bytea) returns table (idx int, frame bytea) language plpgsql as $$
-declare o int := 0; v int; n int; i int := 0;
-begin
-    while o < length(b) loop
-        select val, nxt into v, n from proto.varint_read(b, o);
-        idx := i; frame := substring(b from o + 1 for (n - o) + v); o := n + v; i := i + 1; return next;
-    end loop;
-end $$;
+\ir _net_helpers.sql
 
 create table t.cap (idx int, dir text, state text, pid int, name text, len int, hex text);
 \copy t.cap from program 'python3 tools/capture_to_tsv.py play_nocomp'
