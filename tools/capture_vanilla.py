@@ -2,7 +2,6 @@
 """Connect to a vanilla 26.3 server (offline mode) as a minimal client and record every packet, byte for byte.
 
 usage: tools/capture_vanilla.py [--host 127.0.0.1] [--port 25599] [--name Probe] [--seconds 6] [--out tests/fixtures/captured/play.jsonl]
-        [--compression N]   (must match the server's network-compression-threshold; -1 = off)
 Output: one JSON object per packet: {t, dir, state, id, name, len, hex}.  Captures contain Mojang data (registries etc.), so they are gitignored.
 Packet ids come from the generator's packets.json (DBCRAFT_REPORTS or the adacraft checkout).  Standard library only.
 """
@@ -11,7 +10,7 @@ import argparse, hashlib, json, os, socket, struct, sys, time, zlib
 ap = argparse.ArgumentParser()
 ap.add_argument("--host", default="127.0.0.1"); ap.add_argument("--port", type=int, default=25599)
 ap.add_argument("--name", default="Probe"); ap.add_argument("--seconds", type=float, default=6.0)
-ap.add_argument("--compression", type=int, default=-1)
+ap.add_argument("--compression", type=int, default=-1, help="ignored: the threshold is learned from the server's login_compression packet")
 ap.add_argument("--out", default="tests/fixtures/captured/play.jsonl")
 ap.add_argument("--no-teleport-ack", action="store_true")
 ap.add_argument("--known-core", action="store_true", help="answer select_known_packs with minecraft:core (what a real client does): the server then omits registry data it assumes we have")
@@ -64,7 +63,7 @@ def parse_varint(b, o=0):
 
 s = socket.create_connection((a.host, a.port)); s.settimeout(5)
 os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
-out = open(a.out, "w"); t0 = time.time(); state = "handshake"; threshold = a.compression
+out = open(a.out, "w"); t0 = time.time(); state = "handshake"; threshold = -1   # compression starts only after the server sends login_compression
 def record(direction, raw_payload, wire):
     pid, o = parse_varint(raw_payload)
     out.write(json.dumps({"t": round(time.time() - t0, 4), "dir": direction, "state": state, "id": pid,
