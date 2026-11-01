@@ -147,7 +147,10 @@ defmodule Srv do
             Enum.into([header, rows, <<-1::16>>], Postgrex.stream(c, "COPY net.inbox FROM STDIN WITH (FORMAT binary)", []))
           end)
         t2 = mono()
-        Postgrex.query!(pg, "with c as (delete from net.inbox returning 1) select count(*) from c", [])  # stand-in for net.tick consuming the rows
+        # stand-in for net.tick consuming the rows: DELETE ... RETURNING (default) or PG_CONSUME=truncate
+        if System.get_env("PG_CONSUME") == "truncate",
+          do: Postgrex.query!(pg, "truncate net.inbox", []),
+          else: Postgrex.query!(pg, "with c as (delete from net.inbox returning 1) select count(*) from c", [])
         t3 = mono()
         collector_loop(pg, [], tick + 1, nxt, [{length(rows), t1 - t0, t2 - t1, t3 - t2, t3 - t0, t0 - next} | stats])
       {:get, from} -> send(from, {:stats, stats}); collector_loop(pg, acc, tick, next, stats)
