@@ -172,6 +172,9 @@ class Client(asyncio.Protocol):
                 self.t_login = time.perf_counter()
                 self.send("minecraft:login_acknowledged")
                 self.state = "configuration"
+                # a real client announces its settings here; vanilla serves min(server view distance, the client's), and the default is 2
+                self.send("minecraft:client_information", string("en_us") + bytes([self.args.view_distance]) + varint(0) + b"\x01" + bytes([0x7F]) +
+                          varint(1) + b"\x00" + b"\x01" + varint(0))
             elif name == "minecraft:login_disconnect":
                 self.failed = "login_disconnect " + body[:100].hex()
             elif name == "minecraft:login_compression":
@@ -255,6 +258,7 @@ async def main():
     ap.add_argument("--ready-frac", type=float, default=0.97)
     ap.add_argument("--quiet", type=float, default=2.0, help="seconds without a chunk packet before a client counts as ready")
     ap.add_argument("--expect-chunks", type=int, default=0, help="chunks a client must have received to count as ready: (2*(view distance+1)+1)^2")
+    ap.add_argument("--view-distance", type=int, default=10, help="view distance the clients ask for in client_information")
     ap.add_argument("--hold", type=float, default=30.0)
     ap.add_argument("--probe", action="store_true", help="add one chat-echo round-trip probe client")
     ap.add_argument("--no-go", action="store_true", help="do not wait for GO on stdin")

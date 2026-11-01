@@ -50,11 +50,13 @@ def fmt(v):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    path = args[0] if args else os.path.join(C.OUT, "results.jsonl")
-    tags = None
-    if "--tags" in sys.argv:
-        tags = sys.argv[sys.argv.index("--tags") + 1].split(",")
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("path", nargs="?", default=os.path.join(C.OUT, "results.jsonl"))
+    ap.add_argument("--tags", default=None)
+    ns = ap.parse_args()
+    path = ns.path
+    tags = ns.tags.split(",") if ns.tags else None
     rows = [json.loads(l) for l in open(path)]
     rows = [r for r in rows if r.get("tag") not in ("smoke",) and (tags is None or r.get("tag") in tags)]
     groups = {}

@@ -107,6 +107,26 @@ class Vanilla:
             r.update({"gc_pauses": len(g), "gc_pause_max_ms": max(g), "gc_pause_p99_ms": C.percentile(g, 99), "gc_pause_total_ms": sum(g)})
         return r
 
+    def pregenerate(self, r):
+        """Generate and save the chunks within r chunks of the origin, then unload them (forceload remove), so the clients join an EXPLORED world and the
+        measurement is not the cost of world generation.  Returns seconds taken."""
+        t0 = time.time()
+        lo, hi = -r, r + 1
+        for cx in range(lo, hi, 16):
+            for cz in range(lo, hi, 16):
+                w, h = min(16, hi - cx), min(16, hi - cz)
+                self.rcon.cmd("forceload add %d %d %d %d" % (cx * 16, cz * 16, (cx + w) * 16 - 1, (cz + h) * 16 - 1))
+        corner = "execute if loaded %d 0 %d" % (r * 16, r * 16)
+        for _ in range(900):
+            if "passed" in self.rcon.cmd(corner):
+                break
+            time.sleep(1.0)
+        time.sleep(3.0)
+        self.rcon.cmd("save-all flush")
+        self.rcon.cmd("forceload remove all")
+        time.sleep(5.0)
+        return time.time() - t0
+
     def stop(self):
         sh(os.path.join(TOOLS, "vanilla.sh"), "stop", check=False)
 
@@ -172,6 +192,13 @@ class Dbcraft:
             pass
         return out
 
+    def pregenerate(self, r):
+        t0 = time.time()
+        dbq("select mc.generate_batch('minecraft:overworld', array_agg(x), array_agg(z)) from generate_series(%d, %d) x, generate_series(%d, %d) z" % (-r, r, -r, r),
+            timeout=1800)
+        dbq("checkpoint")
+        return time.time() - t0
+
     def stop(self):
         sh(os.path.join(TOOLS, "dbcraft.sh"), "stop", check=False)
 
@@ -210,7 +237,7 @@ class LoadGens:
         for i, sz in enumerate(sizes):
             args = [sys.executable, LOADGEN, "--port", str(port), "--n", str(sz), "--first", str(first), "--join-spread", str(join_spread),
                     "--moving", str(moving), "--ready-timeout", str(ready_timeout), "--hold", str(hold), "--expect-chunks", str(chunks_expected(vd)),
-                    "--seed", str(100 + i)]
+                    "--seed", str(100 + i), "--view-distance", str(vd)]
             self.names += ["Bot%d" % j for j in range(first, first + sz)]
             if probe and i == 0:
                 args.append("--probe")
@@ -304,6 +331,7 @@ def scenario_idle0(srv, a):
 def scenario_pop(srv, a):
     first_names = ["Bot%d" % i for i in range(a.n)] + ["Probe0"]
     srv.start(a.vd, a.n, first_names, a.spread)
+    pregen_s = srv.pregenerate((a.spread + 15) // 16 + a.vd + 2)
     time.sleep(2.0)
     lg = LoadGens(srv.port, a.n, a.moving, a.vd, a.join_spread, a.ready_timeout, a.hold)
     try:
@@ -323,7 +351,7 @@ def scenario_pop(srv, a):
         c1, t1 = srv.cpu(), time.time()
         r = srv.window_end()
         done = lg.wait_event("DONE", 60)
-        r.update({"cpu_cores": (c1 - c0) / (t1 - t0), "mem_mib": srv.mem(), "startup_s": srv.startup_s})
+        r.update({"cpu_cores": (c1 - c0) / (t1 - t0), "mem_mib": srv.mem(), "startup_s": srv.startup_s, "pregen_s": pregen_s})
         r.update(rs)
         r.update(client_summary(merge_done(done)))
         return r
@@ -334,6 +362,7 @@ def scenario_pop(srv, a):
 def scenario_storm(srv, a):
     first_names = ["Bot%d" % i for i in range(a.n)] + ["Probe0"]
     srv.start(a.vd, a.n, first_names, a.spread)
+    pregen_s = srv.pregenerate((a.spread + 15) // 16 + a.vd + 2)
     time.sleep(2.0)
     srv.window_begin()
     c0, t0 = srv.cpu(), time.time()
@@ -374,7 +403,7 @@ def main():
     ap.add_argument("--vd", type=int, default=10)
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--hold", type=float, default=45.0)
-    ap.add_argument("--spread", type=int, default=800, help="players spawn within +-spread blocks of the origin")
+    ap.add_argument("--spread", type=int, default=480, help="players spawn within +-spread blocks of the origin")
     ap.add_argument("--settle", type=float, default=8.0)
     ap.add_argument("--join-spread", type=float, default=20.0)
     ap.add_argument("--ready-timeout", type=float, default=240.0)
