@@ -45,6 +45,10 @@ create table if not exists mc.world (
 insert into mc.dimension (name) values ('minecraft:overworld') on conflict do nothing;
 insert into mc.world (name, default_dimension) values ('world', 'minecraft:overworld') on conflict do nothing;
 
+-- The world code looks block states up by NAME constantly (palette -> wire ids, canonical names of edits).  The unique btree on ref.block_state(name) pays a
+-- locale-aware string comparison at every level (about 30 us per probe on 35,723 rows); a hash index answers an equality probe in about 7 us.
+create index if not exists block_state_name_hash on ref.block_state using hash (name);
+
 ------------------------------------------------------------------------------------------------ chunk tables
 create table if not exists mc.chunk (
     dimension text   not null references mc.dimension(name),
@@ -59,8 +63,22 @@ create table if not exists mc.chunk (
     hm_motion_blocking           smallint[],
     hm_motion_blocking_no_leaves smallint[],
     hm_world_surface             smallint[],
+    -- CACHE KEY of the light rows: the inputs they were computed from (the WORLD_SURFACE heightmap and the index of the highest non-empty section).
+    -- mc.compute_light skips the work when both still match; NULL means "unknown, recompute".  Light is a pure function of these two values.
+    light_ws  smallint[],
+    light_top smallint,
     primary key (dimension, cx, cz)
 ) with (fillfactor = 70);
+
+-- Databases created before the cache key existed: add the columns.  mc.gen_template (sql/245, a derived cache) stores mc.chunk rows, which blocks
+-- ALTER TABLE, so it is dropped first; sql/245 creates it again (and it is rebuilt on first use).
+do $$
+begin
+    if not exists (select 1 from pg_attribute where attrelid = 'mc.chunk'::regclass and attname = 'light_ws' and not attisdropped) then
+        drop table if exists mc.gen_template;
+        alter table mc.chunk add column light_ws smallint[], add column light_top smallint;
+    end if;
+end $$;
 
 create table if not exists mc.chunk_section (
     dimension     text     not null,

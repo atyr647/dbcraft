@@ -1,0 +1,939 @@
+{
+ "1024": {
+  "growth": {
+   "chunks_made": 960,
+   "seconds": 2.91,
+   "chunks_per_s": 330.0,
+   "wal_bytes": 61423296,
+   "wal_bytes_per_chunk": 63983,
+   "checkpoints_timed": 0,
+   "checkpoints_requested": 0,
+   "buffers_written_by_checkpoints": 0
+  },
+  "vacuum_analyze_s": 0.39,
+  "chunks": 1073,
+  "sizes": {
+   "block_entity": [
+    285,
+    40960,
+    8192,
+    81920
+   ],
+   "chunk": [
+    1073,
+    2940928,
+    8192,
+    98304
+   ],
+   "chunk_cache": [
+    1073,
+    147456,
+    14745600,
+    98304
+   ],
+   "chunk_light": [
+    14937,
+    7249920,
+    229376,
+    1171456
+   ],
+   "chunk_section": [
+    25752,
+    73310208,
+    57344,
+    1982464
+   ]
+  },
+  "dead_tuples": "chunk:0/0/1 chunk_section:0/2/2 chunk_light:0/2/3 chunk_cache:0/1/2 chunk_request:0/0/0 chunk_wanted:0/0/0",
+  "db_mb": 125,
+  "cluster_mb": 733,
+  "plans": {
+   "section_lookup": {
+    "nodes": [
+     "Index Scan on chunk_section using chunk_section_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 8.44
+   },
+   "chunk_exists": {
+    "nodes": [
+     "Index Only Scan on chunk using chunk_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 8.3
+   },
+   "chunk_packet_join": {
+    "nodes": [
+     "Nested Loop",
+     "Index Scan on chunk using chunk_pkey",
+     "Index Scan on chunk_cache using chunk_cache_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 16.61
+   },
+   "join_main": {
+    "nodes": [
+     "Hash Join",
+     "Hash Join",
+     "Hash Join",
+     "Seq Scan on chunk",
+     "Hash",
+     "Function Scan",
+     "Hash",
+     "Function Scan",
+     "Hash",
+     "Seq Scan on chunk_cache"
+    ],
+    "seq_scan": false,
+    "est_cost": 445.78
+   },
+   "light_read": {
+    "nodes": [
+     "Index Scan on chunk_light using chunk_light_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 40.78
+   },
+   "blocks_in_sections": {
+    "nodes": [
+     "Index Scan on chunk_section using chunk_section_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 60.52
+   }
+  },
+  "load_before_ops": 2.93,
+  "ops": {
+   "get_block": {
+    "cold": {
+     "n": 200,
+     "p50_us": 177.0,
+     "p99_us": 588.0,
+     "max_us": 6953.0,
+     "mean_us": 230.0
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 22.0,
+     "p99_us": 87.8,
+     "max_us": 1881.0,
+     "mean_us": 35.9
+    }
+   },
+   "block_at": {
+    "cold": {
+     "n": 200,
+     "p50_us": 176.0,
+     "p99_us": 697.7,
+     "max_us": 9713.0,
+     "mean_us": 256.1
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 28.0,
+     "p99_us": 122.4,
+     "max_us": 1497.0,
+     "mean_us": 39.4
+    }
+   },
+   "blocks_in": {
+    "cold": {
+     "n": 200,
+     "p50_us": 4693.0,
+     "p99_us": 15326.2,
+     "max_us": 17344.0,
+     "mean_us": 5840.4
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 3491.5,
+     "p99_us": 12339.7,
+     "max_us": 18950.0,
+     "mean_us": 4559.3
+    }
+   },
+   "chunk_packet_cached": {
+    "cold": {
+     "n": 200,
+     "p50_us": 71.0,
+     "p99_us": 392.8,
+     "max_us": 5005.0,
+     "mean_us": 104.7
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 10.0,
+     "p99_us": 114.2,
+     "max_us": 948.0,
+     "mean_us": 18.2
+    }
+   },
+   "set_block": {
+    "cold": {
+     "n": 230,
+     "p50_us": 333.0,
+     "p99_us": 6427.8,
+     "max_us": 15897.0,
+     "mean_us": 562.5
+    },
+    "warm": {
+     "n": 230,
+     "p50_us": 74.5,
+     "p99_us": 417.5,
+     "max_us": 4192.0,
+     "mean_us": 109.0
+    }
+   },
+   "rebuild_after_edit": {
+    "cold": {
+     "n": 230,
+     "p50_us": 16004.5,
+     "p99_us": 35254.0,
+     "max_us": 48398.0,
+     "mean_us": 14832.8
+    },
+    "warm": {
+     "n": 230,
+     "p50_us": 14907.5,
+     "p99_us": 31051.3,
+     "max_us": 34433.0,
+     "mean_us": 14733.0
+    }
+   },
+   "join441": {
+    "cold": {
+     "n": 30,
+     "p50_us": 104379.5,
+     "p99_us": 221421.9,
+     "max_us": 266110.0,
+     "mean_us": 107125.9
+    },
+    "warm": {
+     "n": 30,
+     "p50_us": 104405.5,
+     "p99_us": 128855.7,
+     "max_us": 130712.0,
+     "mean_us": 104820.9
+    }
+   },
+   "border_step": {
+    "cold": {
+     "n": 30,
+     "p50_us": 111045.0,
+     "p99_us": 163980.3,
+     "max_us": 171600.0,
+     "mean_us": 115817.4
+    },
+    "warm": {
+     "n": 30,
+     "p50_us": 112363.0,
+     "p99_us": 147032.5,
+     "max_us": 149003.0,
+     "mean_us": 117317.6
+    }
+   }
+  },
+  "load_after_ops": 3.21
+ },
+ "5056": {
+  "growth": {
+   "chunks_made": 4032,
+   "seconds": 13.49,
+   "chunks_per_s": 298.8,
+   "wal_bytes": 275581488,
+   "wal_bytes_per_chunk": 68349,
+   "checkpoints_timed": 0,
+   "checkpoints_requested": 0,
+   "buffers_written_by_checkpoints": 0
+  },
+  "vacuum_analyze_s": 1.1,
+  "chunks": 5105,
+  "sizes": {
+   "block_entity": [
+    285,
+    188416,
+    8192,
+    245760
+   ],
+   "chunk": [
+    5105,
+    13942784,
+    8192,
+    376832
+   ],
+   "chunk_cache": [
+    5105,
+    679936,
+    69459968,
+    376832
+   ],
+   "chunk_light": [
+    71006,
+    33439744,
+    917504,
+    5529600
+   ],
+   "chunk_section": [
+    122186,
+    349978624,
+    57344,
+    10067968
+   ]
+  },
+  "dead_tuples": "chunk:0/1/3 chunk_section:162/2/2 chunk_light:0/3/4 chunk_cache:0/1/3 chunk_request:0/0/0 chunk_wanted:0/0/0",
+  "db_mb": 491,
+  "cluster_mb": 1067,
+  "plans": {
+   "section_lookup": {
+    "nodes": [
+     "Index Scan on chunk_section using chunk_section_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 8.44
+   },
+   "chunk_exists": {
+    "nodes": [
+     "Index Only Scan on chunk using chunk_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 8.3
+   },
+   "chunk_packet_join": {
+    "nodes": [
+     "Nested Loop",
+     "Index Scan on chunk using chunk_pkey",
+     "Index Scan on chunk_cache using chunk_cache_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 16.62
+   },
+   "join_main": {
+    "nodes": [
+     "Nested Loop",
+     "Hash Join",
+     "Hash Join",
+     "Seq Scan on chunk",
+     "Hash",
+     "Function Scan",
+     "Hash",
+     "Function Scan",
+     "Index Scan on chunk_cache using chunk_cache_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 1998.88
+   },
+   "light_read": {
+    "nodes": [
+     "Index Scan on chunk_light using chunk_light_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 31.48
+   },
+   "blocks_in_sections": {
+    "nodes": [
+     "Index Scan on chunk_section using chunk_section_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 116.68
+   }
+  },
+  "load_before_ops": 3.15,
+  "ops": {
+   "get_block": {
+    "cold": {
+     "n": 200,
+     "p50_us": 170.5,
+     "p99_us": 563.2,
+     "max_us": 6735.0,
+     "mean_us": 224.2
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 17.0,
+     "p99_us": 70.4,
+     "max_us": 1490.0,
+     "mean_us": 28.1
+    }
+   },
+   "block_at": {
+    "cold": {
+     "n": 200,
+     "p50_us": 235.0,
+     "p99_us": 979.0,
+     "max_us": 10024.0,
+     "mean_us": 322.2
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 40.0,
+     "p99_us": 172.9,
+     "max_us": 2321.0,
+     "mean_us": 60.2
+    }
+   },
+   "blocks_in": {
+    "cold": {
+     "n": 200,
+     "p50_us": 5324.5,
+     "p99_us": 19293.2,
+     "max_us": 68481.0,
+     "mean_us": 6424.1
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 3692.5,
+     "p99_us": 10450.8,
+     "max_us": 19069.0,
+     "mean_us": 4524.7
+    }
+   },
+   "chunk_packet_cached": {
+    "cold": {
+     "n": 200,
+     "p50_us": 99.5,
+     "p99_us": 543.2,
+     "max_us": 6635.0,
+     "mean_us": 168.5
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 14.0,
+     "p99_us": 126.1,
+     "max_us": 1192.0,
+     "mean_us": 23.6
+    }
+   },
+   "set_block": {
+    "cold": {
+     "n": 230,
+     "p50_us": 342.0,
+     "p99_us": 4901.1,
+     "max_us": 18697.0,
+     "mean_us": 514.7
+    },
+    "warm": {
+     "n": 230,
+     "p50_us": 74.0,
+     "p99_us": 269.7,
+     "max_us": 4039.0,
+     "mean_us": 98.8
+    }
+   },
+   "rebuild_after_edit": {
+    "cold": {
+     "n": 230,
+     "p50_us": 15026.0,
+     "p99_us": 27933.8,
+     "max_us": 61731.0,
+     "mean_us": 14646.7
+    },
+    "warm": {
+     "n": 230,
+     "p50_us": 14124.5,
+     "p99_us": 24485.6,
+     "max_us": 28863.0,
+     "mean_us": 13040.1
+    }
+   },
+   "join441": {
+    "cold": {
+     "n": 30,
+     "p50_us": 111821.0,
+     "p99_us": 238601.5,
+     "max_us": 281161.0,
+     "mean_us": 118387.6
+    },
+    "warm": {
+     "n": 30,
+     "p50_us": 90879.5,
+     "p99_us": 150015.8,
+     "max_us": 152194.0,
+     "mean_us": 101482.7
+    }
+   },
+   "border_step": {
+    "cold": {
+     "n": 30,
+     "p50_us": 115098.0,
+     "p99_us": 130917.5,
+     "max_us": 132304.0,
+     "mean_us": 114737.8
+    },
+    "warm": {
+     "n": 30,
+     "p50_us": 112713.5,
+     "p99_us": 143941.4,
+     "max_us": 145847.0,
+     "mean_us": 113568.3
+    }
+   }
+  },
+  "load_after_ops": 3.29
+ },
+ "10048": {
+  "growth": {
+   "chunks_made": 4992,
+   "seconds": 15.85,
+   "chunks_per_s": 314.9,
+   "wal_bytes": 338514520,
+   "wal_bytes_per_chunk": 67811,
+   "checkpoints_timed": 0,
+   "checkpoints_requested": 0,
+   "buffers_written_by_checkpoints": 0
+  },
+  "vacuum_analyze_s": 1.79,
+  "chunks": 10097,
+  "sizes": {
+   "block_entity": [
+    1356,
+    360448,
+    8192,
+    417792
+   ],
+   "chunk": [
+    10097,
+    28917760,
+    8192,
+    679936
+   ],
+   "chunk_cache": [
+    10097,
+    1343488,
+    142835712,
+    679936
+   ],
+   "chunk_light": [
+    140445,
+    67919872,
+    1744896,
+    11116544
+   ],
+   "chunk_section": [
+    243568,
+    692199424,
+    57344,
+    20144128
+   ]
+  },
+  "dead_tuples": "chunk:0/1/4 chunk_section:355/2/2 chunk_light:0/3/5 chunk_cache:0/1/3 chunk_request:0/0/0 chunk_wanted:0/0/0",
+  "db_mb": 953,
+  "cluster_mb": 1513,
+  "plans": {
+   "section_lookup": {
+    "nodes": [
+     "Index Scan on chunk_section using chunk_section_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 8.45
+   },
+   "chunk_exists": {
+    "nodes": [
+     "Index Only Scan on chunk using chunk_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 8.31
+   },
+   "chunk_packet_join": {
+    "nodes": [
+     "Nested Loop",
+     "Index Scan on chunk using chunk_pkey",
+     "Index Scan on chunk_cache using chunk_cache_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 16.63
+   },
+   "join_main": {
+    "nodes": [
+     "Nested Loop",
+     "Nested Loop",
+     "Function Scan",
+     "Nested Loop",
+     "Function Scan",
+     "Index Scan on chunk using chunk_pkey",
+     "Index Scan on chunk_cache using chunk_cache_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 3682.82
+   },
+   "light_read": {
+    "nodes": [
+     "Index Scan on chunk_light using chunk_light_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 33.26
+   },
+   "blocks_in_sections": {
+    "nodes": [
+     "Index Scan on chunk_section using chunk_section_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 147.64
+   }
+  },
+  "load_before_ops": 3.49,
+  "ops": {
+   "get_block": {
+    "cold": {
+     "n": 200,
+     "p50_us": 137.0,
+     "p99_us": 667.2,
+     "max_us": 8339.0,
+     "mean_us": 210.9
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 17.0,
+     "p99_us": 85.4,
+     "max_us": 1510.0,
+     "mean_us": 30.4
+    }
+   },
+   "block_at": {
+    "cold": {
+     "n": 200,
+     "p50_us": 190.5,
+     "p99_us": 2240.6,
+     "max_us": 12152.0,
+     "mean_us": 329.1
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 39.0,
+     "p99_us": 243.1,
+     "max_us": 1938.0,
+     "mean_us": 56.9
+    }
+   },
+   "blocks_in": {
+    "cold": {
+     "n": 200,
+     "p50_us": 5994.5,
+     "p99_us": 18872.1,
+     "max_us": 72092.0,
+     "mean_us": 7482.0
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 4528.0,
+     "p99_us": 14429.1,
+     "max_us": 16063.0,
+     "mean_us": 5522.5
+    }
+   },
+   "chunk_packet_cached": {
+    "cold": {
+     "n": 200,
+     "p50_us": 156.5,
+     "p99_us": 569.0,
+     "max_us": 6270.0,
+     "mean_us": 218.2
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 18.0,
+     "p99_us": 118.9,
+     "max_us": 1537.0,
+     "mean_us": 31.4
+    }
+   },
+   "set_block": {
+    "cold": {
+     "n": 230,
+     "p50_us": 384.0,
+     "p99_us": 4875.5,
+     "max_us": 15233.0,
+     "mean_us": 561.7
+    },
+    "warm": {
+     "n": 230,
+     "p50_us": 73.0,
+     "p99_us": 578.3,
+     "max_us": 4942.0,
+     "mean_us": 110.8
+    }
+   },
+   "rebuild_after_edit": {
+    "cold": {
+     "n": 230,
+     "p50_us": 17004.0,
+     "p99_us": 35911.0,
+     "max_us": 118543.0,
+     "mean_us": 16418.8
+    },
+    "warm": {
+     "n": 230,
+     "p50_us": 13599.5,
+     "p99_us": 22639.1,
+     "max_us": 30585.0,
+     "mean_us": 12496.9
+    }
+   },
+   "join441": {
+    "cold": {
+     "n": 30,
+     "p50_us": 106218.5,
+     "p99_us": 204906.7,
+     "max_us": 233534.0,
+     "mean_us": 109190.3
+    },
+    "warm": {
+     "n": 30,
+     "p50_us": 113544.0,
+     "p99_us": 153398.8,
+     "max_us": 153866.0,
+     "mean_us": 113782.6
+    }
+   },
+   "border_step": {
+    "cold": {
+     "n": 30,
+     "p50_us": 113119.0,
+     "p99_us": 155049.2,
+     "max_us": 156286.0,
+     "mean_us": 117548.9
+    },
+    "warm": {
+     "n": 30,
+     "p50_us": 109257.5,
+     "p99_us": 137661.2,
+     "max_us": 140768.0,
+     "mean_us": 112098.1
+    }
+   }
+  },
+  "load_after_ops": 3.59
+ },
+ "20032": {
+  "growth": {
+   "chunks_made": 9984,
+   "seconds": 31.87,
+   "chunks_per_s": 313.3,
+   "wal_bytes": 680345608,
+   "wal_bytes_per_chunk": 68144,
+   "checkpoints_timed": 0,
+   "checkpoints_requested": 1,
+   "buffers_written_by_checkpoints": 1172
+  },
+  "vacuum_analyze_s": 2.86,
+  "chunks": 20081,
+  "sizes": {
+   "block_entity": [
+    2678,
+    720896,
+    8192,
+    778240
+   ],
+   "chunk": [
+    20081,
+    55861248,
+    8192,
+    1351680
+   ],
+   "chunk_cache": [
+    20081,
+    2662400,
+    275963904,
+    1351680
+   ],
+   "chunk_light": [
+    279364,
+    134373376,
+    3407872,
+    22216704
+   ],
+   "chunk_section": [
+    482342,
+    1375657984,
+    57344,
+    40247296
+   ]
+  },
+  "dead_tuples": "chunk:0/1/5 chunk_section:521/2/2 chunk_light:0/3/5 chunk_cache:0/1/3 chunk_request:0/0/0 chunk_wanted:0/0/0",
+  "db_mb": 1855,
+  "cluster_mb": 2560,
+  "plans": {
+   "section_lookup": {
+    "nodes": [
+     "Index Scan on chunk_section using chunk_section_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 8.45
+   },
+   "chunk_exists": {
+    "nodes": [
+     "Index Only Scan on chunk using chunk_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 8.31
+   },
+   "chunk_packet_join": {
+    "nodes": [
+     "Nested Loop",
+     "Index Scan on chunk using chunk_pkey",
+     "Index Scan on chunk_cache using chunk_cache_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 16.63
+   },
+   "join_main": {
+    "nodes": [
+     "Nested Loop",
+     "Nested Loop",
+     "Function Scan",
+     "Nested Loop",
+     "Function Scan",
+     "Index Scan on chunk using chunk_pkey",
+     "Index Scan on chunk_cache using chunk_cache_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 3775.48
+   },
+   "light_read": {
+    "nodes": [
+     "Index Scan on chunk_light using chunk_light_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 31.49
+   },
+   "blocks_in_sections": {
+    "nodes": [
+     "Index Scan on chunk_section using chunk_section_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 215.27
+   }
+  },
+  "load_before_ops": 3.69,
+  "ops": {
+   "get_block": {
+    "cold": {
+     "n": 200,
+     "p50_us": 167.5,
+     "p99_us": 502.6,
+     "max_us": 8189.0,
+     "mean_us": 228.2
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 22.0,
+     "p99_us": 139.3,
+     "max_us": 1868.0,
+     "mean_us": 37.3
+    }
+   },
+   "block_at": {
+    "cold": {
+     "n": 200,
+     "p50_us": 219.0,
+     "p99_us": 2844.4,
+     "max_us": 15042.0,
+     "mean_us": 397.6
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 29.0,
+     "p99_us": 126.1,
+     "max_us": 1691.0,
+     "mean_us": 43.2
+    }
+   },
+   "blocks_in": {
+    "cold": {
+     "n": 200,
+     "p50_us": 4648.0,
+     "p99_us": 31892.4,
+     "max_us": 63288.0,
+     "mean_us": 6607.0
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 3577.0,
+     "p99_us": 13553.6,
+     "max_us": 20325.0,
+     "mean_us": 4621.8
+    }
+   },
+   "chunk_packet_cached": {
+    "cold": {
+     "n": 200,
+     "p50_us": 259.0,
+     "p99_us": 1668.1,
+     "max_us": 5687.0,
+     "mean_us": 337.4
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 17.0,
+     "p99_us": 78.6,
+     "max_us": 1071.0,
+     "mean_us": 26.6
+    }
+   },
+   "set_block": {
+    "cold": {
+     "n": 230,
+     "p50_us": 496.5,
+     "p99_us": 4603.6,
+     "max_us": 14880.0,
+     "mean_us": 665.6
+    },
+    "warm": {
+     "n": 230,
+     "p50_us": 74.5,
+     "p99_us": 356.1,
+     "max_us": 3861.0,
+     "mean_us": 103.4
+    }
+   },
+   "rebuild_after_edit": {
+    "cold": {
+     "n": 230,
+     "p50_us": 16296.0,
+     "p99_us": 32900.3,
+     "max_us": 55110.0,
+     "mean_us": 15774.8
+    },
+    "warm": {
+     "n": 230,
+     "p50_us": 12408.5,
+     "p99_us": 23641.8,
+     "max_us": 29572.0,
+     "mean_us": 11679.6
+    }
+   },
+   "join441": {
+    "cold": {
+     "n": 30,
+     "p50_us": 120615.0,
+     "p99_us": 217496.9,
+     "max_us": 237221.0,
+     "mean_us": 127659.1
+    },
+    "warm": {
+     "n": 30,
+     "p50_us": 116228.5,
+     "p99_us": 148172.3,
+     "max_us": 148527.0,
+     "mean_us": 113488.1
+    }
+   },
+   "border_step": {
+    "cold": {
+     "n": 30,
+     "p50_us": 113881.0,
+     "p99_us": 156505.1,
+     "max_us": 157106.0,
+     "mean_us": 117546.5
+    },
+    "warm": {
+     "n": 30,
+     "p50_us": 124544.0,
+     "p99_us": 147720.2,
+     "max_us": 148547.0,
+     "mean_us": 123747.8
+    }
+   }
+  },
+  "load_after_ops": 3.84
+ }
+}

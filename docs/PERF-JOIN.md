@@ -136,3 +136,8 @@ for every leaver, and builds the leave message per recipient like `on_join` did)
 * `sql/460`-`465` (migration), `sql/OVERRIDES.txt` (every redefined function with the reason), `tools/check_fresh_migration.sh` (structural checks of a clean migration), `tools/check_overrides.py`
 * `tests/sql/460`, `461`, `462`, `464`, `465`; `tests/sql/140`, `410`, `420`, `430` adjusted (they re-include `sql/400`, which reinstalls the original hooks, so they now re-include 460-462 after it)
 * `tests/bench/join/`: harness, `ab.py`, `other.py`, `identity.sh`, `cliff.py`, README (with the pitfalls that each cost a wrong number once), `rejected/`
+
+## Merge note: the batched tick and the inlining audit
+
+* `mc.server_tick_batched` (sql/380-389) consumes the inbox with `net.process()` / its own loop in `sql/381`, and both call `net.handle` per login packet, so **everything above (sql/460-465) applies to the batched tick unchanged**: the login path is shared, only the game phases differ.  It was not re-measured separately.
+* `sql/480_inlining.sql` (inlining audit) redefines `proto.frame`, `proto.varint` and nine lookups; none of them is redefined by `sql/460-465`, and `sql/460` redefines `proto.varint_read`, `proto.string_read`, `net.send`, `net.close`, `net.need`, `net.on_connect`, which `sql/480` does not touch.  `sql/OVERRIDES.txt` lists the winner of each; `tools/check_overrides.py` and `tools/check_inlining.sh` pass on the merged tree.

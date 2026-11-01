@@ -16,7 +16,7 @@
 
 ------------------------------------------------------------------------------------------------ the template
 -- Bump when the generic generation, heightmap or light code changes in a way that alters its output: it invalidates every template.
-create or replace function mc.gen_version() returns int language sql immutable parallel safe as $$ select 2 $$;
+create or replace function mc.gen_version() returns int language sql immutable parallel safe as $$ select 3 $$;     -- 3: template chunk rows carry the light cache key
 
 create table if not exists mc.gen_template (
     dimension  text primary key,                 -- the dimension it serves
@@ -136,9 +136,9 @@ begin
     end if;
     with want as (select distinct u.cx, u.cz from unnest(p_cxs, p_czs) u(cx, cz)),
     ins as (
-        insert into mc.chunk (dimension, cx, cz, status, version, dirty, hm_dirty, hm_motion_blocking, hm_motion_blocking_no_leaves, hm_world_surface)
+        insert into mc.chunk (dimension, cx, cz, status, version, dirty, hm_dirty, hm_motion_blocking, hm_motion_blocking_no_leaves, hm_world_surface, light_ws, light_top)
         select p_dim, w.cx, w.cz, (t.chunk).status, 0, false, false,
-               (t.chunk).hm_motion_blocking, (t.chunk).hm_motion_blocking_no_leaves, (t.chunk).hm_world_surface
+               (t.chunk).hm_motion_blocking, (t.chunk).hm_motion_blocking_no_leaves, (t.chunk).hm_world_surface, (t.chunk).light_ws, (t.chunk).light_top
           from want w
         on conflict do nothing
         returning cx, cz),

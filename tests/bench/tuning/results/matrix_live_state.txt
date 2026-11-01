@@ -1,0 +1,14 @@
+case (variant:players:moving:snap) | tick ms avg / p99 / max  | WAL KB/tick (fpi %) | snapshot ms avg (when run) | dead tuples / autovac runs | table sizes; vacuum ms
+wide:500:1.0                       | 10.1 / 20.5 / 38.4       | 118.8 0            | -                          | player_wide 14074/0        | player_wide 4688 kB; player_wide 40
+hot_logged:500:1.0                 | 16.0 / 36.4 / 49.0       | 114.7 0            | -                          | player_hot 8008/0, player_wide 0/0 | player_hot 1864 kB, player_wide 208 kB; player_wide 43 player_hot 52
+hot_unlogged:500:1.0:100           | 10.3 / 24.9 / 33.6       | 1.1 1              | 4.2 (12x)                  | player_hot 7759/0, player_wide 756/0 | player_hot 2080 kB, player_wide 304 kB; player_wide 33 player_hot 42
+hot_unlogged:500:1.0:300           | 11.8 / 32.1 / 76.0       | 0.8 1              | 5.4 (4x)                   | player_hot 19956/0, player_wide 741/0 | player_hot 5488 kB, player_wide 304 kB; player_wide 34 player_hot 39
+wide:500:0.25                      | 4.3 / 9.4 / 16.2         | 30.0 0             | -                          | player_wide 1481/0         | player_wide 472 kB; player_wide 38
+hot_logged:500:0.25                | 4.1 / 10.4 / 18.8        | 29.5 0             | -                          | player_hot 1660/0, player_wide 0/0 | player_hot 368 kB, player_wide 208 kB; player_wide 30 player_hot 38
+hot_unlogged:500:0.25:100          | 4.1 / 11.7 / 62.4        | 1.2 1              | 2.0 (12x)                  | player_hot 802/0, player_wide 746/0 | player_hot 392 kB, player_wide 296 kB; player_wide 35 player_hot 34
+wide:2000:1.0                      | 43.3 / 107.8 / 182.0     | 468.4 0            | -                          | player_wide 38148/0        | player_wide 12 MB; player_wide 55
+hot_logged:2000:1.0                | 34.8 / 82.4 / 103.1      | 459.4 0            | -                          | player_hot 33239/0, player_wide 0/0 | player_hot 7576 kB, player_wide 728 kB; player_wide 34 player_hot 56
+hot_unlogged:2000:1.0:100          | 32.1 / 89.3 / 134.6      | 3.6 1              | 8.8 (12x)                  | player_hot 29777/0, player_wide 3052/0 | player_hot 8032 kB, player_wide 1096 kB; player_wide 61 player_hot 72
+wide:2000:0.25                     | 11.7 / 21.3 / 57.1       | 119.1 0            | -                          | player_wide 6213/0         | player_wide 1856 kB; player_wide 41
+hot_logged:2000:0.25               | 10.5 / 19.2 / 70.5       | 116.6 0            | -                          | player_hot 6588/0, player_wide 0/0 | player_hot 1456 kB, player_wide 728 kB; player_wide 43 player_hot 47
+hot_unlogged:2000:0.25:100         | 10.2 / 25.1 / 34.9       | 3.5 0              | 9.0 (12x)                  | player_hot 2987/0, player_wide 3053/0 | player_hot 1344 kB, player_wide 1096 kB; player_wide 45 player_hot 37

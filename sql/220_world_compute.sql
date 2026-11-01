@@ -76,59 +76,112 @@ end $$;
 
 ------------------------------------------------------------------------------------------------ light
 -- One sky-light layer: 2048 bytes of nibbles, 15 where the layer's y (relative to the world bottom) is at or above the column's surface value.
-create or replace function mc.sky_layer(hm smallint[], base int) returns bytea language sql immutable parallel safe as $$
-  select decode(string_agg(lpad(to_hex(
-           (case when base + (k >> 7) >= hm[2 * (k & 7) + 16 * ((k >> 3) & 15) + 1] then 15 else 0 end)
-         | (case when base + (k >> 7) >= hm[2 * (k & 7) + 16 * ((k >> 3) & 15) + 2] then 240 else 0 end)), 2, '0'), '' order by k), 'hex')
-  from generate_series(0, 2047) k $$;
+-- Byte k of the layer holds the columns x = 2 * (k & 7) (low nibble) and x + 1 (high nibble) of row z = (k >> 3) & 15 at height y = k >> 7.
+--
+-- The first version aggregated 2,048 formatted bytes (0.64 ms per partial layer).  A column is lit from row r = clamp(surface - base, 0, 16) upwards, so the rows
+-- are cumulative: row y lights exactly the columns whose r <= y.  The lit columns are kept as four 64-bit masks per row; a mask bit, read as text, is turned
+-- into a hex digit by translate(), and the columns are numbered (col # 1) so that the text order of the bits is the byte order of the layer (the high nibble,
+-- the odd column, comes first).  Uniform surfaces (flat worlds) need no per-column work at all.
+-- plpgsql so that the plan is cached (a LANGUAGE sql function with a FROM clause is planned again on every call).
+create or replace function mc.sky_layer(hm smallint[], base int) returns bytea language plpgsql immutable parallel safe set plan_cache_mode = force_generic_plan as $$
+declare
+    lo int; hi int; t int; r bytea;
+begin
+    select min(h), max(h) into lo, hi from unnest(hm) h;
+    if lo = hi then
+        t := least(greatest(lo - base, 0), 16);                          -- rows below t are dark, the rest lit
+        return decode(repeat('00', 128 * t) || repeat('ff', 128 * (16 - t)), 'hex');
+    end if;
+    with cols as (
+        select (c # 1) as n, greatest(least(hm[c + 1] - base, 16), 0) as thr from generate_series(0, 255) c),
+    g as (
+        select thr, n >> 6 as j, bit_or(1::bigint << (63 - (n & 63))) as m from cols group by 1, 2),
+    grid as (
+        select y, jj as j, coalesce(g.m, 0) as m from generate_series(0, 15) y cross join generate_series(0, 3) jj left join g on g.thr = y and g.j = jj),
+    acc as (
+        select y, j, bit_or(m) over (partition by j order by y) as a from grid),
+    rows as (
+        select y, translate((max(a) filter (where j = 0))::bit(64)::text || (max(a) filter (where j = 1))::bit(64)::text
+                            || (max(a) filter (where j = 2))::bit(64)::text || (max(a) filter (where j = 3))::bit(64)::text, '01', '0f') as hx
+          from acc group by y)
+    select decode(string_agg(hx, '' order by y), 'hex') into r from rows;
+    return r;
+end $$;
 
 -- Rebuilds the light rows of a chunk.  Layers 0 .. (index of the highest non-empty section + 2); layer 0 lies below the world.
 -- p_sky0_as_data: vanilla sometimes sends layer 0 as a present all-zero array instead of an "empty" bit (a transient of its light engine, seen on the first
 -- chunks of a session); pass true to reproduce that form.
-create or replace function mc.compute_light(p_dim text, p_cx int, p_cz int, p_sky0_as_data boolean default false) returns void language plpgsql volatile as $$
+--
+-- Light is a pure function of the WORLD_SURFACE heightmap and of the highest non-empty section, and mc.chunk.light_ws / light_top remember the inputs the stored
+-- rows were computed from: an edit that changed neither (a block placed or removed below the surface) costs one comparison instead of a rebuild.
+-- When the inputs did change, all partial layers are built in ONE statement (the columns are grouped by surface height once, then every absolute level gets its
+-- cumulative mask; a layer is 16 consecutive levels), and only layers whose content differs from the stored row are written.
+create or replace function mc.compute_light(p_dim text, p_cx int, p_cz int, p_sky0_as_data boolean default false) returns void language plpgsql volatile set plan_cache_mode = force_generic_plan as $$
 declare
-    d          mc.dimension%rowtype;
+    v_min_y    int;
+    v_height   int;
     hm         smallint[];
+    k_ws       smallint[];
+    k_top      smallint;
     top        int;
     min_sy     int;
     nsec       int;
     last_layer int;
-    lay        int;
-    base       int;
     lo         int;
     hi         int;
-    arr        bytea;
+    b0         int;
+    b1         int;
+    ff         bytea := decode(repeat('ff', 2048), 'hex');
 begin
-    select * into d from mc.dimension where name = p_dim;
+    select d.min_y, d.height, c.hm_world_surface, c.light_ws, c.light_top into v_min_y, v_height, hm, k_ws, k_top
+      from mc.dimension d left join mc.chunk c on c.dimension = d.name and c.cx = p_cx and c.cz = p_cz
+     where d.name = p_dim;
     if not found then raise exception 'unknown dimension %', p_dim; end if;
-    select c.hm_world_surface into hm from mc.chunk c where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
     if hm is null then raise exception 'chunk %,% of % has no heightmaps; compute them first', p_cx, p_cz, p_dim; end if;
-    min_sy := d.min_y >> 4;
-    nsec := d.height / 16;
+    min_sy := v_min_y >> 4;
+    nsec := v_height / 16;
     select max(s.sy) - min_sy into top from mc.chunk_section s
      where s.dimension = p_dim and s.cx = p_cx and s.cz = p_cz and s.block_count > 0;
     top := coalesce(top, -1);
     last_layer := least(top + 2, nsec + 1);
+    if not p_sky0_as_data and k_ws is not distinct from hm and k_top is not distinct from top::smallint
+       and (select count(*) from mc.chunk_light l where l.dimension = p_dim and l.cx = p_cx and l.cz = p_cz) = last_layer + 1 then
+        return;                                                    -- the stored rows already are this function's output
+    end if;
     select min(x), max(x) into lo, hi from unnest(hm) x;
+    -- levels (heights relative to the world bottom) covered by partial layers: layer lay spans [16 * (lay - 1), 16 * lay); uniform surfaces need no level table
+    b0 := (lo / 16) * 16;
+    b1 := case when lo = hi then b0 else ((hi + 15) / 16) * 16 end;
 
-    delete from mc.chunk_light where dimension = p_dim and cx = p_cx and cz = p_cz;
-    for lay in 0 .. last_layer loop
-        if lay = 0 then
-            insert into mc.chunk_light values (p_dim, p_cx, p_cz, 0,
-                case when p_sky0_as_data then 'data' else 'empty' end, case when p_sky0_as_data then decode(repeat('00', 2048), 'hex') end,
-                'empty', null);
-            continue;
-        end if;
-        base := (min_sy + lay - 1) * 16 - d.min_y;            -- y of the layer's lowest block, relative to the world bottom
-        if base >= hi then
-            arr := decode(repeat('ff', 2048), 'hex');
-            insert into mc.chunk_light values (p_dim, p_cx, p_cz, lay, 'data', arr, 'empty', null);
-        elsif base + 16 <= lo then
-            insert into mc.chunk_light values (p_dim, p_cx, p_cz, lay, 'empty', null, 'empty', null);
-        else
-            insert into mc.chunk_light values (p_dim, p_cx, p_cz, lay, 'data', mc.sky_layer(hm, base), 'empty', null);
-        end if;
-    end loop;
+    delete from mc.chunk_light l where l.dimension = p_dim and l.cx = p_cx and l.cz = p_cz and l.idx > last_layer;
+    with g as (
+        select hm[c + 1]::int as h, (c # 1) >> 6 as j, bit_or(1::bigint << (63 - ((c # 1) & 63))) as m
+          from generate_series(0, 255) c group by 1, 2),
+    lv as (
+        select a, jj as j, coalesce(g.m, 0) as m from generate_series(b0, b1 - 1) a cross join generate_series(0, 3) jj left join g on g.h = a and g.j = jj),
+    acc as (
+        select a, j, bit_or(m) over (partition by j order by a) as cm from lv),
+    txt as (
+        select a, translate((max(cm) filter (where j = 0))::bit(64)::text || (max(cm) filter (where j = 1))::bit(64)::text
+                            || (max(cm) filter (where j = 2))::bit(64)::text || (max(cm) filter (where j = 3))::bit(64)::text, '01', '0f') as hx
+          from acc group by a),
+    pl as (
+        select (a - b0) / 16 as off, decode(string_agg(hx, '' order by a), 'hex') as arr from txt group by 1),
+    want as (
+        select lay,
+               case when lay = 0 then (case when p_sky0_as_data then 'data' else 'empty' end)
+                    when b.base >= hi then 'data' when b.base + 16 <= lo then 'empty' else 'data' end as sky_kind,
+               case when lay = 0 then (case when p_sky0_as_data then decode(repeat('00', 2048), 'hex') end)
+                    when b.base >= hi then ff when b.base + 16 <= lo then null
+                    else coalesce((select pl.arr from pl where pl.off = (b.base - b0) / 16), mc.sky_layer(hm, b.base)) end as sky
+          from generate_series(0, last_layer) lay, lateral (select (min_sy + lay - 1) * 16 - v_min_y as base) b)
+    insert into mc.chunk_light as l (dimension, cx, cz, idx, sky_kind, sky, block_kind, block)
+    select p_dim, p_cx, p_cz, w.lay, w.sky_kind, w.sky, 'empty', null from want w
+    on conflict (dimension, cx, cz, idx) do update set sky_kind = excluded.sky_kind, sky = excluded.sky, block_kind = excluded.block_kind, block = excluded.block
+     where (l.sky_kind, l.sky, l.block_kind, l.block) is distinct from (excluded.sky_kind, excluded.sky, excluded.block_kind, excluded.block);
+    -- vanilla's layer-0 variant is not what a later call without the flag would produce, so it must not leave a key behind
+    update mc.chunk c set light_ws = case when p_sky0_as_data then null else hm end, light_top = case when p_sky0_as_data then null else top::smallint end
+     where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
 end $$;
 
 -- Height value of the highest block at or below p_from_y in one column that satisfies heightmap kind p_kind (1 = WORLD_SURFACE, 2 = MOTION_BLOCKING,
@@ -172,7 +225,7 @@ end $$;
 
 -- Bring a chunk's derived data up to date: heightmaps in full when they are missing or flagged (hm_dirty), light when anything changed.
 -- Returns false when there was nothing to do.
-create or replace function mc.ensure_chunk_current(p_dim text, p_cx int, p_cz int) returns boolean language plpgsql volatile as $$
+create or replace function mc.ensure_chunk_current(p_dim text, p_cx int, p_cz int) returns boolean language plpgsql volatile set plan_cache_mode = force_generic_plan as $$
 declare
     c mc.chunk%rowtype;
     h record;

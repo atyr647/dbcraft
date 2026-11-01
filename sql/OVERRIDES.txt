@@ -35,3 +35,16 @@ mc.on_join/3 | 461_join_on_join.sql | wrapper over the new 4-argument mc.on_join
 net.send_config_data/2 | 462_join_config_burst.sql | one cached, pre-framed row per (known packs, threshold, deflate implementation) instead of 33 rows built per joiner
 net.player_info_body/1 | 464_join_constants.sql | PL/pgSQL (plan cached) over the cached per-connection tab-entry head (net.conn_tab); same bytes, 7.4 us -> about 2 us per entry
 net.config_begin/1 | 464_join_constants.sql | the three packets that start the configuration phase as one cached framed row per (threshold, deflate implementation)
+proto.frame/2 | 480_inlining.sql | PL/pgSQL: callers pass computed bodies, so the SQL version was never inlined and re-planned its body in every statement (sql/315 is the inlinable first version)
+proto.varint/1 | 480_inlining.sql | PL/pgSQL for the same reason as proto.frame
+mc.section_blocks/2 | 291_section_compression.sql | reads the palette once per section (identical rows); keeps blocks_in fast when section rows are compressed (opt-in, docs/PERF-SCALE.md)
+mc.unpack_longs/3 | 291_section_compression.sql | binds the section data once per call (identical result, proven in tests/sql/291); the original decompressed a compressed value ~12,000 times per section
+mc.chat_type_id/1 | 480_inlining.sql | key lookup as PL/pgSQL (cached plan; the SQL version re-planned per statement, 90 us)
+mc.permission_level/1 | 480_inlining.sql | key lookup as PL/pgSQL
+mc.prop/1 | 480_inlining.sql | key lookup as PL/pgSQL
+mc.prop_bool/1 | 480_inlining.sql | key lookup as PL/pgSQL
+mc.prop_int/1 | 480_inlining.sql | key lookup as PL/pgSQL
+mc.world_ready/0 | 480_inlining.sql | PL/pgSQL (cached plan)
+net.pkt/3 | 480_inlining.sql | key lookup as PL/pgSQL (123 us -> 42 us per call)
+net.pkt_name/3 | 480_inlining.sql | key lookup as PL/pgSQL
+net.setting/1 | 480_inlining.sql | key lookup as PL/pgSQL

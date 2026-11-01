@@ -1,0 +1,221 @@
+{
+ "5056": {
+  "growth": {
+   "chunks_made": 0,
+   "seconds": 0.03,
+   "chunks_per_s": null,
+   "wal_bytes": 0,
+   "wal_bytes_per_chunk": null,
+   "checkpoints_timed": 0,
+   "checkpoints_requested": 0,
+   "buffers_written_by_checkpoints": 0
+  },
+  "vacuum_analyze_s": 1.05,
+  "chunks": 5105,
+  "sizes": {
+   "block_entity": [
+    1356,
+    188416,
+    8192,
+    237568
+   ],
+   "chunk": [
+    5105,
+    15278080,
+    8192,
+    360448
+   ],
+   "chunk_cache": [
+    5105,
+    679936,
+    75726848,
+    344064
+   ],
+   "chunk_light": [
+    71009,
+    35250176,
+    917504,
+    5537792
+   ],
+   "chunk_section": [
+    122520,
+    142753792,
+    950272,
+    6119424
+   ]
+  },
+  "dead_tuples": "chunk:0/1/2 chunk_section:0/2/2 chunk_light:0/1/3 chunk_cache:0/1/1 chunk_request:0/0/0 chunk_wanted:0/0/0",
+  "db_mb": 299,
+  "cluster_mb": 830,
+  "plans": {
+   "section_lookup": {
+    "nodes": [
+     "Index Scan on chunk_section using chunk_section_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 8.44
+   },
+   "chunk_exists": {
+    "nodes": [
+     "Index Only Scan on chunk using chunk_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 4.3
+   },
+   "chunk_packet_join": {
+    "nodes": [
+     "Nested Loop",
+     "Index Scan on chunk using chunk_pkey",
+     "Index Scan on chunk_cache using chunk_cache_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 16.62
+   },
+   "join_main": {
+    "nodes": [
+     "Nested Loop",
+     "Hash Join",
+     "Hash Join",
+     "Seq Scan on chunk",
+     "Hash",
+     "Function Scan",
+     "Hash",
+     "Function Scan",
+     "Index Scan on chunk_cache using chunk_cache_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 2160.52
+   },
+   "light_read": {
+    "nodes": [
+     "Index Scan on chunk_light using chunk_light_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 33.26
+   },
+   "blocks_in_sections": {
+    "nodes": [
+     "Index Scan on chunk_section using chunk_section_pkey"
+    ],
+    "seq_scan": false,
+    "est_cost": 85.76
+   }
+  },
+  "load_before_ops": 2.2,
+  "ops": {
+   "get_block": {
+    "cold": {
+     "n": 200,
+     "p50_us": 160.0,
+     "p99_us": 433.2,
+     "max_us": 5766.0,
+     "mean_us": 207.1
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 24.0,
+     "p99_us": 112.0,
+     "max_us": 1239.0,
+     "mean_us": 33.2
+    }
+   },
+   "block_at": {
+    "cold": {
+     "n": 200,
+     "p50_us": 204.0,
+     "p99_us": 642.5,
+     "max_us": 6436.0,
+     "mean_us": 248.0
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 54.0,
+     "p99_us": 151.4,
+     "max_us": 1734.0,
+     "mean_us": 67.8
+    }
+   },
+   "blocks_in": {
+    "cold": {
+     "n": 200,
+     "p50_us": 23915.0,
+     "p99_us": 75399.9,
+     "max_us": 101726.0,
+     "mean_us": 27672.9
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 19793.0,
+     "p99_us": 65381.3,
+     "max_us": 70409.0,
+     "mean_us": 24463.1
+    }
+   },
+   "chunk_packet_cached": {
+    "cold": {
+     "n": 200,
+     "p50_us": 105.0,
+     "p99_us": 564.3,
+     "max_us": 5943.0,
+     "mean_us": 163.7
+    },
+    "warm": {
+     "n": 200,
+     "p50_us": 15.0,
+     "p99_us": 102.5,
+     "max_us": 1198.0,
+     "mean_us": 25.3
+    }
+   },
+   "set_block": {
+    "cold": {
+     "n": 230,
+     "p50_us": 411.0,
+     "p99_us": 1096.4,
+     "max_us": 24903.0,
+     "mean_us": 514.0
+    },
+    "warm": {
+     "n": 230,
+     "p50_us": 134.0,
+     "p99_us": 508.7,
+     "max_us": 4832.0,
+     "mean_us": 169.6
+    }
+   },
+   "rebuild_after_edit": {
+    "cold": {
+     "n": 230,
+     "p50_us": 16877.0,
+     "p99_us": 41393.2,
+     "max_us": 119750.0,
+     "mean_us": 16905.2
+    },
+    "warm": {
+     "n": 230,
+     "p50_us": 14424.5,
+     "p99_us": 23618.9,
+     "max_us": 41735.0,
+     "mean_us": 13327.7
+    }
+   },
+   "join441": {
+    "cold": {
+     "n": 30,
+     "p50_us": 104145.5,
+     "p99_us": 186122.4,
+     "max_us": 199800.0,
+     "mean_us": 110097.0
+    },
+    "warm": {
+     "n": 30,
+     "p50_us": 128828.5,
+     "p99_us": 186909.6,
+     "max_us": 192140.0,
+     "mean_us": 136467.0
+    }
+   }
+  },
+  "load_after_ops": 2.38
+ }
+}
