@@ -1,0 +1,235 @@
+{
+ "rounds": 9,
+ "loadavg_at_round_start": [
+  4.11,
+  4.1,
+  4.01,
+  4.01,
+  4.09,
+  4.08,
+  4.15,
+  4.05,
+  4.04
+ ],
+ "loadavg_end": "3.96 4.05 3.50 4/166 5622",
+ "backend": "backend        \n-----------------------\n zlib 1.3 + libdeflate\n(1 row)",
+ "results": {
+  "real|zlib L1": {
+   "median_ms": 0.509734693877551,
+   "min_ms": 0.3656530612244898,
+   "max_ms": 0.6604897959183673,
+   "input_bytes": 2527298,
+   "output_bytes": 549768
+  },
+  "real|libdeflate L1": {
+   "median_ms": 0.29114285714285715,
+   "min_ms": 0.20810204081632652,
+   "max_ms": 0.39357142857142857,
+   "input_bytes": 2527298,
+   "output_bytes": 526017
+  },
+  "real|zlib L6": {
+   "median_ms": 1.355795918367347,
+   "min_ms": 1.1588979591836734,
+   "max_ms": 1.8380408163265305,
+   "input_bytes": 2527298,
+   "output_bytes": 481481
+  },
+  "real|libdeflate L6": {
+   "median_ms": 0.5397755102040817,
+   "min_ms": 0.3586122448979592,
+   "max_ms": 0.7248775510204082,
+   "input_bytes": 2527298,
+   "output_bytes": 479604
+  },
+  "real|zlib L9": {
+   "median_ms": 8.991734693877552,
+   "min_ms": 7.381428571428572,
+   "max_ms": 10.232571428571429,
+   "input_bytes": 2527298,
+   "output_bytes": 476380
+  },
+  "real|libdeflate L9": {
+   "median_ms": 1.5657142857142856,
+   "min_ms": 1.3594897959183672,
+   "max_ms": 1.9784285714285714,
+   "input_bytes": 2527298,
+   "output_bytes": 473204
+  },
+  "real|SQL deflate (sql/440)": {
+   "median_ms": 27.911387755102037,
+   "min_ms": 24.265285714285714,
+   "max_ms": 34.287673469387755,
+   "input_bytes": 2527298,
+   "output_bytes": 1153519
+  },
+  "real|fragments 4 KiB, zlib L1": {
+   "median_ms": 0.772469387755102,
+   "min_ms": 0.6009795918367347,
+   "max_ms": 0.964734693877551,
+   "input_bytes": 2527298,
+   "output_bytes": 555151
+  },
+  "real|fragments 16 KiB, zlib L1": {
+   "median_ms": 0.6691224489795918,
+   "min_ms": 0.476265306122449,
+   "max_ms": 1.0874897959183674,
+   "input_bytes": 2527298,
+   "output_bytes": 544346
+  },
+  "real|fragments 4 KiB, zlib L6": {
+   "median_ms": 1.5600612244897958,
+   "min_ms": 1.4781632653061225,
+   "max_ms": 2.7166122448979593,
+   "input_bytes": 2527298,
+   "output_bytes": 490688
+  },
+  "real|fragments 16 KiB, zlib L6": {
+   "median_ms": 1.4121020408163265,
+   "min_ms": 1.0178367346938777,
+   "max_ms": 1.7335102040816326,
+   "input_bytes": 2527298,
+   "output_bytes": 477124
+  },
+  "real|adler32 native": {
+   "median_ms": 0.05944897959183673,
+   "min_ms": 0.04997959183673469,
+   "max_ms": 0.07885714285714285,
+   "input_bytes": 2527298,
+   "output_bytes": 0
+  },
+  "real|adler32 SQL (sql/440)": {
+   "median_ms": 4.220183673469387,
+   "min_ms": 3.2797551020408164,
+   "max_ms": 5.291183673469387,
+   "input_bytes": 2527298,
+   "output_bytes": 0
+  },
+  "real|assemble packet from cached L6 4 KiB fragments + native adler32 of whole": {
+   "median_ms": 0.10989795918367347,
+   "min_ms": 0.08228571428571428,
+   "max_ms": 0.11575510204081632,
+   "input_bytes": 2527298,
+   "output_bytes": 490688
+  },
+  "real|assemble packet from cached fragments + folded per-fragment Adler-32": {
+   "median_ms": 0.13212244897959183,
+   "min_ms": 0.12342857142857143,
+   "max_ms": 0.19159183673469388,
+   "input_bytes": 2527298,
+   "output_bytes": 490688
+  },
+  "slice|zlib L1": {
+   "median_ms": 0.06350858034321373,
+   "min_ms": 0.05652730109204369,
+   "max_ms": 0.09875507020280812,
+   "input_bytes": 2527298,
+   "output_bytes": 556130
+  },
+  "slice|libdeflate L1": {
+   "median_ms": 0.03248829953198128,
+   "min_ms": 0.031751950078003126,
+   "max_ms": 0.06349921996879876,
+   "input_bytes": 2527298,
+   "output_bytes": 525618
+  },
+  "slice|zlib L6": {
+   "median_ms": 0.12009204368174727,
+   "min_ms": 0.10541185647425898,
+   "max_ms": 0.17720904836193446,
+   "input_bytes": 2527298,
+   "output_bytes": 491656
+  },
+  "slice|libdeflate L6": {
+   "median_ms": 0.06521216848673947,
+   "min_ms": 0.039578783151326055,
+   "max_ms": 0.07483307332293292,
+   "input_bytes": 2527298,
+   "output_bytes": 494607
+  },
+  "slice|zlib L9": {
+   "median_ms": 0.3110795631825273,
+   "min_ms": 0.25746957878315135,
+   "max_ms": 0.35119032761310454,
+   "input_bytes": 2527298,
+   "output_bytes": 487400
+  },
+  "slice|libdeflate L9": {
+   "median_ms": 0.12610452418096724,
+   "min_ms": 0.10122620904836192,
+   "max_ms": 0.17585959438377535,
+   "input_bytes": 2527298,
+   "output_bytes": 489289
+  },
+  "slice|SQL deflate (sql/440)": {
+   "median_ms": 2.115474258970359,
+   "min_ms": 1.8321279251170046,
+   "max_ms": 3.4578190327613103,
+   "input_bytes": 2527298,
+   "output_bytes": 1158862
+  },
+  "slice|one fragment (final), zlib L1": {
+   "median_ms": 0.05487519500780031,
+   "min_ms": 0.042858034321372855,
+   "max_ms": 0.07133385335413417,
+   "input_bytes": 2527298,
+   "output_bytes": 552284
+  },
+  "slice|one fragment (final), zlib L6": {
+   "median_ms": 0.11448829953198128,
+   "min_ms": 0.08210140405616224,
+   "max_ms": 0.1692059282371295,
+   "input_bytes": 2527298,
+   "output_bytes": 487810
+  },
+  "flat|zlib L1": {
+   "median_ms": 0.0621,
+   "min_ms": 0.0376,
+   "max_ms": 0.074325,
+   "input_bytes": 372440,
+   "output_bytes": 7624
+  },
+  "flat|libdeflate L1": {
+   "median_ms": 0.0755,
+   "min_ms": 0.05475,
+   "max_ms": 0.11180000000000001,
+   "input_bytes": 372440,
+   "output_bytes": 6527
+  },
+  "flat|zlib L6": {
+   "median_ms": 0.07385,
+   "min_ms": 0.0615,
+   "max_ms": 0.10705,
+   "input_bytes": 372440,
+   "output_bytes": 6326
+  },
+  "flat|libdeflate L6": {
+   "median_ms": 0.0602,
+   "min_ms": 0.053000000000000005,
+   "max_ms": 0.084825,
+   "input_bytes": 372440,
+   "output_bytes": 5824
+  },
+  "flat|zlib L9": {
+   "median_ms": 0.136575,
+   "min_ms": 0.115625,
+   "max_ms": 0.26125,
+   "input_bytes": 372440,
+   "output_bytes": 6066
+  },
+  "flat|libdeflate L9": {
+   "median_ms": 0.087625,
+   "min_ms": 0.0618,
+   "max_ms": 0.12475,
+   "input_bytes": 372440,
+   "output_bytes": 5946
+  },
+  "flat|SQL deflate (sql/440)": {
+   "median_ms": 2.7978750000000003,
+   "min_ms": 2.045325,
+   "max_ms": 3.6237000000000004,
+   "input_bytes": 372440,
+   "output_bytes": 46720
+  }
+ }
+}

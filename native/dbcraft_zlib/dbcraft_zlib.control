@@ -1,0 +1,8 @@
+# dbcraft_zlib: optional native accelerator for dbcraft.  Pure functions only: deflate, adler32, crc32.
+comment = 'dbcraft: deflate / Adler-32 / CRC-32 primitives (zlib, optionally libdeflate)'
+default_version = '1.0'
+module_pathname = '$libdir/dbcraft_zlib'
+relocatable = false
+schema = dbcraft_zlib
+superuser = true
+trusted = false

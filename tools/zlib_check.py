@@ -37,7 +37,7 @@ for line in sys.stdin:
                 print(f"{label}\tFAIL data length {dlen}, payload is {len(want)} bytes"); continue
         else:
             z = stream
-        d = zlib.decompressobj()
+        d = zlib.decompressobj(-15 if kind == "raw" else 15)    # kind 'raw': a bare deflate stream (no zlib header or checksum)
         got = d.decompress(z)
         if not d.eof:
             print(f"{label}\tFAIL stream not terminated"); continue
