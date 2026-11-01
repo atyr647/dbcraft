@@ -20,15 +20,16 @@ for name, res in (("rust", rr), ("odin checked", rc), ("odin unchecked", ru)):
 print()
 def rate(t, u, b, byte_rate):
     return f"{b / t / 1e6:,.1f} MB/s" if byte_rate else f"{u / t / 1e6:,.2f} M ops/s"
+PAIR = {"split_arena":"split_scan","split_nz":"split_scan","build_fast":"build_frames","aes_nbc":"aes_cfb8","aes_dec_nbc":"aes_cfb8_dec","aes_cfb8_evp":"aes_cfb8","aes_cfb8_evp_dec":"aes_cfb8_dec"}
 rows = [("vi_decode","VarInt decode (1M)",0),("vi_encode","VarInt encode (1M)",0),("split_scan","frame split, malloc per body (200k)",0),
-        ("split_arena","frame split, arena per body (200k)",0),("pos_decode","position decode (200k)",0),("build_frames","build frames (200k)",0),
+        ("split_arena","frame split, arena per body (200k)",0),("split_nz","frame split, non-zeroed malloc (200k)",0),("pos_decode","position decode (200k)",0),("build_frames","build frames (200k), straight port",0),("build_fast","build frames (200k), no per-frame allocation",0),
         ("coro","2000 connection state machines x 100",0),("z_compress","zlib compress 1 MiB L6",1),("z_decompress","zlib decompress 1 MiB",1),
         ("aes_cfb8","AES-CFB8 encrypt, hand-written AES-NI",1),("aes_cfb8_dec","AES-CFB8 decrypt, hand-written AES-NI",1),
-        ("aes_cfb8_evp","AES-CFB8 encrypt, OpenSSL EVP (FFI)",1),("aes_cfb8_evp_dec","AES-CFB8 decrypt, OpenSSL EVP (FFI)",1)]
+        ("aes_nbc","AES-CFB8 encrypt, AES-NI, #no_bounds_check on the proc only",1),("aes_dec_nbc","AES-CFB8 decrypt, AES-NI, #no_bounds_check on the proc only",1),("aes_cfb8_evp","AES-CFB8 encrypt, OpenSSL EVP (FFI)",1),("aes_cfb8_evp_dec","AES-CFB8 decrypt, OpenSSL EVP (FFI)",1)]
 print("| benchmark | Rust | Odin -o:speed | Odin / Rust | Odin no checks | no checks / Rust | checks cost |")
 print("|---|---|---|---|---|---|---|")
 for key, label, br in rows:
-    rk = "split_scan" if key == "split_arena" else key
+    rk = PAIR.get(key, key)
     if rk not in R: continue
     rt = R[rk]; rv = rate(*rt, br)
     ct = C.get(key); ut = U.get(key)

@@ -108,6 +108,24 @@ split_frames_arena :: proc(buf: []u8, backing: []u8) -> (frames, idsum, bodybyte
 	return
 }
 
+// same, but with non-zeroed allocation (make() zeroes memory; Rust's to_vec does not)
+split_frames_nz :: proc(buf: []u8) -> (frames, idsum, bodybytes: u64) {
+	pos := 0
+	for pos < len(buf) {
+		n := int(read_vi(buf, &pos))
+		end := pos + n
+		idsum += read_vi(buf, &pos)
+		body, _ := mem.alloc_bytes_non_zeroed(end - pos)
+		copy(body, buf[pos:end])
+		bodybytes += u64(len(body))
+		if len(body) > 0 {intrinsics.volatile_store(&sink, u64(body[0]))}
+		mem.free_bytes(body)
+		pos = end
+		frames += 1
+	}
+	return
+}
+
 // ---- (c) position decode: 3 big-endian doubles, 2 big-endian floats, 1 flag byte (33 bytes)
 ld_f64be :: #force_inline proc(p: [^]u8) -> f64 {
 	return transmute(f64)intrinsics.byte_swap(intrinsics.unaligned_load((^u64)(p)))
@@ -165,6 +183,31 @@ build_frames :: proc(iters: u32) -> [dynamic]u8 {
 		append(&out, ..id[:])
 		append(&out, ..body[:])
 		free_all(context.temp_allocator)
+	}
+	return out
+}
+
+// same output, no per-frame allocation: id and body live on the stack, output is reserved up front
+build_frames_fast :: proc(iters: u32) -> [dynamic]u8 {
+	out := make([dynamic]u8, 0, int(iters) * 34)
+	for i in 0 ..< iters {
+		fr: [40]u8
+		b := raw_data(fr[:])
+		n := 0
+		// id varint (1 or 2 bytes)
+		id := 0x2f + (i & 3)
+		idl := 1
+		fr[1] = u8(id) // placeholder position, moved below
+		// layout: [len][id][body 30]; id is always 1 byte here (0x2f..0x32)
+		st_be32(b[2:], i)
+		st_f64be(b[6:], f64(i) * 0.5)
+		st_f64be(b[14:], 64.0)
+		st_f64be(b[22:], f64(i) * 0.25)
+		fr[30] = u8(i & 255)
+		fr[31] = u8((i >> 3) & 255)
+		fr[0] = u8(idl + 30)
+		n = 1 + idl + 30
+		append(&out, ..fr[:n])
 	}
 	return out
 }
@@ -260,6 +303,14 @@ aes_evp :: proc(data, out: []u8, key, iv: ^[16]u8, encrypt: bool) {
 }
 
 @(enable_target_feature = "aes,sse2")
+aes_block0_nbc :: #force_inline proc(k: ^[11]x86.__m128i, x: x86.__m128i) -> u8 #no_bounds_check {
+	b := x86._mm_xor_si128(x, k[0])
+	for r in 1 ..< 10 {b = x86._mm_aesenc_si128(b, k[r])}
+	b = x86._mm_aesenclast_si128(b, k[10])
+	return u8(x86._mm_cvtsi128_si32(b))
+}
+
+@(enable_target_feature = "aes,sse2")
 aes_block0 :: #force_inline proc(k: ^[11]x86.__m128i, x: x86.__m128i) -> u8 {
 	b := x86._mm_xor_si128(x, k[0])
 	for r in 1 ..< 10 {b = x86._mm_aesenc_si128(b, k[r])}
@@ -299,6 +350,40 @@ cfb8_decrypt_ni :: proc(rk: ^[176]u8, iv: ^[16]u8, data, win, out: []u8) {
 	}
 	for ; i < len(data); i += 1 {
 		out[i] = data[i] ~ aes_block0(&k, x86._mm_loadu_si128((^x86.__m128i)(&win[i])))
+	}
+}
+
+@(enable_target_feature = "aes,sse2")
+cfb8_encrypt_ni_nbc :: proc(rk: ^[176]u8, iv: ^[16]u8, data, win: []u8) #no_bounds_check {
+	k: [11]x86.__m128i
+	for i in 0 ..< 11 {k[i] = x86._mm_loadu_si128((^x86.__m128i)(&rk[16 * i]))}
+	copy(win[:16], iv[:])
+	for p, i in data {
+		ks := aes_block0_nbc(&k, x86._mm_loadu_si128((^x86.__m128i)(&win[i])))
+		win[16 + i] = p ~ ks
+	}
+}
+
+@(enable_target_feature = "aes,sse2")
+cfb8_decrypt_ni_nbc :: proc(rk: ^[176]u8, iv: ^[16]u8, data, win, out: []u8) #no_bounds_check {
+	k: [11]x86.__m128i
+	for i in 0 ..< 11 {k[i] = x86._mm_loadu_si128((^x86.__m128i)(&rk[16 * i]))}
+	copy(win[:16], iv[:])
+	copy(win[16:], data)
+	i := 0
+	for i + 4 <= len(data) {
+		s0 := aes_block0_nbc(&k, x86._mm_loadu_si128((^x86.__m128i)(&win[i])))
+		s1 := aes_block0_nbc(&k, x86._mm_loadu_si128((^x86.__m128i)(&win[i + 1])))
+		s2 := aes_block0_nbc(&k, x86._mm_loadu_si128((^x86.__m128i)(&win[i + 2])))
+		s3 := aes_block0_nbc(&k, x86._mm_loadu_si128((^x86.__m128i)(&win[i + 3])))
+		out[i] = data[i] ~ s0
+		out[i + 1] = data[i + 1] ~ s1
+		out[i + 2] = data[i + 2] ~ s2
+		out[i + 3] = data[i + 3] ~ s3
+		i += 4
+	}
+	for ; i < len(data); i += 1 {
+		out[i] = data[i] ~ aes_block0_nbc(&k, x86._mm_loadu_si128((^x86.__m128i)(&win[i])))
 	}
 }
 
@@ -391,6 +476,17 @@ main :: proc() {
 	}
 	{
 		best := f64(BIG)
+		f, i, b: u64
+		for _ in 0 ..< reps {
+			t0 := time.tick_now()
+			f, i, b = split_frames_nz(frames)
+			best_ns(&best, t0)
+		}
+		report("split_nz", best, 200_000, u64(len(frames)))
+		fmt.printfln("RESULT split_nz frames=%d idsum=%d bodybytes=%d", f, i, b)
+	}
+	{
+		best := f64(BIG)
 		sx: f64
 		sf: u64
 		for _ in 0 ..< reps {
@@ -415,6 +511,21 @@ main :: proc() {
 		}
 		report("build_frames", best, 200_000, 6_400_000)
 		fmt.printfln("RESULT build_frames len=%d ok=%d", n, int(ok))
+	}
+	{
+		best := f64(BIG)
+		ok := false
+		n := 0
+		for _ in 0 ..< reps {
+			t0 := time.tick_now()
+			fo := build_frames_fast(200_000)
+			best_ns(&best, t0)
+			n = len(fo)
+			ok = mem.compare(fo[:], frames_out) == 0
+			delete(fo)
+		}
+		report("build_fast", best, 200_000, 6_400_000)
+		fmt.printfln("RESULT build_fast len=%d ok=%d", n, int(ok))
 	}
 	{
 		best := f64(BIG)
@@ -503,5 +614,23 @@ main :: proc() {
 		}
 		report("aes_cfb8_dec", best, n, n)
 		fmt.printfln("RESULT aes_cfb8_dec len=%d ok=%d", len(out), int(mem.compare(out, chunk) == 0))
+
+		best = f64(BIG)
+		for _ in 0 ..< reps {
+			t0 := time.tick_now()
+			cfb8_encrypt_ni_nbc(&rk, &iv, chunk, win)
+			best_ns(&best, t0)
+		}
+		report("aes_nbc", best, n, n)
+		fmt.printfln("RESULT aes_nbc len=%d ok=%d", len(chunk), int(mem.compare(win[16:], expected_aes) == 0))
+
+		best = f64(BIG)
+		for _ in 0 ..< reps {
+			t0 := time.tick_now()
+			cfb8_decrypt_ni_nbc(&rk, &iv, expected_aes, win, out)
+			best_ns(&best, t0)
+		}
+		report("aes_dec_nbc", best, n, n)
+		fmt.printfln("RESULT aes_dec_nbc len=%d ok=%d", len(out), int(mem.compare(out, chunk) == 0))
 	}
 }
