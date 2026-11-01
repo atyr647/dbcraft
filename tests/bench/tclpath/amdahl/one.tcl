@@ -15,4 +15,6 @@ switch -- $::env(PROC) {
         pos_decode_loop $payloads 20000
     }
     build_frames { build_frames 20000 }
+    vi_setup     { set v {}; for {set i 0} {$i < 100000} {incr i} { lappend v [expr {($i*2654435761) % 2000000}] } }
+    vi_encode    { set v {}; for {set i 0} {$i < 100000} {incr i} { lappend v [expr {($i*2654435761) % 2000000}] }; vi_encode_all $v }
 }
