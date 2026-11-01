@@ -1,31 +1,31 @@
-//! Configuration: a TOML file (optional) with environment overrides `DBCRAFT_GW_<NAME>`, e.g. DBCRAFT_GW_DATABASE_URL, DBCRAFT_GW_LISTEN.
-//! The tick rate and the tick/drain functions can also be set in the database (net.setting keys tick_ms, gateway_tick, gateway_drain): the database wins.
+//! Configuration: an optional `key = value` file (lines starting with `#` are comments) and environment overrides `DBCRAFT_GW_<NAME>`.
+//! Settings that live in the database (net.setting: tick_ms, session_url, session_timeout_s) are read at start and win over the defaults, not over an explicit
+//! file/environment value that differs from the default.
 
-use serde::Deserialize;
+use std::collections::HashMap;
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub database_url: String,
     pub listen: String,
     pub tick_ms: u64,
+    /// the server tick: mc.server_tick() or mc.server_tick_batched()
     pub tick_fn: String,
-    pub drain_fn: String,
     pub max_connections: usize,
     pub max_connections_per_ip: usize,
     pub new_connections_per_ip_per_sec: u32,
     pub login_attempts_per_ip_per_min: u32,
     pub read_timeout_s: u64,
-    pub write_timeout_s: u64,
     pub max_pending_bytes: usize,
     pub prelogin_max_frame: usize,
     pub prelogin_max_bytes: usize,
     pub session_url: String,
     pub session_timeout_ms: u64,
-    pub session_concurrency: usize,
+    pub session_workers: usize,
     pub session_retries: u32,
-    pub rsa_bits: usize,
-    pub stats: bool,
+    pub rsa_bits: u32,
+    /// how the tick's inbound frames reach the database: "copy" (binary COPY) or "unnest" (one INSERT with array parameters)
+    pub inbox_mode: String,
 }
 
 impl Default for Config {
@@ -35,71 +35,118 @@ impl Default for Config {
             listen: "0.0.0.0:25565".into(),
             tick_ms: 50,
             tick_fn: "mc.server_tick()".into(),
-            drain_fn: "net.drain_outbox()".into(),
             max_connections: 20_000,
             max_connections_per_ip: 16,
             new_connections_per_ip_per_sec: 5,
             login_attempts_per_ip_per_min: 20,
             read_timeout_s: 30,
-            write_timeout_s: 30,
             max_pending_bytes: 8 * 1024 * 1024,
             prelogin_max_frame: 32_768,
             prelogin_max_bytes: 262_144,
             session_url: "https://sessionserver.mojang.com".into(),
             session_timeout_ms: 5_000,
-            session_concurrency: 64,
+            session_workers: 32,
             session_retries: 1,
             rsa_bits: 1024,
-            stats: true,
+            inbox_mode: "copy".into(),
         }
     }
 }
 
-/// Only identifiers, dots and a trailing "()" may appear in a function name that is spliced into SQL.
-pub fn valid_sql_call(s: &str) -> bool {
-    !s.is_empty() && s.ends_with("()") && s[..s.len() - 2].chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+/// Only these two functions may be spliced into the tick's SQL.
+pub fn valid_tick_fn(s: &str) -> bool {
+    s == "mc.server_tick()" || s == "mc.server_tick_batched()"
+}
+
+/// Parses `key = value` lines.  Unknown keys and malformed lines are errors (a typo must not silently run with a default).
+pub fn parse_kv(text: &str) -> Result<HashMap<String, String>, String> {
+    let mut m = HashMap::new();
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (k, v) = line.split_once('=').ok_or_else(|| format!("line {}: expected key = value", i + 1))?;
+        let v = v.trim();
+        let v = v.strip_prefix('"').and_then(|x| x.strip_suffix('"')).unwrap_or(v);
+        m.insert(k.trim().to_ascii_lowercase(), v.to_string());
+    }
+    Ok(m)
 }
 
 impl Config {
-    pub fn load(path: Option<&str>) -> Result<Config, String> {
-        let mut c: Config = match path {
-            Some(p) => toml::from_str(&std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?).map_err(|e| format!("{p}: {e}"))?,
-            None => Config::default(),
-        };
-        let env = |k: &str| std::env::var(format!("DBCRAFT_GW_{k}")).ok();
-        macro_rules! ov {
-            ($field:ident, $name:expr) => {
-                if let Some(v) = env($name) {
-                    c.$field = v.parse().map_err(|_| format!("DBCRAFT_GW_{}: cannot parse {:?}", $name, v))?;
-                }
+    pub fn apply(&mut self, kv: &HashMap<String, String>) -> Result<(), String> {
+        macro_rules! num {
+            ($field:ident, $key:expr, $v:expr) => {
+                self.$field = $v.parse().map_err(|_| format!("{}: cannot parse {:?}", $key, $v))?
             };
         }
-        ov!(database_url, "DATABASE_URL");
-        ov!(listen, "LISTEN");
-        ov!(tick_ms, "TICK_MS");
-        ov!(tick_fn, "TICK_FN");
-        ov!(drain_fn, "DRAIN_FN");
-        ov!(max_connections, "MAX_CONNECTIONS");
-        ov!(max_connections_per_ip, "MAX_CONNECTIONS_PER_IP");
-        ov!(new_connections_per_ip_per_sec, "NEW_CONNECTIONS_PER_IP_PER_SEC");
-        ov!(login_attempts_per_ip_per_min, "LOGIN_ATTEMPTS_PER_IP_PER_MIN");
-        ov!(read_timeout_s, "READ_TIMEOUT_S");
-        ov!(write_timeout_s, "WRITE_TIMEOUT_S");
-        ov!(max_pending_bytes, "MAX_PENDING_BYTES");
-        ov!(prelogin_max_frame, "PRELOGIN_MAX_FRAME");
-        ov!(prelogin_max_bytes, "PRELOGIN_MAX_BYTES");
-        ov!(session_url, "SESSION_URL");
-        ov!(session_timeout_ms, "SESSION_TIMEOUT_MS");
-        ov!(session_concurrency, "SESSION_CONCURRENCY");
-        ov!(session_retries, "SESSION_RETRIES");
-        ov!(rsa_bits, "RSA_BITS");
-        ov!(stats, "STATS");
-        if !valid_sql_call(&c.tick_fn) || !valid_sql_call(&c.drain_fn) {
-            return Err("tick_fn and drain_fn must look like schema.function()".into());
+        for (k, v) in kv {
+            match k.as_str() {
+                "database_url" => self.database_url = v.clone(),
+                "listen" => self.listen = v.clone(),
+                "tick_ms" => num!(tick_ms, k, v),
+                "tick_fn" => self.tick_fn = v.clone(),
+                "max_connections" => num!(max_connections, k, v),
+                "max_connections_per_ip" => num!(max_connections_per_ip, k, v),
+                "new_connections_per_ip_per_sec" => num!(new_connections_per_ip_per_sec, k, v),
+                "login_attempts_per_ip_per_min" => num!(login_attempts_per_ip_per_min, k, v),
+                "read_timeout_s" => num!(read_timeout_s, k, v),
+                "max_pending_bytes" => num!(max_pending_bytes, k, v),
+                "prelogin_max_frame" => num!(prelogin_max_frame, k, v),
+                "prelogin_max_bytes" => num!(prelogin_max_bytes, k, v),
+                "session_url" => self.session_url = v.clone(),
+                "session_timeout_ms" => num!(session_timeout_ms, k, v),
+                "session_workers" => num!(session_workers, k, v),
+                "session_retries" => num!(session_retries, k, v),
+                "rsa_bits" => num!(rsa_bits, k, v),
+                "inbox_mode" => self.inbox_mode = v.clone(),
+                other => return Err(format!("unknown setting {other:?}")),
+            }
         }
-        if c.tick_ms == 0 || c.tick_ms > 1000 {
+        self.validate()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !valid_tick_fn(&self.tick_fn) {
+            return Err("tick_fn must be mc.server_tick() or mc.server_tick_batched()".into());
+        }
+        if self.tick_ms == 0 || self.tick_ms > 1000 {
             return Err("tick_ms must be between 1 and 1000".into());
         }
+        if self.inbox_mode != "copy" && self.inbox_mode != "unnest" {
+            return Err("inbox_mode must be copy or unnest".into());
+        }
+        if self.rsa_bits < 512 || self.rsa_bits > 4096 {
+            return Err("rsa_bits must be between 512 and 4096".into());
+        }
+        if self.session_workers == 0 || self.session_workers > 1024 {
+            return Err("session_workers must be between 1 and 1024".into());
+        }
+        if self.prelogin_max_frame == 0 || self.prelogin_max_frame > 2_097_151 {
+            return Err("prelogin_max_frame must be between 1 and 2097151".into());
+        }
+        Ok(())
+    }
+
+    /// Defaults, then the file (if any), then the environment.
+    pub fn load(path: Option<&str>, env: &dyn Fn(&str) -> Option<String>) -> Result<Config, String> {
+        let mut c = Config::default();
+        if let Some(p) = path {
+            let text = std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?;
+            c.apply(&parse_kv(&text).map_err(|e| format!("{p}: {e}"))?)?;
+        }
+        let mut over = HashMap::new();
+        for key in [
+            "database_url", "listen", "tick_ms", "tick_fn", "max_connections", "max_connections_per_ip", "new_connections_per_ip_per_sec", "login_attempts_per_ip_per_min",
+            "read_timeout_s", "max_pending_bytes", "prelogin_max_frame", "prelogin_max_bytes", "session_url", "session_timeout_ms", "session_workers", "session_retries",
+            "rsa_bits", "inbox_mode",
+        ] {
+            if let Some(v) = env(&format!("DBCRAFT_GW_{}", key.to_ascii_uppercase())) {
+                over.insert(key.to_string(), v);
+            }
+        }
+        c.apply(&over)?;
         Ok(c)
     }
 }
@@ -107,18 +154,53 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn sql_calls_are_validated() {
-        assert!(valid_sql_call("mc.server_tick()"));
-        assert!(valid_sql_call("net.drain_outbox()"));
-        assert!(!valid_sql_call("mc.server_tick(); drop table x"));
-        assert!(!valid_sql_call("mc.server_tick"));
-        assert!(!valid_sql_call(""));
-        assert!(!valid_sql_call("a b()"));
+
+    fn no_env(_: &str) -> Option<String> {
+        None
     }
+
     #[test]
-    fn defaults_load() {
-        let c = Config::load(None).unwrap();
+    fn defaults_are_valid() {
+        let c = Config::load(None, &no_env).unwrap();
         assert_eq!(c.tick_ms, 50);
+        assert_eq!(c.tick_fn, "mc.server_tick()");
+    }
+
+    #[test]
+    fn kv_parsing() {
+        let m = parse_kv("# comment\n\nlisten = 127.0.0.1:1\ntick_ms=20\ndatabase_url = \"host=/tmp dbname=x\"\n").unwrap();
+        assert_eq!(m["listen"], "127.0.0.1:1");
+        assert_eq!(m["tick_ms"], "20");
+        assert_eq!(m["database_url"], "host=/tmp dbname=x");
+        assert!(parse_kv("no equals sign").is_err());
+    }
+
+    #[test]
+    fn unknown_keys_and_bad_values_are_errors() {
+        let mut c = Config::default();
+        let mut kv = HashMap::new();
+        kv.insert("tick_msx".to_string(), "5".to_string());
+        assert!(c.apply(&kv).is_err());
+        let mut kv = HashMap::new();
+        kv.insert("tick_ms".to_string(), "fast".to_string());
+        assert!(Config::default().apply(&kv).is_err());
+        let mut kv = HashMap::new();
+        kv.insert("tick_ms".to_string(), "0".to_string());
+        assert!(Config::default().apply(&kv).is_err());
+    }
+
+    #[test]
+    fn tick_function_is_an_allowlist() {
+        assert!(valid_tick_fn("mc.server_tick()"));
+        assert!(valid_tick_fn("mc.server_tick_batched()"));
+        assert!(!valid_tick_fn("mc.server_tick(); drop table net.conn"));
+        assert!(!valid_tick_fn("mc.tick()"));
+    }
+
+    #[test]
+    fn environment_overrides_the_file_values() {
+        let env = |k: &str| if k == "DBCRAFT_GW_LISTEN" { Some("127.0.0.1:9".to_string()) } else { None };
+        let c = Config::load(None, &env).unwrap();
+        assert_eq!(c.listen, "127.0.0.1:9");
     }
 }
