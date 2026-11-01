@@ -19,7 +19,7 @@ SCRIPT=$(mktemp); trap 'rm -f "$SCRIPT"' EXIT
 printf 'select setseed(0.99) is null;\n' > "$SCRIPT"        # the walk is the same in every run, so A/B runs see identical input
 for i in $(seq 1 "$TICKS"); do
   printf 'select %s(%s);\nselect tickbench.timed_tick();\nselect ibench.drain();\n' "$GEN" "$FRAC"
-  if [ "$i" = 20 ]; then printf 'select pg_stat_statements_reset() is null;\n'; fi
+  if [ "$i" = 20 ] && [ -n "${TOPN:-}" ]; then printf 'select pg_stat_statements_reset() is null;\n'; fi    # only needed (and only available) with TOPN
 done >> "$SCRIPT"
 psql -X -q -At -v ON_ERROR_STOP=1 -o /dev/null -f "$SCRIPT"
 psql -X -q -At -c "select tickbench.summary('$LABEL players=$N moving=$FRAC load=$(cut -d' ' -f1 /proc/loadavg)')"

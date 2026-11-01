@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start/stop a throwaway local PostgreSQL for development.  Usage: tools/pg-dev.sh start|stop|psql|reset
 set -euo pipefail
-PGBIN=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)
+PGBIN=${DBCRAFT_PGBIN:-$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)}   # DBCRAFT_PGBIN: bin directory of another build (tools/pgbuild/)
 DATA=${DBCRAFT_PGDATA:-/tmp/dbcraft-pg}
 PORT=${DBCRAFT_PGPORT:-54329}
 as_pg() { if [ "$(id -u)" = 0 ]; then su postgres -s /bin/bash -c "$*"; else bash -c "$*"; fi; }
