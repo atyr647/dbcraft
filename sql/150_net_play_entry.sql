@@ -75,7 +75,9 @@ create or replace function net.player_info_body(p_conns bigint[]) returns bytea 
     from net.conn c where c.conn_id = any (p_conns) $$;
 
 -- The ordered packets for one player.  ord is the position in the sequence; rows with the same ord do not occur.
-create or replace function net.play_entry_packets(p_conn bigint, j net.join_info) returns table (ord int, packet text, body bytea) language sql stable as $$
+create or replace function net.play_entry_packets(p_conn bigint, j net.join_info) returns table (ord int, packet text, body bytea) language plpgsql stable as $$
+begin
+    return query
     select v.ord, v.packet, v.body from (values
         (10,  'minecraft:login',
               proto.i32(j.entity_id) || proto.bool(j.hardcore) || proto.varint(cardinality(j.levels))
@@ -120,4 +122,5 @@ create or replace function net.play_entry_packets(p_conn bigint, j net.join_info
     ) v(ord, packet, body)
     union all
     select s.ord, s.packet, case when s.entity_prefixed then proto.varint(j.entity_id) || s.body else s.body end from net.static_packet s
-    order by 1 $$;
+    order by 1;
+end $$;

@@ -136,6 +136,8 @@ create or replace function net.update_tags_body() returns bytea language sql sta
 -- The configuration packets only depend on which data packs the client knows, so they are built once per such combination.
 -- variant = the known packs that matter (comma separated, sorted); '' = the client knows none.  An empty cache is rebuilt on next use.
 create unlogged table if not exists net.config_cache (variant text not null, seq int not null, packet text not null, body bytea not null, primary key (variant, seq));
+-- bodies are stored uncompressed and out of line: pglz-decompressing a 30 KB value on every send costs more than the copy it saves
+alter table net.config_cache alter column body set storage external;
 
 create or replace function net.known_variant(p_known text[]) returns text language sql stable as $$
     select coalesce(string_agg(p, ',' order by p), '') from (select distinct from_pack as p from ref.dp_entry where from_pack = any (coalesce(p_known, '{}'))) q $$;
@@ -157,8 +159,10 @@ declare v text := net.known_variant(p_known);
 begin
     if not exists (select 1 from net.config_cache where variant = v) then perform net.config_cache_build(v); end if;
     insert into net.outbox (conn_id, data)
-    select p_conn, net.frame(c.compression, net.pkt('configuration', 'clientbound', k.packet), k.body)
-    from net.config_cache k, net.conn c where k.variant = v and c.conn_id = p_conn order by k.seq;
+    select p_conn, net.frame(c.compression, pk.protocol_id, k.body)
+    from net.config_cache k
+    join ref.packet pk on pk.state = 'configuration' and pk.direction = 'clientbound' and pk.name = k.packet
+    cross join net.conn c where k.variant = v and c.conn_id = p_conn order by k.seq;
 end $$;
 
 create or replace function net.invalidate_config_cache() returns trigger language plpgsql as $$

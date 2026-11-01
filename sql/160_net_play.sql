@@ -2,22 +2,24 @@
 -- Everything else a client sends in play (movement, chat, digging, ...) is moved into net.play_inbox by net.process() for mc.tick().
 
 create or replace function net.play_begin(p_conn bigint) returns void language plpgsql as $$
-declare j net.join_info := net.hook_join_info(p_conn); o record;
+declare j net.join_info := net.hook_join_info(p_conn);
+        info_id int := net.pkt('play', 'clientbound', 'minecraft:player_info_update'); info bytea;
 begin
     update net.conn set entity_id = j.entity_id, gamemode = j.gamemode, teleport_id = j.teleport_id, teleport_ok = false where conn_id = p_conn;
     -- the entry sequence; the player-info packets sit at fixed places in it: the other players first, then this player (which everyone gets)
     insert into net.outbox (conn_id, data)
-    select p_conn, net.frame(c.compression, net.pkt('play', 'clientbound', e.packet), e.body)
+    select p_conn, net.frame(c.compression, pk.protocol_id, e.body)
     from net.conn c,
          (select * from net.play_entry_packets(p_conn, j)
           union all select 120, 'minecraft:player_info_update', net.player_info_body(array(select conn_id from net.conn where state = 'play' and conn_id <> p_conn))
           union all select 130, 'minecraft:player_info_update', net.player_info_body(array[p_conn])) e
+    join ref.packet pk on pk.state = 'play' and pk.direction = 'clientbound' and pk.name = e.packet      -- ids by join, not a function call per row
     where c.conn_id = p_conn
     order by e.ord;
-    -- tell everyone already in the game about the new player
-    for o in select conn_id from net.conn where state = 'play' and conn_id <> p_conn and not closing loop
-        perform net.send(o.conn_id, net.pkt('play', 'clientbound', 'minecraft:player_info_update'), net.player_info_body(array[p_conn]));
-    end loop;
+    -- tell everyone already in the game about the new player (the packet is built once)
+    info := net.player_info_body(array[p_conn]);
+    insert into net.outbox (conn_id, data)
+    select o.conn_id, net.frame(o.compression, info_id, info) from net.conn o where o.state = 'play' and o.conn_id <> p_conn and not o.closing;
     perform net.hook_on_join(p_conn);
     perform net.send_chunks(p_conn, j.chunk_x, j.chunk_z, j.view_distance);
 end $$;
@@ -25,11 +27,12 @@ end $$;
 -- Chunks for a player, in one batch: batch start, the chunk packets, batch finished (with the count).  The packets come from the world layer.
 create or replace function net.send_chunks(p_conn bigint, p_cx int, p_cz int, p_radius int) returns int language plpgsql as $$
 declare bodies bytea[] := array(select b from net.hook_chunks(p_conn, p_cx, p_cz, p_radius) b); n int := coalesce(cardinality(bodies), 0);
+        chunk_id int := net.pkt('play', 'clientbound', 'minecraft:level_chunk_with_light');
 begin
     if n > 0 then
         perform net.send(p_conn, net.pkt('play', 'clientbound', 'minecraft:chunk_batch_start'), '\x');
         insert into net.outbox (conn_id, data)
-        select p_conn, net.frame(c.compression, net.pkt('play', 'clientbound', 'minecraft:level_chunk_with_light'), b.body)
+        select p_conn, net.frame(c.compression, chunk_id, b.body)
         from net.conn c, unnest(bodies) with ordinality b(body, o) where c.conn_id = p_conn order by b.o;
         perform net.send(p_conn, net.pkt('play', 'clientbound', 'minecraft:chunk_batch_finished'), proto.varint(n));
     end if;
@@ -74,7 +77,7 @@ end $$;
 -- Keep-alive: every 15 s each player gets a keep_alive with a random id; a player who has not answered within 30 s is dropped.
 -- Called by the tick (once per second is plenty).
 create or replace function net.keepalive_tick() returns int language plpgsql as $$
-declare r record; n int := 0;
+declare r record; n int := 0; kid int := net.pkt('play', 'clientbound', 'minecraft:keep_alive');
 begin
     for r in select conn_id from net.conn where state = 'play' and not closing and keepalive_id is not null and keepalive_sent < now() - interval '30 seconds' loop
         perform net.send(r.conn_id, net.pkt('play', 'clientbound', 'minecraft:disconnect'), nbt.text_translate('disconnect.timeout'));
@@ -85,7 +88,7 @@ begin
         where state = 'play' and not closing and keepalive_id is null and (keepalive_sent is null or keepalive_sent < now() - interval '15 seconds')
         returning conn_id, keepalive_id)
     insert into net.outbox (conn_id, data)
-    select d.conn_id, net.frame(c.compression, net.pkt('play', 'clientbound', 'minecraft:keep_alive'), proto.i64(d.keepalive_id))
+    select d.conn_id, net.frame(c.compression, kid, proto.i64(d.keepalive_id))
     from due d join net.conn c using (conn_id);
     get diagnostics n = row_count;
     return n;
