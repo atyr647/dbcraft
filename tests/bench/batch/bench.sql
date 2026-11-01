@@ -9,9 +9,13 @@
 create schema if not exists bbench;
 drop table if exists bbench.step;
 drop table if exists bbench.run_log;
-create table bbench.step (run_id int, tick int, tick_ms float8, drain_ms float8, frames_out int, bytes_out bigint, frames_in int);
+create table bbench.step (run_id int, tick int, tick_ms float8, drain_ms float8, frames_out int, bytes_out bigint, frames_in int, cpu_ms float8, wait_ms float8);
 create table bbench.run_log (run_id int primary key, impl text, players int, frac float8, mode text, txmode text, started timestamptz default now(),
-                                          wal_bytes bigint, statements bigint, rows_ins bigint, rows_upd bigint, rows_del bigint, hot_upd bigint, wall_ms float8);
+                                          wal_bytes bigint, plan_ms float8, statements bigint, rows_ins bigint, rows_upd bigint, rows_del bigint, hot_upd bigint, wall_ms float8);
+
+-- on-CPU time and run-queue wait of THIS backend in ns (the kernel's exact scheduler accounting): the tick's cost without the time spent waiting for a core, which on a shared
+-- machine is what makes wall-clock timings unreliable.  Needs a superuser (pg_read_file) and /proc/self/schedstat.
+create or replace function bbench.sched() returns bigint[] language sql volatile as $$ select string_to_array(trim(pg_read_file('/proc/self/schedstat')), ' ')::bigint[] $$;
 
 create or replace function bbench.rnd(c int, t int, s int) returns float8 language sql immutable parallel safe as $$
   select (('x' || substr(md5(c::text || ':' || t::text || ':' || s::text), 1, 8))::bit(32)::bigint)::float8 / 4294967296.0 $$;
@@ -32,7 +36,7 @@ end $$;
 
 create or replace procedure bbench.run(p_run int, impl text, ticks int, frac float8, mode text default 'dither', txmode text default 'split', skip int default 20)
 language plpgsql as $$
-declare t int; t0 timestamptz; t1 timestamptz; ms float8; dms float8; fo int; bo bigint; fi int; w0 pg_lsn; w1 pg_lsn := null; wall0 timestamptz;
+declare t int; t0 timestamptz; t1 timestamptz; ms float8; dms float8; fo int; bo bigint; fi int; w0 pg_lsn; w1 pg_lsn := null; wall0 timestamptz; sc0 bigint[]; sc1 bigint[];
         s0 bigint; s1 bigint; players int;
 begin
   select count(*) into players from mc.player where conn_id is not null;
@@ -44,15 +48,16 @@ begin
     end if;
     fi := bbench.gen(t, frac, mode);
     if txmode = 'split' then commit; end if;
-    t0 := clock_timestamp();
+    sc0 := bbench.sched(); t0 := clock_timestamp();
     if impl = 'base' then perform mc.server_tick(); elsif impl like 'batched%' then perform mc.server_tick_batched(); end if;
-    t1 := clock_timestamp();
+    t1 := clock_timestamp(); sc1 := bbench.sched();
     if txmode = 'split' then commit; end if;
-    select count(*), coalesce(sum(length(d.data)), 0) into fo, bo from net.drain_outbox() d;
+    if impl like '%ref%' then select count(*), coalesce(sum(length(d.data)), 0) into fo, bo from net.drain_outbox_ref() d;
+    else select count(*), coalesce(sum(length(d.data)), 0) into fo, bo from net.drain_outbox() d; end if;
     dms := extract(epoch from clock_timestamp() - t1) * 1000;
     commit;
     ms := extract(epoch from t1 - t0) * 1000;
-    insert into bbench.step values (p_run, t, ms, dms, fo, bo, fi);
+    insert into bbench.step values (p_run, t, ms, dms, fo, bo, fi, (sc1[1] - sc0[1]) / 1e6, (sc1[2] - sc0[2]) / 1e6);
     commit;
   end loop;
   w1 := pg_current_wal_lsn();
@@ -62,9 +67,9 @@ end $$;
 
 -- summary of one run (skip warm-up ticks): the tick, the drain, volumes
 create or replace function bbench.summary(p_run int, skip int default 20) returns table(line text) language sql as $$
-  select format('%s | %s ticks | tick ms avg %s p50 %s p95 %s p99 %s max %s | drain_outbox ms %s | frames %s KB %s per tick | WAL KB/tick %s',
+  select format('%s | %s ticks | tick wall ms avg %s p50 %s p95 %s p99 %s max %s | CPU ms avg %s wait %s | drain_outbox ms %s | frames %s KB %s per tick | WAL KB/tick %s',
     r.impl, count(*), round(avg(s.tick_ms)::numeric, 2), round((percentile_cont(.5) within group (order by s.tick_ms))::numeric, 2),
     round((percentile_cont(.95) within group (order by s.tick_ms))::numeric, 2), round((percentile_cont(.99) within group (order by s.tick_ms))::numeric, 2),
-    round(max(s.tick_ms)::numeric, 1), round(avg(s.drain_ms)::numeric, 2), round(avg(s.frames_out)), round(avg(s.bytes_out)::numeric / 1024, 1),
+    round(max(s.tick_ms)::numeric, 1), round(avg(s.cpu_ms)::numeric, 2), round(avg(s.wait_ms)::numeric, 2), round(avg(s.drain_ms)::numeric, 2), round(avg(s.frames_out)), round(avg(s.bytes_out)::numeric / 1024, 1),
     round(r.wal_bytes::numeric / nullif(count(*), 0) / 1024, 1))
   from bbench.step s join bbench.run_log r using (run_id) where s.run_id = p_run and s.tick > skip group by r.impl, r.wal_bytes $$;

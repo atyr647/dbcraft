@@ -9,6 +9,7 @@ declare
     f_in boolean := fl like '%,all,%' or fl like '%,in,%';     f_mv boolean := fl like '%,all,%' or fl like '%,mv,%';
     f_vis boolean := fl like '%,all,%' or fl like '%,vis,%';   f_ch boolean := fl like '%,all,%' or fl like '%,ch,%';
     f_out boolean := fl like '%,all,%' or fl like '%,out,%';   f_skip boolean := fl like '%,all,%' or fl like '%,skip,%';
+    f_ref boolean := fl like '%,ref,%';                  -- opt-in experiment (sql/383): chunk packets travel as references; the gateway must call net.drain_outbox_ref()
     cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz;
     g0 timestamptz; g1 timestamptz; g2 timestamptz; g3 timestamptz; g4 timestamptz; g5 timestamptz; g6 timestamptz;
     n_in int; n_in_game int := 0; n_players int; n_out int; r record; mv record; ch record; vis record; ka record;
@@ -91,7 +92,7 @@ begin
     t3 := clock_timestamp();
     -- 6: chunk streaming
     begin
-        if f_ch then perform net.stream_chunks_batched(); else perform net.stream_chunks(); end if;
+        if f_ref then perform net.stream_chunks_ref(); elsif f_ch then perform net.stream_chunks_batched(); else perform net.stream_chunks(); end if;
     exception when others then
         insert into mc.error_log (tick, step, message) values (cur, 'stream_chunks', sqlerrm); raise warning 'stream_chunks failed: %', sqlerrm;
     end;
@@ -109,7 +110,9 @@ begin
         insert into mc.error_log (tick, step, message) values (cur, 'kicks', sqlerrm); raise warning 'kicks failed: %', sqlerrm;
     end;
     -- 8: drain the game's queue into the connection layer's
-    if f_out then
+    if f_ref then
+        n_out := mc.drain_batched_ref(cur);
+    elsif f_out then
         n_out := mc.drain_batched(cur);
     else
         create temp table if not exists _drain (seq bigint, conn_id int, data bytea, comp int) on commit delete rows;

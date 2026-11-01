@@ -12,8 +12,11 @@ export PGHOST=/tmp PGPORT=${DBCRAFT_PGPORT:-54422} PGUSER=postgres PGDATABASE=${
 P="psql -X -q -At -v ON_ERROR_STOP=1"
 $P -f tests/bench/batch/bench.sql > /dev/null 2>&1
 run=0
+IMPL_ARR=($IMPLS); NIMPL=${#IMPL_ARR[@]}
 for round in $(seq 1 "$ROUNDS"); do
-  for impl in $IMPLS; do
+  # the order rotates every round, so no implementation always runs first or last (load from other processes drifts during a round)
+  for j in $(seq 0 $((NIMPL - 1))); do
+    impl=${IMPL_ARR[$(( (j + round - 1) % NIMPL ))]}
     run=$((run + 1))
     $P -c "select ibench.setup($N, $SIDE)" -c "select count(*) from mc.refresh_visibility()" -c "analyze mc.player" -c "vacuum mc.player, mc.visible" > /dev/null
     # an impl written batched:FLAGS carries its own component switches; otherwise the global FLAGS (if any) apply to batched
@@ -26,22 +29,23 @@ for round in $(seq 1 "$ROUNDS"); do
     sleep 1.5
     S1=$($P -c "select coalesce(sum(n_tup_ins),0)||' '||coalesce(sum(n_tup_upd),0)||' '||coalesce(sum(n_tup_del),0)||' '||coalesce(sum(n_tup_hot_upd),0) from pg_stat_user_tables where schemaname in ('mc','net')")
     STM=$($P -c "select coalesce(sum(calls),0) from pg_stat_statements where dbid = (select oid from pg_database where datname = current_database()) and query not ilike '%pg_stat_statements%' and query not ilike '%bbench.%'")
+    PLAN=$($P -c "select coalesce(round((sum(total_plan_time) / ($TICKS - 20))::numeric, 3), 0) from pg_stat_statements where dbid = (select oid from pg_database where datname = current_database()) and query not ilike '%pg_stat_statements%' and query not ilike '%bbench.%'")
     read -r i0 u0 d0 h0 <<< "${S0//|/ }"; read -r i1 u1 d1 h1 <<< "${S1//|/ }"
     MEAS=$((TICKS - 20))
-    $P -c "update bbench.run_log set statements = $STM, rows_ins = $((i1 - i0)), rows_upd = $((u1 - u0)), rows_del = $((d1 - d0)), hot_upd = $((h1 - h0)) where run_id = $run"
+    $P -c "update bbench.run_log set plan_ms = $PLAN, statements = $STM, rows_ins = $((i1 - i0)), rows_upd = $((u1 - u0)), rows_del = $((d1 - d0)), hot_upd = $((h1 - h0)) where run_id = $run"
     echo "round $round load $LOAD | $($P -c "select line from bbench.summary($run)")"
   done
 done
 echo "---- medians over $ROUNDS rounds ($N players, side $SIDE, moving $FRAC, $MODE, tx=$TX, flags='${FLAGS}')"
 $P -F' | ' -c "
-with per as (select r.run_id, r.impl, avg(s.tick_ms) avg_ms, percentile_cont(.5) within group (order by s.tick_ms) p50, percentile_cont(.99) within group (order by s.tick_ms) p99, max(s.tick_ms) mx,
-                    avg(s.drain_ms) drain, avg(s.bytes_out)/1024 kb, avg(s.frames_out) fr, r.wal_bytes/($TICKS-20.0)/1024 wal, r.statements/($TICKS-20.0) stm,
+with per as (select r.run_id, r.impl, avg(s.cpu_ms) cpu, percentile_cont(.99) within group (order by s.cpu_ms) cpu99, avg(s.wait_ms) wt, avg(s.tick_ms) avg_ms, percentile_cont(.5) within group (order by s.tick_ms) p50, percentile_cont(.99) within group (order by s.tick_ms) p99, max(s.tick_ms) mx,
+                    avg(s.drain_ms) drain, avg(s.bytes_out)/1024 kb, avg(s.frames_out) fr, r.wal_bytes/($TICKS-20.0)/1024 wal, r.statements/($TICKS-20.0) stm, r.plan_ms plan,
                     r.rows_ins/($TICKS-20.0) ri, r.rows_upd/($TICKS-20.0) ru, r.rows_del/($TICKS-20.0) rd, r.hot_upd::float8/nullif(r.rows_upd,0) hot
-             from bbench.step s join bbench.run_log r using (run_id) where s.tick > 20 group by r.run_id, r.impl, r.wal_bytes, r.statements, r.rows_ins, r.rows_upd, r.rows_del, r.hot_upd)
-select impl, count(*) runs, 'avg ' || round((percentile_cont(.5) within group (order by avg_ms))::numeric, 2) || ' ms', 'p50 ' || round((percentile_cont(.5) within group (order by p50))::numeric, 2),
+             from bbench.step s join bbench.run_log r using (run_id) where s.tick > 20 group by r.run_id, r.impl, r.wal_bytes, r.plan_ms, r.statements, r.rows_ins, r.rows_upd, r.rows_del, r.hot_upd)
+select impl, count(*) runs, 'CPU ' || round((percentile_cont(.5) within group (order by cpu))::numeric, 2) || ' ms (p99 ' || round((percentile_cont(.5) within group (order by cpu99))::numeric, 1) || ')', 'wait ' || round((percentile_cont(.5) within group (order by wt))::numeric, 1), 'wall avg ' || round((percentile_cont(.5) within group (order by avg_ms))::numeric, 2), 'p50 ' || round((percentile_cont(.5) within group (order by p50))::numeric, 2),
        'p99 ' || round((percentile_cont(.5) within group (order by p99))::numeric, 2), 'max ' || round((percentile_cont(.5) within group (order by mx))::numeric, 1),
        'drain ' || round((percentile_cont(.5) within group (order by drain))::numeric, 2), 'KB/tick ' || round((percentile_cont(.5) within group (order by kb))::numeric, 1),
-       'WAL KB/tick ' || round((percentile_cont(.5) within group (order by wal))::numeric, 1), 'stmts/tick ' || round((percentile_cont(.5) within group (order by stm))::numeric, 1),
+       'WAL KB/tick ' || round((percentile_cont(.5) within group (order by wal))::numeric, 1), 'plan ms/tick ' || round((percentile_cont(.5) within group (order by plan))::numeric, 2) || ' | stmts/tick ' || round((percentile_cont(.5) within group (order by stm))::numeric, 1),
        'rows ins/upd/del per tick ' || round((percentile_cont(.5) within group (order by ri))::numeric) || '/' || round((percentile_cont(.5) within group (order by ru))::numeric) || '/' || round((percentile_cont(.5) within group (order by rd))::numeric),
        'hot% ' || round((100 * percentile_cont(.5) within group (order by hot))::numeric)
 from per group by impl order by impl"

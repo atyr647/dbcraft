@@ -169,11 +169,12 @@ create or replace function t.cap_play_out() returns text language sql as $$
 create or replace function t.cap_kick() returns text language sql as $$ select coalesce(string_agg(conn_id::text, ',' order by conn_id), '') from mc.kick $$;
 -- what the gateway would receive (Part B): drain_outbox per connection, once, rendered in order (seq) and unordered (set); and how many connections close
 drop function if exists t.cap_drain();
+drop function if exists t.cap_drain(boolean);
 create temp table if not exists _dr (conn_id bigint, data bytea, close boolean);
-create or replace function t.cap_drain(out seq_txt text, out set_txt text, out surv_txt text, out closes_txt text, out n_close int) language plpgsql as $$
+create or replace function t.cap_drain(p_ref boolean default false, out seq_txt text, out set_txt text, out surv_txt text, out closes_txt text, out n_close int) language plpgsql as $$
 begin
     delete from _dr;
-    insert into _dr select * from net.drain_outbox();
+    if p_ref then insert into _dr select * from net.drain_outbox_ref(); else insert into _dr select * from net.drain_outbox(); end if;
     select coalesce(string_agg(conn_id || ':' || t.canon(data) || ':' || close::text, E'\n' order by conn_id), ''),
            coalesce(string_agg(conn_id || ':' || t.canon_set(data) || ':' || close::text, E'\n' order by conn_id), ''),
            coalesce(string_agg(conn_id || ':' || t.canon_set(data), E'\n' order by conn_id) filter (where not close), ''),
