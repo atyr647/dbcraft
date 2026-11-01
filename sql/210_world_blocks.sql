@@ -271,10 +271,11 @@ end $$;
 -- The non-air blocks of one stored section as rows.  Palette sections test "is air" once per palette entry, not once per block.
 create or replace function mc.section_blocks(s mc.chunk_section, include_air boolean default false)
 returns table (x int, y int, z int, block text) language sql stable as $$
+  -- MATERIALIZED: the per-palette-entry air flags are computed once, not re-evaluated for each of the 4096 blocks
+  with a as materialized (select array(select mc.is_air(p) from unnest(s.palette) with ordinality q(p, o) order by o) as air)
   select s.cx * 16 + (u.i & 15), s.sy * 16 + (u.i >> 8), s.cz * 16 + ((u.i >> 4) & 15),
          case when cardinality(s.palette) = 0 then mc.state_name(u.e) else s.palette[u.e + 1] end
-  from (select o - 1 as i, e from unnest(mc.unpack_longs(s.data, s.bits, 4096)) with ordinality t(e, o)) u,
-       lateral (select array(select mc.is_air(p) from unnest(s.palette) with ordinality q(p, o) order by o) as air) a
+  from a, lateral (select o - 1 as i, e from unnest(mc.unpack_longs(s.data, s.bits, 4096)) with ordinality t(e, o)) u
   where include_air
      or not (case when cardinality(s.palette) = 0 then mc.is_air(mc.state_name(u.e)) else a.air[u.e + 1] end) $$;
 
@@ -282,13 +283,15 @@ returns table (x int, y int, z int, block text) language sql stable as $$
 -- from the section and the index inside it.  Use mc.blocks_in / mc.block_at for anything but small worlds (see docs/WORLD.md for measurements).
 create or replace view mc.blocks as
   select s.dimension, b.x, b.y, b.z, b.block
-  from mc.chunk_section s cross join lateral mc.section_blocks(s) b;
+  from mc.chunk_section s cross join lateral mc.section_blocks(s) b
+  where s.block_count > 0;                    -- sections without a non-air block are skipped before unpacking
 
 create or replace function mc.blocks_in(p_dim text, x1 int, y1 int, z1 int, x2 int, y2 int, z2 int, include_air boolean default false)
 returns table (dimension text, x int, y int, z int, block text) language sql stable as $$
   select s.dimension, b.x, b.y, b.z, b.block
   from mc.chunk_section s cross join lateral mc.section_blocks(s, include_air) b
   where s.dimension = p_dim
+    and (include_air or s.block_count > 0)
     and s.cx between least(x1, x2) >> 4 and greatest(x1, x2) >> 4
     and s.cz between least(z1, z2) >> 4 and greatest(z1, z2) >> 4
     and s.sy between least(y1, y2) >> 4 and greatest(y1, y2) >> 4
