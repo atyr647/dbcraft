@@ -1,0 +1,38 @@
+# dbcraft: PostgreSQL with the dbcraft schema and, optionally, the development gateway on port 25565.  See docker/README.md.
+#
+#   export DBCRAFT_REPORTS_DIR=/path/to/generator/reports          # required: blocks.json registries.json packets.json ... (your own output of the data generator)
+#   export DBCRAFT_CAPTURES_DIR=/path/to/tests/fixtures/captured   # for logins: play_nocomp.jsonl from tools/capture_vanilla.py
+#   docker compose up --build
+services:
+  dbcraft:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: dbcraft:latest
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dbcraft
+      POSTGRES_PASSWORD: ${DBCRAFT_PASSWORD:?set DBCRAFT_PASSWORD}
+      POSTGRES_DB: dbcraft
+      DBCRAFT_DEV_GATEWAY: "1"          # run the PL/Python development gateway inside this container (offline mode, no compression)
+      DBCRAFT_GATEWAY_PORT: "25565"
+      DBCRAFT_GAMEMODE: survival
+      DBCRAFT_MOTD: dbcraft
+    ports:
+      - "25565:25565"                   # Minecraft clients
+      - "127.0.0.1:5432:5432"           # SQL access, local only: this is the admin console of the whole server
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }   # the gateway backend holds one socket per player; the default 1024 stops it near 1,000 players
+    shm_size: 1gb                       # shared_buffers = 1GB lives in shared memory
+    volumes:
+      - dbcraft-data:/var/lib/postgresql/data
+      - ${DBCRAFT_REPORTS_DIR:?set DBCRAFT_REPORTS_DIR}:/data/reports:ro
+      - ${DBCRAFT_CAPTURES_DIR:-./tests/fixtures/captured}:/data/captures:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbcraft -d dbcraft"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    stop_grace_period: 60s              # a clean shutdown checkpoints; the world is durable, the per-tick queues are not
+volumes:
+  dbcraft-data:
