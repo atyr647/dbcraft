@@ -33,3 +33,13 @@ net.need/2 | 460_join_codec.sql | PL/pgSQL, same reason
 net.on_connect/2 | 460_join_codec.sql | PL/pgSQL, same reason
 mc.on_join/3 | 461_join_on_join.sql | wrapper over the new 4-argument mc.on_join (p_to_joiner = true): the original behaviour
 net.send_config_data/2 | 462_join_config_burst.sql | one cached, pre-framed row per (known packs, threshold, deflate implementation) instead of 33 rows built per joiner
+net.player_info_body/1 | 464_join_constants.sql | PL/pgSQL (plan cached) over the cached per-connection tab-entry head (net.conn_tab); same bytes, 7.4 us -> about 2 us per entry
+net.config_begin/1 | 464_join_constants.sql | the three packets that start the configuration phase as one cached framed row per (threshold, deflate implementation)
+proto.mutf8/1 | 465_join_text.sql | SQL wrapper: ASCII text (octet_length = char_length) is just its bytes, no regex; the original body is proto.mutf8_general
+nbt.mutf8/1 | 465_join_text.sql | same for the connection layer copy
+proto.nbt_text/1 | 466_join_text_builders.sql | one inlinable expression (the original had a FROM clause, so it was re-planned on every call)
+nbt.str/1 | 466_join_text_builders.sql | same for the connection layer copy
+proto.cat/1 | 466_join_text_builders.sql | PL/pgSQL loop (the SQL version with a sub-select was re-planned on every call)
+proto.nbt_int_array/2 | 466_join_text_builders.sql | PL/pgSQL, same reason
+proto.nbt_list_str/2 | 466_join_text_builders.sql | PL/pgSQL, same reason
+proto.nbt_list_comp/2 | 466_join_text_builders.sql | PL/pgSQL, same reason
