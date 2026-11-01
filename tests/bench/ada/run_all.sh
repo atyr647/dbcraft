@@ -3,7 +3,7 @@
 #   tests/bench/ada/run_all.sh        needs: gnat/gnatmake, libcrypto/libz dev, cargo, python3 (tests/bench/tcl/gen_data.py makes the inputs)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); TCL=$HERE/../tcl
-DATA=${DATA:-$TCL/data}; OUT=$HERE/out; mkdir -p "$OUT"
+DATA=${DATA:-$TCL/data}; OUT=${OUT:-$HERE/out}; mkdir -p "$OUT"
 ROUNDS=${ROUNDS:-2}; export REPS=${REPS:-5}
 [ -f "$DATA/expected.txt" ] || python3 "$TCL/gen_data.py" >/dev/null
 ( cd "$TCL/rust" && cargo build --release -q )

@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Summarise the Ada batch: best of all rounds per benchmark, correctness, ratios to Rust, players per core.
-usage: summarize.py OUT_DIR   (reads OUT_DIR/ada_<variant>.<round>.log and OUT_DIR/rust.<round>.log; expected RESULT lines from ../tcl/data/expected.txt)
+usage: summarize.py OUT_DIR [OUT_DIR ...]   (reads <dir>/ada_<variant>.<round>.log and <dir>/rust.<round>.log of every directory; best of all runs;
+expected RESULT lines from ../tcl/data/expected.txt)
 """
 import glob, os, re, sys
-out = sys.argv[1]
+dirs = sys.argv[1:]
 here = os.path.dirname(os.path.abspath(__file__))
 exp = {l.strip() for l in open(os.path.join(here, "..", "tcl", "data", "expected.txt")) if l.strip()}
 VARIANTS = [("O2", "-O2"), ("O2_nochecks", "-O2 -gnatp"), ("O2_gnata", "-O2 -gnata"), ("adacraft_flags", "-gnata (adacraft's own build, no -O)")]
 
-def load(pattern):
+def load(patterns):
     best, units, nb, checks, info = {}, {}, {}, [], []
-    for f in sorted(glob.glob(pattern)):
+    for f in sorted(sum((glob.glob(p) for p in patterns), [])):
         for l in open(f):
             p = l.split()
             if l.startswith("BENCH "):
@@ -25,8 +26,8 @@ def load(pattern):
                 info.append(l.strip())
     return best, units, nb, checks, info
 
-ada = {v: load(f"{out}/ada_{v}.*.log") for v, _ in VARIANTS}
-rust = load(f"{out}/rust.*.log")
+ada = {v: load([f"{d}/ada_{v}.*.log" for d in dirs]) for v, _ in VARIANTS}
+rust = load([f"{d}/rust.*.log" for d in dirs])
 
 print("### Correctness\n")
 for v, sw in VARIANTS:

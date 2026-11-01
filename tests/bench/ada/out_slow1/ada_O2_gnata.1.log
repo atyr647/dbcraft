@@ -1,0 +1,62 @@
+INFO ada reps=5
+BENCH vi_decode_asis 0.014285141 1000000 1349809
+RESULT vi_decode count=1000000 sum=55142023054   -- vi_decode_asis
+CHECK vi_decode_asis OK
+BENCH vi_decode_tight 0.006409607 1000000 1349809
+RESULT vi_decode count=1000000 sum=55142023054   -- vi_decode_tight
+CHECK vi_decode_tight OK
+BENCH vi_encode_asis 0.921445353 7049 9501
+CHECK vi_encode_asis PARTIAL n=7049 prefix_ok=1
+BENCH vi_encode_tight 0.005374159 1000000 1349809
+RESULT vi_encode len=1349809 ok=1   -- vi_encode_tight
+CHECK vi_encode_tight OK
+BENCH split_index_asis 0.005777564 200000 8387541
+RESULT split_index frames=200000 idsum=18565468 bodybytes=7945204   -- split_index_asis
+CHECK split_index_asis OK
+BENCH split_scan_asis 0.010503033 200000 8387541
+RESULT split_scan frames=200000 idsum=18565468 bodybytes=7945204   -- split_scan_asis
+CHECK split_scan_asis OK
+BENCH split_tight 0.009039410 200000 8387541
+RESULT split_scan frames=200000 idsum=18565468 bodybytes=7945204   -- split_tight
+CHECK split_tight OK
+BENCH split_stream_asis 0.014632294 200000 8387541
+RESULT split_scan frames=200000 idsum=18565468 bodybytes=7945204   -- split_stream_asis
+CHECK split_stream_asis OK
+BENCH pos_decode 0.005062808 200000 6600000
+RESULT pos_decode sx=21606521.547338 flags=25914400   -- pos_decode
+CHECK pos_decode OK
+BENCH build_tight 0.007973262 200000 6400000
+RESULT build_frames len=6400000 ok=1   -- build_tight
+CHECK build_tight OK
+BENCH build_asis 0.801792274 11623 371936
+CHECK build_asis PARTIAL n=11623 prefix_ok=1
+BENCH coro_plain 0.000587578 200000 0
+RESULT coro moves=97000 chats=48500 other=48500 bytes=5900000   -- coro_plain
+CHECK coro_plain OK
+BENCH coro_tasks_local 0.210039996 200000 0
+RESULT coro moves=97000 chats=48500 other=48500 bytes=5900000   -- coro_tasks_local
+CHECK coro_tasks_local OK
+BENCH coro_tasks_rdv 12.913386393 200000 0
+RESULT coro moves=97000 chats=48500 other=48500 bytes=5900000   -- coro_tasks_rdv
+CHECK coro_tasks_rdv OK
+BENCH z_compress 0.012732584 1 1048576
+BENCH z_decompress 0.001622239 1 1048576
+RESULT z_roundtrip ok=1   -- z_decompress
+CHECK z_decompress OK
+INFO z_compress clen=99485
+BENCH aes_cfb8_soft 2.158003924 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_soft
+CHECK aes_cfb8_soft OK
+BENCH aes_cfb8 0.020007365 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8
+CHECK aes_cfb8 OK
+BENCH aes_cfb8_dec 0.018887002 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_dec
+CHECK aes_cfb8_dec OK
+BENCH aes_cfb8_enc_1k_calls 0.019703699 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_enc_1k_calls
+CHECK aes_cfb8_enc_1k_calls OK
+BENCH aes_cfb8_dec_150_calls 0.017979780 1048576 1048576
+RESULT aes_cfb8 len=1048576 ok=1   -- aes_cfb8_dec_150_calls
+CHECK aes_cfb8_dec_150_calls OK
+INFO mismatches=0

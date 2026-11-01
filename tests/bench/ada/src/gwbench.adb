@@ -215,6 +215,22 @@ procedure Gwbench is
       Enc_Len := Pos - 1;
    end Vi_Encode_Asis;
 
+   procedure Vi_Encode_Asis_Small is   --  how adacraft itself calls Encode: into a 5-byte scratch buffer, then copy
+      Pos : Positive := 1;
+      W   : Natural;
+      St  : Adacraft.Protocol.Varnum.Status_Type;
+      Scratch : Octets (1 .. 5);
+   begin
+      for I in 1 .. Enc_Limit loop
+         Adacraft.Protocol.Varnum.Encode (Vals (I), Scratch, 1, W, St);
+         for K in 1 .. W loop
+            Enc_Buf (Pos + K - 1) := Scratch (K);
+         end loop;
+         Pos := Pos + W;
+      end loop;
+      Enc_Len := Pos - 1;
+   end Vi_Encode_Asis_Small;
+
    procedure Vi_Encode_Tight is
       Pos : Positive := 1;
       V   : Unsigned_32;
@@ -233,6 +249,7 @@ procedure Gwbench is
    end Vi_Encode_Tight;
 
    function T_Vi_Encode_Asis  is new Gw_Timing (Vi_Encode_Asis);
+   function T_Vi_Encode_Asis_Small is new Gw_Timing (Vi_Encode_Asis_Small);
    function T_Vi_Encode_Tight is new Gw_Timing (Vi_Encode_Tight);
 
    function Prefix_Equal (A : Octets; B : Octets; N : Natural) return Boolean is
@@ -594,6 +611,7 @@ procedure Gwbench is
 
    Best : Duration;
    Limit_Reps : constant Positive := Positive'Min (Reps, 2);
+   Skip_Slow : constant Boolean := Ada.Environment_Variables.Exists ("SKIP_SLOW");
 
    --  rough per-iteration calibration so the as-is encoder rows (which may be very slow) finish in about a second
    function Calibrated (Total : Natural; Probe : Natural; Probe_Time : Duration) return Natural is
@@ -662,6 +680,9 @@ begin
       Put_Line ("CHECK vi_encode_asis PARTIAL n=" & Img (Long_Long_Integer (Enc_Limit)) & " prefix_ok=" & (if Prefix_Equal (Enc_Buf.all, Varints.all, Enc_Len) then "1" else "0"));
    end if;
    Enc_Limit := Vals'Length;
+   Best := T_Vi_Encode_Asis_Small (Reps);
+   Report ("vi_encode_asis_small", Best, 1_000_000, Long_Long_Integer (Enc_Len));
+   Check ("vi_encode_asis_small", "vi_encode len=" & Img (Long_Long_Integer (Enc_Len)) & " ok=" & (if Prefix_Equal (Enc_Buf.all, Varints.all, Enc_Len) and then Enc_Len = Varints'Length then "1" else "0"));
    Best := T_Vi_Encode_Tight (Reps);
    Report ("vi_encode_tight", Best, 1_000_000, Long_Long_Integer (Enc_Len));
    Check ("vi_encode_tight", "vi_encode len=" & Img (Long_Long_Integer (Enc_Len)) & " ok=" & (if Prefix_Equal (Enc_Buf.all, Varints.all, Enc_Len) and then Enc_Len = Varints'Length then "1" else "0"));
@@ -690,6 +711,7 @@ begin
    Best := T_Build_Tight (Reps);
    Report ("build_tight", Best, 200_000, 6_400_000);
    Check ("build_tight", "build_frames len=" & Img (Long_Long_Integer (Build_Len)) & " ok=" & (if Prefix_Equal (Build_Out.all, Frames_Out.all, Build_Len) and then Build_Len = Frames_Out'Length then "1" else "0"));
+   if not Skip_Slow then
    declare
       Probe_T : Duration;
       Probe   : constant := 200;
@@ -705,6 +727,7 @@ begin
    else
       Put_Line ("CHECK build_asis PARTIAL n=" & Img (Long_Long_Integer (Build_N)) & " prefix_ok=" & (if Prefix_Equal (Build_Out.all, Frames_Out.all, Build_Len) then "1" else "0"));
    end if;
+   end if;
 
    --  (f) connection state machines
    Best := T_Conns_Plain (Reps);
@@ -713,9 +736,11 @@ begin
    Best := T_Conns_Local (Limit_Reps);
    Report ("coro_tasks_local", Best, 200_000, 0);
    Check ("coro_tasks_local", Conn_Line (Conn_Res));
-   Best := T_Conns_Rdv (Limit_Reps);
-   Report ("coro_tasks_rdv", Best, 200_000, 0);
-   Check ("coro_tasks_rdv", Conn_Line (Conn_Res));
+   if not Skip_Slow then
+      Best := T_Conns_Rdv (Limit_Reps);
+      Report ("coro_tasks_rdv", Best, 200_000, 0);
+      Check ("coro_tasks_rdv", Conn_Line (Conn_Res));
+   end if;
 
    --  (g) zlib
    Best := T_Z_Compress (Reps);
@@ -728,9 +753,11 @@ begin
    --  (h) AES-128-CFB8
    Sbox := Gw_Aes.Make_Sbox;
    Rk := Gw_Aes.Expand_Key (Key, Sbox);
-   Best := T_Aes_Soft (Limit_Reps);
-   Report ("aes_cfb8_soft", Best, Long_Long_Integer (Chunk'Length), Long_Long_Integer (Chunk'Length));
-   Check ("aes_cfb8_soft", "aes_cfb8 len=" & Img (Long_Long_Integer (Aes_Out'Length)) & " ok=" & (if Prefix_Equal (Aes_Out.all, Aes_Expect.all, Aes_Out'Length) then "1" else "0"));
+   if not Skip_Slow then
+      Best := T_Aes_Soft (Limit_Reps);
+      Report ("aes_cfb8_soft", Best, Long_Long_Integer (Chunk'Length), Long_Long_Integer (Chunk'Length));
+      Check ("aes_cfb8_soft", "aes_cfb8 len=" & Img (Long_Long_Integer (Aes_Out'Length)) & " ok=" & (if Prefix_Equal (Aes_Out.all, Aes_Expect.all, Aes_Out'Length) then "1" else "0"));
+   end if;
    Best := T_Aes_Enc (Reps);
    Report ("aes_cfb8", Best, Long_Long_Integer (Chunk'Length), Long_Long_Integer (Chunk'Length));
    Check ("aes_cfb8", "aes_cfb8 len=" & Img (Long_Long_Integer (Aes_Out'Length)) & " ok=" & (if Prefix_Equal (Aes_Out.all, Aes_Expect.all, Aes_Out'Length) then "1" else "0"));
