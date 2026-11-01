@@ -43,7 +43,8 @@ select count(*) > 0 as have from t.cap_play \gset
     select t.eq('unknown pack gives the full variant', net.known_variant(array['other:pack:1']), '');
     select net.on_connect(1);
     select net.send_config_data(1, '{}');
-    select t.eq('full variant: 33 packets queued', (select count(*) from net.outbox where conn_id = 1)::int, 33);
+    -- sql/462: the packets are one pre-framed outbox row (the drain concatenates a connection's rows, so the wire bytes are unchanged): count the frames in it
+    select t.eq('full variant: 33 packets queued', (select count(*) from t.frames((select string_agg(data, ''::bytea order by seq) from net.outbox where conn_id = 1)))::int, 33);
     select t.eq('cache has one variant', (select count(distinct variant) from net.config_cache)::int, 1);
     select net.send_config_data(1, array['minecraft:core:26.3']);
     select t.eq('second variant built on demand', (select count(distinct variant) from net.config_cache)::int, 2);

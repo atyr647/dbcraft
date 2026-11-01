@@ -3,6 +3,10 @@
 -- the world's chunks) instead of the test stub, so it proves the three modules are wired together.  Skipped, loudly, when the capture is missing.
 \ir _net_helpers.sql
 \ir ../../sql/400_integration.sql
+-- sql/400 reinstalls the original hooks; put the login-path versions back on top of it (what a fresh migration ends with)
+\ir ../../sql/460_join_codec.sql
+\ir ../../sql/461_join_on_join.sql
+\ir ../../sql/462_join_config_burst.sql
 
 create table t.cap (idx int, dir text, state text, pid int, name text, len int, hex text);
 \copy t.cap from program 'python3 tools/capture_to_tsv.py play_nocomp'

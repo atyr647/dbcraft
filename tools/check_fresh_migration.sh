@@ -14,5 +14,13 @@ def="pg_get_functiondef('net.stream_chunks()'::regprocedure)"
 check "net.stream_chunks requests chunks (async queue), not inline generation" "select position('want_chunks' in $def) > 0 and position('generate_flat' in $def) = 0"
 check "net.stream_chunks delivers through mc.deliver_ready_chunks"            "select position('deliver_ready_chunks' in $def) > 0"
 check "net.stream_chunks uses arrays, not a temp table"                       "select position('create temp table' in $def) = 0"
+# the login path (sql/460-463): a later file must not undo it
+check "proto.varint_read is PL/pgSQL (the SQL one is re-planned per call)"    "select l.lanname = 'plpgsql' from pg_proc p join pg_language l on l.oid = p.prolang where p.oid = 'proto.varint_read(bytea,integer)'::regprocedure"
+check "proto.string_read is PL/pgSQL"                                         "select l.lanname = 'plpgsql' from pg_proc p join pg_language l on l.oid = p.prolang where p.oid = 'proto.string_read(bytea,integer)'::regprocedure"
+check "net.send(bigint,integer,bytea) is PL/pgSQL"                            "select l.lanname = 'plpgsql' from pg_proc p join pg_language l on l.oid = p.prolang where p.oid = 'net.send(bigint,integer,bytea)'::regprocedure"
+check "net.send_config_data serves the cached burst"                          "select position('config_burst' in prosrc) > 0 from pg_proc where oid = 'net.send_config_data(bigint,text[])'::regprocedure"
+check "net.hook_join_info asks mc.on_join for no rows for the joiner"         "select position('c.name, false)' in prosrc) > 0 and position('delete from mc.play_out' in prosrc) = 0 from pg_proc where oid = 'net.hook_join_info(bigint)'::regprocedure"
+check "net.outbox.data is stored uncompressed (EXTERNAL)"                     "select attstorage = 'e' from pg_attribute where attrelid = 'net.outbox'::regclass and attname = 'data'"
+check "net.handle plans once (plan_cache_mode = force_generic_plan)"          "select coalesce(proconfig @> array['plan_cache_mode=force_generic_plan'], false) from pg_proc where oid = 'net.handle(bigint,bytea)'::regprocedure"
 psql -X -q -d postgres -c "drop database dbcraft_fresh"
 exit $fail

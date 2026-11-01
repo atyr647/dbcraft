@@ -16,7 +16,7 @@ net.deflate_frame/2 | 440_deflate.sql | compression of frames at or above the th
 net.h_login/3 | 400_integration.sql | login checks (whitelist, bans, capacity) come from the game module
 net.hook_chunks/4 | 430_chunk_queue.sql | chunks are requested from the asynchronous generation queue
 net.hook_disconnect/1 | 400_integration.sql | wired to mc.on_leave
-net.hook_join_info/1 | 400_integration.sql | built from the real player row
+net.hook_join_info/1 | 461_join_on_join.sql | built from the real player row (400); 461: asks mc.on_join not to build the joiner's own rows and drops the unindexed DELETE that scanned the whole queue per join
 net.hook_on_join/1 | 400_integration.sql | wired to mc.on_join
 net.hook_player_loaded/1 | 400_integration.sql | wired to the game module
 net.play_begin/1 | 400_integration.sql | integration of the join burst with the game module
@@ -25,3 +25,11 @@ proto.f32_read/2 | 315_game_fast.sql | inlinable versions of the codec (identica
 proto.f64_read/2 | 315_game_fast.sql | inlinable versions of the codec
 proto.frame/2 | 315_game_fast.sql | inlinable versions of the codec
 proto.varint/1 | 315_game_fast.sql | inlinable versions of the codec
+proto.varint_read/4 | 460_join_codec.sql | PL/pgSQL decoder: the SQL one is re-planned on every call (158 us vs 3.4 us from PL/pgSQL); identical results and errors (tests/sql/460)
+proto.string_read/4 | 460_join_codec.sql | PL/pgSQL decoder, same reason (208 us per call before)
+net.send/3 | 460_join_codec.sql | both overloads as PL/pgSQL: the SQL INSERT was re-planned on every call (603 us vs 15 us)
+net.close/1 | 460_join_codec.sql | PL/pgSQL, same reason
+net.need/2 | 460_join_codec.sql | PL/pgSQL, same reason
+net.on_connect/2 | 460_join_codec.sql | PL/pgSQL, same reason
+mc.on_join/3 | 461_join_on_join.sql | wrapper over the new 4-argument mc.on_join (p_to_joiner = true): the original behaviour
+net.send_config_data/2 | 462_join_config_burst.sql | one cached, pre-framed row per (known packs, threshold, deflate implementation) instead of 33 rows built per joiner
