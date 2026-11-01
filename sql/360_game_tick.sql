@@ -1,5 +1,5 @@
 -- Game module, part 7: chat intake, the time packet, and mc.tick().
--- Contract with the connection layer (see docs/GAME.md):  insert decoded play-state packets into mc.play_in (conn_id, packet_id, body) in arrival order,
+-- Contract with the connection layer (see docs/GAME.md):  insert decoded play-state packets into mc.play_in_work (conn_id, packet_id, body) in arrival order,
 -- call `select mc.tick()` once per 50 ms, then send every row of mc.play_out (ordered by seq) to its connection and delete them; close the
 -- connections listed in mc.kick (after flushing their play_out rows).  jit stays off for the tick (docs/EVALUATION.md).
 
@@ -19,7 +19,7 @@ declare i_chat int := mc.sid('chat'); i_cmd int := mc.sid('chat_command'); i_cmd
         r record; s record; ts bigint; salt bigint; idx int; ctype int := mc.chat_type_id('minecraft:chat');
 begin
   messages := 0; commands := 0;
-  for r in select m.seq, m.packet_id, m.conn_id, m.body, p.uuid, p.name from mc.play_in m join mc.player p on p.conn_id = m.conn_id
+  for r in select m.seq, m.packet_id, m.conn_id, m.body, p.uuid, p.name from mc.play_in_work m join mc.player p on p.conn_id = m.conn_id
             where m.packet_id in (i_chat, i_cmd, i_cmds) order by m.seq loop
     select * into s from proto.string_safe(r.body, 0);
     if s.val is null or length(s.val) > 256 or s.val ~ E'[\\x01-\\x1f\\x7f\\u00a7]' then
@@ -39,7 +39,7 @@ begin
       perform mc.run_command(r.conn_id, s.val); commands := commands + 1;
     end if;
   end loop;
-  delete from mc.play_in where packet_id in (i_chat, i_cmd, i_cmds);
+  delete from mc.play_in_work where packet_id in (i_chat, i_cmd, i_cmds);
   return next;
 end $$;
 
@@ -56,7 +56,10 @@ declare cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 time
         mv record; ch record; vis record; ka record; n_in int; n_players int; n_out int; gt bigint;
 begin
   update mc.game_state set game_time = game_time + 1, day_time = day_time + 1 returning game_time into cur;
-  select count(*)::int into n_in from mc.play_in;
+  -- claim this tick's input atomically; anything inserted from now on waits for the next tick
+  truncate mc.play_in_work;
+  with c as (delete from mc.play_in returning seq, conn_id, packet_id, body) insert into mc.play_in_work (seq, conn_id, packet_id, body) select seq, conn_id, packet_id, body from c;
+  get diagnostics n_in = row_count;
   select count(*)::int into n_players from mc.player where conn_id is not null;
   select * into mv from mc.apply_player_moves(cur);                t1 := clock_timestamp();
   perform mc.apply_misc_input(cur);                                t2 := clock_timestamp();
@@ -64,7 +67,8 @@ begin
   select * into vis from mc.refresh_visibility();                  t4 := clock_timestamp();
   select * into ka from mc.keepalive_due(cur);                     t5 := clock_timestamp();
   if cur % 20 = 0 then
-    insert into mc.play_out (conn_id, data) select conn_id, mc.pkt_set_time(cur) from mc.player where conn_id is not null;
+    -- build the packet once, not once per player
+    with p as materialized (select mc.pkt_set_time(cur) as d) insert into mc.play_out (conn_id, data) select conn_id, p.d from mc.player, p where conn_id is not null;
   end if;
   t6 := clock_timestamp();
   select count(*)::int into n_out from mc.play_out;

@@ -1,12 +1,12 @@
 -- join / leave / visibility / movement rules.  Expected bytes come from the packet builders, which tests/game_verify.py proves equal to the real server's.
 create or replace function t.send(conn int, pname text, body bytea) returns void language sql as $$
-  insert into mc.play_in (conn_id, packet_id, body) values (conn, mc.sid(pname), body) $$;
+  insert into mc.play_in_work (conn_id, packet_id, body) values (conn, mc.sid(pname), body) $$;
 create or replace function t.pos(x float8, y float8, z float8, flags int default 1) returns bytea language sql as $$ select proto.f64(x) || proto.f64(y) || proto.f64(z) || proto.i8(flags) $$;
 create or replace function t.pos_rot(x float8, y float8, z float8, yaw real, pitch real, flags int default 1) returns bytea language sql as $$
   select proto.f64(x) || proto.f64(y) || proto.f64(z) || proto.f32(yaw) || proto.f32(pitch) || proto.i8(flags) $$;
 create or replace function t.rot(yaw real, pitch real, flags int default 1) returns bytea language sql as $$ select proto.f32(yaw) || proto.f32(pitch) || proto.i8(flags) $$;
 create or replace function t.out(conn int) returns bytea language sql as $$ select coalesce(string_agg(data, '\x'::bytea order by seq), '\x'::bytea) from mc.play_out where conn_id = conn $$;
-create or replace function t.reset() returns void language sql as $$ truncate mc.play_out, mc.play_in, mc.kick $$;
+create or replace function t.reset() returns void language sql as $$ truncate mc.play_out, mc.play_in, mc.play_in_work, mc.kick $$;
 
 select t.reset();
 truncate mc.visible;

@@ -1,8 +1,8 @@
 -- chat intake, creative slots, held slot, keep-alive, time, command permissions, tick log
 create or replace function t.send(conn int, pname text, body bytea) returns void language sql as $$
-  insert into mc.play_in (conn_id, packet_id, body) values (conn, mc.sid(pname), body) $$;
+  insert into mc.play_in_work (conn_id, packet_id, body) values (conn, mc.sid(pname), body) $$;
 create or replace function t.out(conn int) returns bytea language sql as $$ select coalesce(string_agg(data, '\x'::bytea order by seq), '\x'::bytea) from mc.play_out where conn_id = conn $$;
-create or replace function t.reset() returns void language sql as $$ truncate mc.play_out, mc.play_in, mc.kick $$;
+create or replace function t.reset() returns void language sql as $$ truncate mc.play_out, mc.play_in, mc.play_in_work, mc.kick $$;
 
 select t.reset(); truncate mc.visible; delete from mc.player; delete from mc.op; delete from mc.chat_log; delete from mc.ban; delete from mc.whitelist;
 update mc.server_property set value = 'false' where key = 'white-list'; update mc.server_property set value = '20' where key = 'max-players';
@@ -134,3 +134,11 @@ select t.reset();
 select mc.tick();
 select t.eq('tick 21: idle, no packets', (select count(*) from mc.play_out)::int, 0);
 select t.eq('the game clock advances one tick', (select game_time from mc.game_state), 21::bigint);
+
+------------------------------------------------------------------------------------------------ input claim
+select t.reset();
+insert into mc.play_in (conn_id, packet_id, body) values (1, mc.sid('chat'), proto.string('claimed') || proto.i64(1) || proto.i64(2) || '\x00'::bytea || proto.varint(0) || '\x000000'::bytea || '\x00'::bytea);
+select mc.tick();
+select t.eq('the tick claims packets from the gateway-facing queue and processes them', (select count(*) from mc.chat_log where message = 'claimed')::int, 1);
+select t.is_true('the gateway-facing queue is empty afterwards', not exists (select 1 from mc.play_in));
+select t.is_true('and so is the claimed copy', not exists (select 1 from mc.play_in_work));

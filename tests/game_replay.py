@@ -37,7 +37,7 @@ def psql(script):
     return r.stdout.split("\n")
 
 SETUP = f"""
-truncate mc.play_out, mc.play_in, mc.visible, mc.kick; delete from mc.player; delete from mc.op; delete from mc.whitelist; delete from mc.ban;
+truncate mc.play_out, mc.play_in, mc.play_in_work, mc.visible, mc.kick; delete from mc.player; delete from mc.op; delete from mc.whitelist; delete from mc.ban;
 update mc.server_property set value = '10' where key = 'max-players'; update mc.server_property set value = 'false' where key = 'white-list';
 update mc.server_property set value = 'peaceful' where key = 'difficulty'; update mc.server_property set value = 'creative' where key = 'gamemode';
 update mc.game_state set raining = false, thundering = false, game_time = 0, day_time = 0;
@@ -106,7 +106,7 @@ def main():
     pc = body([e for e in load("Op") if e["name"] == "minecraft:player_chat"][0]["hex"]); msg = b"hello world"; i = pc.index(msg) + len(msg)
     ts = struct.unpack(">q", pc[i:i + 8])[0]
     sc("chat: Bob says hello world; both receive player_chat", "",
-       f"insert into mc.play_in (conn_id, packet_id, body) values (2, mc.sid('chat'), proto.string('hello world') || proto.i64({ts}) || proto.i64(0) || '\\x00'::bytea || proto.varint(0) || '\\x000000'::bytea || '\\x00'::bytea); perform mc.apply_chat(1);",
+       f"insert into mc.play_in_work (conn_id, packet_id, body) values (2, mc.sid('chat'), proto.string('hello world') || proto.i64({ts}) || proto.i64(0) || '\\x00'::bytea || proto.varint(0) || '\\x000000'::bytea || '\\x00'::bytea); perform mc.apply_chat(1);",
        {1: ("Op", "bob chats", {"player_chat"}), 2: ("Bob", "bob chats", {"player_chat"})})
     # join: Op sees Bob arrive.  Spawn and entity id are set to the recorded ones so the add_entity frame can match.
     add = body([e for e in load("Op") if e["name"] == "minecraft:add_entity" and "faa5dca3c3d4354bae1bdde9e5a14b3b" in e["hex"]][0]["hex"])
