@@ -41,3 +41,20 @@ Huffman-only (no matching) gets just 5.4-5.6x, so most of the gain is repeated r
 
 So each section must stay a small, inline `bytea`: `STORAGE MAIN` and a raised `toast_tuple_target` (up to 8160) so sections of up to about 8 KB are not moved out of line.
 Assemble the large packet only at the end, with one concatenation.
+
+## Correction after building it (real terrain, not synthetic chunks)
+
+The table at the top came from synthetic chunks and said a runs-only encoder reaches 85-95% of zlib's ratio.  **That does not hold for real terrain.**
+Measured on 49 real vanilla terrain packets (2.5 MB; `tests/bench/world/zlib_baseline.py`):
+
+| encoder | total ratio | per packet |
+|---|---|---|
+| zlib level 1 / 6 / 9 | 4.6x / 5.25x / 5.3x | 0.6 / 1.5 / 9 ms |
+| fixed Huffman + real LZ77 | 4.8x | 1.1 ms |
+| RLE only, dynamic Huffman (`Z_RLE`) | 3.0x | 0.3 ms |
+| Huffman only | 2.4x | 0.4 ms |
+| **the SQL encoder (runs + fixed Huffman), `sql/440_deflate.sql`** | **2.2x** | **22 ms** |
+
+Real chunks have dense palette data and varied light, so most of the gain comes from matches at longer distances and from dynamic Huffman codes, which the SQL
+encoder does not have.  Flat worlds are different: a flat chunk packet (7.3 KB) becomes 1.1 KB (6.6x), and costs nothing extra at generation (the template is
+spliced).  Everything the SQL encoder produces is checked by real inflaters: see `docs/PERF-CHUNKS.md`.

@@ -103,6 +103,10 @@ other's changes, as all game logic does.
 Measured on the 4-core dev container with other benchmark processes running, so treat numbers as ±25%.  `tests/bench/world/bench_world.sql` prints them;
 `pgbench_set_block.sql` / `pgbench_get_block.sql` give per-transaction rates.  The tick budget is 50 ms.
 
+> **These numbers are from before the chunk performance work** (template generation, the single-edit path, the generation queue).  Generating a flat chunk is now
+> about 0.35 ms (was 9 ms), a single `set_block` about 0.25 ms (was 0.6 ms), a first-time join at view distance 10 about 70 ms (was 7 s).  Current figures, method and
+> what is still slow: [PERF-CHUNKS.md](PERF-CHUNKS.md).
+
 | Operation | Measured |
 |---|---|
 | `generate_flat` one chunk (sections, heightmaps and light) | 8 to 10 ms (it was 90 ms before the heightmap CTE was materialized: the planner re-evaluated the palette flags 4,096 times per section) |

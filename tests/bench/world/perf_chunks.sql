@@ -1,9 +1,11 @@
 -- Chunk-path benchmark used by docs/PERF-CHUNKS.md.   psql -X -f tests/bench/world/perf_chunks.sql   (prints NOTICE lines)
--- Works in far-away chunk ranges of the overworld so it never touches the chunks other tests use; each run picks a fresh range (current_setting('perf.base')::int).
+-- Works in far-away chunk ranges of the overworld so it never touches the chunks other tests use; each run takes the next region (perf.base).
 -- Numbers depend on the machine and on what else is running (record uptime next to them).
 \set ON_ERROR_STOP on
 set jit = off;
-select set_config('perf.base', (1000 + (extract(epoch from clock_timestamp())::bigint % 100000) * 4)::int::text, false);
+-- every run gets its own region (10000 chunks apart) from a sequence, so runs never see each other's chunks or edits (a clock-derived base made repeated runs overlap)
+create sequence if not exists public.dbcraft_bench_run;
+select set_config('perf.base', (20000 + (nextval('public.dbcraft_bench_run') % 150) * 10000)::text, false);
 
 create or replace function pg_temp.ms(t0 timestamptz) returns numeric language sql as $$ select round(extract(epoch from clock_timestamp() - t0)::numeric * 1000, 2) $$;
 
@@ -44,13 +46,13 @@ begin
   t0 := clock_timestamp();
   for i in 1 .. n loop perform mc.get_block('minecraft:overworld', b * 16 + (random() * 3199)::int, -64 + (random() * 19)::int, (random() * 15)::int); end loop;
   m := pg_temp.ms(t0); raise notice 'C2 get_block                               : % ms total, % us per read', m, round(m * 1000 / n, 1);
-  -- an edit followed by the packet the client would get (cache invalidation + rebuild of a real, edited chunk)
+  -- an edit followed by the packet the client would get (cache invalidation + rebuild of a real, edited chunk); only chunks generated in part A are edited
   t0 := clock_timestamp();
-  for i in 1 .. 500 loop
+  for i in 1 .. 190 loop
     perform mc.set_block('minecraft:overworld', b * 16 + i * 16 + 3, -62, 3, 'minecraft:gold_block');
     perform mc.chunk_packet('minecraft:overworld', b + i, 0);
   end loop;
-  m := pg_temp.ms(t0); raise notice 'C3 set_block + chunk_packet rebuild (x500)   : % ms total, % ms per edit+rebuild', m, round(m / 500, 3);
+  m := pg_temp.ms(t0); raise notice 'C3 set_block + chunk_packet rebuild (x190)   : % ms total, % ms per edit+rebuild', m, round(m / 190, 3);
 end $$;
 
 \echo == D. batched edits: mc.set_blocks(10000) spread over sections
