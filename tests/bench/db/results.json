@@ -28,6 +28,11 @@
    "workers1_wall_ms": 40.5,
    "workers4_wall_ms": 217.6,
    "throughput_speedup": 0.74
+  },
+  "parallel_4_separate_tables": {
+   "workers1_wall_ms": 87.3,
+   "workers4_wall_ms": 235.4,
+   "throughput_speedup": 1.48
   }
  },
  "pg": {
@@ -111,6 +116,133 @@
    "workers1_wall_ms": 490.3,
    "workers4_wall_ms": 2111.0,
    "throughput_speedup": 0.93
+  },
+  "parallel_4_separate_tables": {
+   "workers1_wall_ms": 273.5,
+   "workers4_wall_ms": 1147.3,
+   "throughput_speedup": 0.95
+  }
+ },
+ "firebird": {
+  "a_set_update_10k_ms": 65.5,
+  "b_loop_update_10k_ms": 77.72,
+  "load_200k_varints_s": 43.34,
+  "c1_stored_fn_200k_ms": 454.25,
+  "c3_inline_expr_200k_ms": 204.82,
+  "checksum": 164162695881,
+  "d_bulk_load_10k_ms": 3076.5,
+  "e_churn": {
+   "default": {
+    "round1": 30.8,
+    "round50": 70.4,
+    "round100": 73.7,
+    "total_s": 7.7,
+    "size_before_kb": 15664,
+    "size_after_kb": 15664
+   },
+   "open_snapshot": {
+    "round1": 47.5,
+    "round50": 40.5,
+    "round100": 36.0,
+    "total_s": 4.25,
+    "size_before_kb": 15664,
+    "size_after_kb": 44496
+   }
+  },
+  "parallel_4_regions": {
+   "workers1_wall_ms": 1309.7,
+   "workers4_wall_ms": 10804.7,
+   "throughput_speedup": 0.48
+  }
+ },
+ "duckdb": {
+  "a_set_update_10k_ms": 3.89,
+  "b_client_loop_not_in_db_ms": 14748.45,
+  "load_200k_varints_s": 0.33,
+  "c3_inline_expr_200k_ms": 61.42,
+  "checksum": 164162695881,
+  "d_bulk_load_10k_ms": 10101.6,
+  "e_churn": {
+   "default": {
+    "round1": 4.3,
+    "round50": 3.1,
+    "round100": 3.9,
+    "total_s": 0.44,
+    "size_before_kb": 2316,
+    "size_after_kb": 2316
+   }
+  }
+ },
+ "pg_ff60": {
+  "a_set_update_10k_ms": 8.85,
+  "b_loop_update_10k_ms": 46.12,
+  "load_200k_varints_s": 0.44,
+  "c1_stored_fn_200k_ms": 161.62,
+  "c3_inline_expr_200k_ms": 23.78,
+  "checksum": 164162695881,
+  "d_bulk_load_10k_ms": 8.5,
+  "e_churn": {
+   "default": {
+    "round1": 19.1,
+    "round50": 8.6,
+    "round100": 13.7,
+    "total_s": 0.97,
+    "size_before_kb": 1480,
+    "size_after_kb": 2232
+   },
+   "open_snapshot": {
+    "round1": 19.2,
+    "round50": 142.9,
+    "round100": 334.5,
+    "total_s": 15.71,
+    "size_before_kb": 1480,
+    "size_after_kb": 77600
+   }
+  },
+  "parallel_4_regions": {
+   "workers1_wall_ms": 247.5,
+   "workers4_wall_ms": 1219.8,
+   "throughput_speedup": 0.81
+  },
+  "parallel_4_separate_tables": {
+   "workers1_wall_ms": 152.6,
+   "workers4_wall_ms": 1239.7,
+   "throughput_speedup": 0.49
+  }
+ },
+ "mariadb_rc": {
+  "a_set_update_10k_ms": 12.93,
+  "b_loop_update_10k_ms": 176.52,
+  "load_200k_varints_s": 1.05,
+  "c1_stored_fn_200k_ms": 1459.0,
+  "c3_inline_expr_200k_ms": 51.27,
+  "checksum": 164162695881,
+  "d_bulk_load_10k_ms": 56.1,
+  "d_loaddata_10k_ms": 44.4,
+  "e_churn": {
+   "default": {
+    "round1": 22.1,
+    "round50": 16.4,
+    "round100": 12.4,
+    "total_s": 1.95,
+    "size_before_kb": 1712,
+    "size_after_kb": 1712,
+    "datadir_growth_kb": 0
+   },
+   "open_snapshot": {
+    "round1": 25.0,
+    "round50": 18.2,
+    "round100": 12.7,
+    "total_s": 1.65,
+    "size_before_kb": 1712,
+    "size_after_kb": 1712,
+    "datadir_growth_kb": 0
+   }
+  },
+  "parallel_4_regions": {
+   "workers1_wall_ms": 541.4,
+   "workers4_wall_ms": 2823.7,
+   "throughput_speedup": 0.77
   }
  }
 }

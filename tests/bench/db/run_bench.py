@@ -48,8 +48,10 @@ class Engine:
                 if not s.lower().startswith('drop'): raise
         if extra_index: self.run('create index players_tick on players(tick)')
     def insert_players(self, rows): self.many('insert into players(id,region,x,y,z,tick) values (%s)' % ','.join([self.ph]*6), rows)
-    def churn_sql(self, region=None):
-        return 'update players set x=x+0.1, z=z+0.1, tick=tick+1' + ('' if region is None else ' where region=%s' % self.ph)
+    def churn_sql(self, region=None, tables=False):
+        if region is None: return 'update players set x=x+0.1, z=z+0.1, tick=tick+1'
+        if tables: return 'update players_r%d set x=x+0.1, z=z+0.1, tick=tick+1' % region
+        return 'update players set x=x+0.1, z=z+0.1, tick=tick+1 where region=%s' % self.ph
     def snapshot_reader(self): return None
 
 # ---------------------------------------------------------------- PostgreSQL
@@ -182,23 +184,35 @@ def churn(E, ff=None, extra_index=False, snapshot=False, rounds=100):
              size_before_kb=s0//1024, size_after_kb=e.size()//1024)
     if d0 is not None: r['datadir_growth_kb'] = (e.datadir_bytes() - d0)//1024
     if reader is not None: reader.close()
+    e.c.close()
     return r
 
-def _worker(name, region, rounds, barrier, q):
+def _worker(name, region, rounds, barrier, q, tables):
     e = ENGINES[name](); barrier.wait()
     t = time.perf_counter()
-    for _ in range(rounds): e.run(e.churn_sql(region), (region,))
+    for _ in range(rounds): e.run(e.churn_sql(region, tables), None if tables else (region,))
     q.put((time.perf_counter() - t) * 1000)
 
-def parallel(name, workers=4, rounds=20):
+def parallel(name, workers=4, rounds=20, tables=False):
+    """tables=False: 4 regions as rows of ONE table (where region=?).  tables=True: one table per region (region sharding)."""
     E = ENGINES[name]; e = E(); e.setup(FF)
     rows = []; r = random.Random(5)
     for g in range(workers): rows += [(g*N+i, g, r.random()*1000, 64.0, r.random()*1000, 0) for i in range(N)]
-    e.insert_players(rows); e.after_load(); e.c.close()
+    e.insert_players(rows); e.after_load()
+    if tables:
+        ddl = [x for x in split_sql(E.sqlfile, FF=FF) if x.lower().startswith('create table players(')][0]
+        for g in range(workers):
+            for t in ('players_r%d' % g,):
+                try: e.run('drop table ' + t)
+                except Exception: pass
+            e.run(ddl.replace('players(', 'players_r%d(' % g, 1))
+            e.run('insert into players_r%d select id,region,x,y,z,tick from players where region=%d' % (g, g))
+        e.after_load()
+    e.c.close()
     out = {}
     for w in (1, workers):
         ctx = mp.get_context('fork'); b = ctx.Barrier(w); q = ctx.Queue()
-        ps = [ctx.Process(target=_worker, args=(name, g, rounds, b, q)) for g in range(w)]
+        ps = [ctx.Process(target=_worker, args=(name, g, rounds, b, q, tables)) for g in range(w)]
         for p in ps: p.start()
         t = [q.get() for _ in ps]
         for p in ps: p.join()
@@ -244,5 +258,11 @@ if __name__ == '__main__':
     names = sys.argv[1:] or list(ENGINES)
     path = os.path.join(HERE, 'results.json')
     allres = json.load(open(path)) if os.path.exists(path) else {}
+    if names and names[0] == '--par-sep':     # region sharding as one table per region
+        for n in names[1:]:
+            key = n + ('_ff%d' % FF if n == 'pg' and FF != 100 else '') + ('_rc' if os.environ.get('DB_MARIA_RC') and n == 'mariadb' else '')
+            allres.setdefault(key, {})['parallel_4_separate_tables'] = parallel(n, tables=True)
+            print(key, allres[key]['parallel_4_separate_tables'], flush=True); json.dump(allres, open(path, 'w'), indent=1)
+        sys.exit(0)
     for n in names:
         allres[n + ('' if FF == 100 or n != 'pg' else '_ff%d' % FF) + ('_rc' if os.environ.get('DB_MARIA_RC') and n == 'mariadb' else '')] = bench(n); json.dump(allres, open(path, 'w'), indent=1)
