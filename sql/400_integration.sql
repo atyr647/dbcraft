@@ -201,3 +201,13 @@ begin
     update net.conn set view_cx = p_cx, view_cz = p_cz where conn_id = p_conn;
     return query select mc.chunk_body_cached(dim, s.x, s.z) from net.chunk_square(p_cx, p_cz, r) s;
 end $$;
+
+------------------------------------------------------------------------------------------------ development helper
+-- Put the flat world back as generated around the origin (radius in chunks) and forget pending block events.  For tests; not part of the server.
+create or replace function mc.reset_dev_world(p_radius int default 6) returns int language plpgsql as $$
+declare n int;
+begin
+    select count(*) filter (where mc.generate_flat('minecraft:overworld', x, z, true))::int into n from generate_series(-p_radius, p_radius) x, generate_series(-p_radius, p_radius) z;
+    truncate mc.block_event;
+    return n;
+end $$;

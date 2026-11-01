@@ -62,7 +62,7 @@ create or replace function mc.apply_block_actions(cur_tick bigint) returns table
 declare
     i_act int := mc.sid('player_action'); i_use int := mc.sid('use_item_on'); dim text := 'minecraft:overworld';
     r record; act int; o int; f int; pos record; face int; sq int; hand int;
-    cur text; clicked text; item text; cnt int; blk text; slot int; tx int; ty int; tz int; ok boolean;
+    cur text; clicked text; item text; cnt int; blk text; v_slot int; tx int; ty int; tz int; ok boolean;
 begin
     breaks := 0; places := 0; refused := 0;
     for r in select m.seq as mseq, m.packet_id, m.conn_id, m.body, p.uuid, p.gamemode, p.x, p.y, p.z, p.held_slot, p.inv_state
@@ -95,8 +95,8 @@ begin
                 continue when face is null or f + 14 >= length(r.body) + 1;
                 sq := (select val from proto.varint_read(r.body, f + 14));
                 if sq is not null then insert into mc.pending_ack (conn_id, sequence) values (r.conn_id, sq); end if;
-                slot := case hand when 0 then 36 + r.held_slot else 45 end;
-                select i.item, i.count into item, cnt from mc.inventory_slot i where i.player = r.uuid and i.slot = apply_block_actions.slot;
+                v_slot := case hand when 0 then 36 + r.held_slot else 45 end;
+                select i.item, i.count into item, cnt from mc.inventory_slot i where i.player = r.uuid and i.slot = v_slot;
                 continue when item is null or cnt <= 0 or face not between 0 and 5;
                 blk := (select b.name from ref.block b where b.name = item);
                 continue when blk is null;
@@ -116,10 +116,14 @@ begin
                 perform mc.set_block(dim, tx, ty, tz, blk);
                 insert into mc.block_actor values (dim, tx, ty, tz, r.conn_id);
                 places := places + 1;
+                -- vanilla (recorded): the placing player is sent the clicked block's state and the new block's state, then the broadcast sends the new
+                -- block again, then the ack: [clicked, target, target, ack]
+                perform mc.queue_block_update(r.conn_id, pos.x, pos.y, pos.z, clicked);
+                perform mc.queue_block_update(r.conn_id, tx, ty, tz, mc.get_block(dim, tx, ty, tz));
                 if r.gamemode = 0 then
-                    perform mc.set_slot(r.uuid, slot, item, cnt - 1);
+                    perform mc.set_slot(r.uuid, v_slot, item, cnt - 1);
                     update mc.player set inv_state = inv_state + 1 where uuid = r.uuid;
-                    insert into mc.play_out (conn_id, data) values (r.conn_id, mc.pkt_container_set_slot(r.inv_state + 1, slot, item, cnt - 1));
+                    insert into mc.play_out (conn_id, data) values (r.conn_id, mc.pkt_container_set_slot(r.inv_state + 1, v_slot, item, cnt - 1));
                 end if;
             end if;
         exception when others then
