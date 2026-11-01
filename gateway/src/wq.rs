@@ -21,6 +21,7 @@ impl WriteQueue {
         }
         self.bytes
     }
+    #[cfg(test)]
     pub fn pending(&self) -> usize {
         self.bytes
     }

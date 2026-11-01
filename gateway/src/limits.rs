@@ -32,6 +32,7 @@ impl Limits {
         Limits { cfg, per_ip: HashMap::new(), recent: HashMap::new(), logins: HashMap::new(), total: 0 }
     }
 
+    #[cfg(test)]
     pub fn total(&self) -> usize {
         self.total
     }
@@ -87,6 +88,7 @@ impl Limits {
         self.logins.retain(|_, q| q.back().map_or(false, |t| now.saturating_duration_since(*t) < Duration::from_secs(61)));
     }
 
+    #[cfg(test)]
     pub fn tracked_addresses(&self) -> usize {
         self.per_ip.len() + self.recent.len() + self.logins.len()
     }

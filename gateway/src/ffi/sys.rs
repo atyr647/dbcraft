@@ -3,7 +3,6 @@
 
 use std::io;
 use std::os::raw::{c_int, c_uint, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 pub type RawFd = c_int;
 
@@ -180,19 +179,5 @@ pub fn drain_signalfd(fd: RawFd) -> bool {
             return got;
         }
         got = true;
-    }
-}
-
-/// A flag that worker threads and the loop can share.
-pub struct Flag(AtomicBool);
-impl Flag {
-    pub const fn new() -> Flag {
-        Flag(AtomicBool::new(false))
-    }
-    pub fn set(&self) {
-        self.0.store(true, Ordering::SeqCst)
-    }
-    pub fn get(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
     }
 }

@@ -29,6 +29,7 @@ impl Value {
             _ => None,
         }
     }
+    #[cfg(test)]
     pub fn as_arr(&self) -> Option<&[Value]> {
         match self {
             Value::Arr(a) => Some(a),

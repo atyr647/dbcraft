@@ -70,6 +70,17 @@ pub enum CurlError {
     TooLarge,
 }
 
+impl std::fmt::Display for CurlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CurlError::Init => f.write_str("curl_easy_init failed"),
+            CurlError::Setup(m) => write!(f, "curl setup: {m}"),
+            CurlError::Transfer(m) => write!(f, "transfer failed: {m}"),
+            CurlError::TooLarge => f.write_str("response too large"),
+        }
+    }
+}
+
 pub struct Easy {
     h: *mut c_void,
 }

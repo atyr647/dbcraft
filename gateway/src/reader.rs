@@ -16,8 +16,10 @@ impl StreamCipher for crate::ffi::ossl::Cfb8Stream {
     }
 }
 
-/// The reference cipher used as a decryptor.
+/// The reference cipher used as a decryptor (tests).
+#[cfg(test)]
 pub struct RefDecrypt(pub dbcraft_gateway_core::aes::Cfb8);
+#[cfg(test)]
 impl StreamCipher for RefDecrypt {
     fn apply(&mut self, data: &mut [u8]) {
         self.0.decrypt(data)
@@ -75,6 +77,7 @@ impl Reader {
     pub fn awaiting(&self) -> Option<&Await> {
         self.awaiting.as_ref()
     }
+    #[cfg(test)]
     pub fn encrypted(&self) -> bool {
         self.dec.is_some()
     }

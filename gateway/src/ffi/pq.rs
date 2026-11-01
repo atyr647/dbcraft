@@ -40,7 +40,6 @@ extern "C" {
     fn PQgetvalue(res: *const PGresult, row: c_int, col: c_int) -> *const c_char;
     fn PQgetlength(res: *const PGresult, row: c_int, col: c_int) -> c_int;
     fn PQgetisnull(res: *const PGresult, row: c_int, col: c_int) -> c_int;
-    fn PQftype(res: *const PGresult, col: c_int) -> c_uint;
     fn PQputCopyData(conn: *mut PGconn, buffer: *const c_char, nbytes: c_int) -> c_int;
     fn PQputCopyEnd(conn: *mut PGconn, errormsg: *const c_char) -> c_int;
     fn PQgetResult(conn: *mut PGconn) -> *mut PGresult;
@@ -52,10 +51,8 @@ const PGRES_COMMAND_OK: c_int = 1;
 const PGRES_TUPLES_OK: c_int = 2;
 const PGRES_COPY_IN: c_int = 4;
 
-pub const OID_BOOL: u32 = 16;
 pub const OID_BYTEA: u32 = 17;
 pub const OID_INT8: u32 = 20;
-pub const OID_INT2: u32 = 21;
 pub const OID_INT4: u32 = 23;
 pub const OID_TEXT: u32 = 25;
 pub const OID_FLOAT8: u32 = 701;
@@ -356,10 +353,6 @@ impl PgResult {
                 _ => None,
             }
         }
-    }
-    /// The type OID of a column (to check what a function returns).
-    pub fn col_type(&self, col: usize) -> u32 {
-        unsafe { PQftype(self.res, col as c_int) }
     }
 }
 
