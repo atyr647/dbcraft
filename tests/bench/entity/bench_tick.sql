@@ -52,7 +52,7 @@ from (
     select nextval('mc.entity_id_seq')::int, case when random() < 0.875 then 'minecraft:cow' else 'minecraft:zombie' end, (-:area + random() * 2 * :area), -60.0, (-:area + random() * 2 * :area), true, -floor(random() * 60)::int, false,
            0.0, 0.0, 1 + (random() * 60)::int, (random() * 360)::real from generate_series(1, :mobs)
 ) e;
-vacuum analyze mc.entity; analyze mc.player;
+vacuum analyze mc.entity; vacuum analyze mc.entity_lane; analyze mc.player;
 
 create temp table _t (cpu float8, tick int, ms_total float8, ms_ai float8, ms_phys float8, ms_trk float8, ms_pick float8, awake int, rows_out int, bytes_out bigint, wal bigint, ms_players float8);
 create function pg_temp.run(p_ticks int) returns void language plpgsql as $$

@@ -32,6 +32,8 @@ create table if not exists mc.entity_lane (
     -- and written back to mc.entity when the lane ends
     sqx bigint not null default 0, sqy bigint not null default 0, sqz bigint not null default 0, syaw real not null default 0, last_tick bigint not null default 0
 ) with (fillfactor = 70);
+-- the table is scanned every tick and churns (lanes start and end constantly): vacuum it early and often so a quiet world never scans dead pages
+alter table mc.entity_lane set (autovacuum_vacuum_threshold = 200, autovacuum_vacuum_scale_factor = 0) ;
 drop index if exists mc.entity_lane_goal_idx; drop index if exists mc.entity_lane_chase_idx; drop index if exists mc.entity_lane_slot_idx; drop index if exists mc.entity_lane_idx;
 alter table mc.entity drop column if exists trk_every; alter table mc.entity drop column if exists trk_slot;
 create index if not exists entity_awake_nolane_idx on mc.entity (id) where not deep_sleep and lane_until = 0;                      -- the physics step reads only the entities outside lanes
