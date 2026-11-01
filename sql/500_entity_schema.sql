@@ -48,6 +48,9 @@ create table if not exists mc.entity (
     data        jsonb not null default '{}'          -- type specific: items {"item":"minecraft:stone","count":3}
 ) with (fillfactor = 50);
 create index if not exists entity_cell_idx on mc.entity (cx, cz);
+-- the awake entities only: the physics step reads this index, so entities in deep sleep cost nothing per tick.  deep_sleep is in the index predicate, so only a row that
+-- falls asleep or wakes up pays for an index change; every other update of an awake row stays HOT.
+create index if not exists entity_awake_idx on mc.entity (id) where not deep_sleep;
 
 -- Collision classes of block names.  APPROXIMATION: a block is either a full solid cube or has no collision; slabs, stairs, fences, doors, ... count as full cubes.
 -- Friction is the block's slipperiness (0.6 default).

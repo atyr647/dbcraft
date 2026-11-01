@@ -41,6 +41,8 @@ declare r0 t.traj; eid int := 1000 + p_phase; n int; tk record; e mc.entity; ite
 begin
     select protocol_id into item from ref.registry where registry = 'minecraft:entity_type' and name = 'minecraft:item';
     delete from mc.entity;
+    -- a running server has the masks built already (an entity that meets a missing mask waits one tick): build them for the area of the recordings
+    perform mc.entity_build_mask('minecraft:overworld', gx, gz, gy) from generate_series(-1, 2) gx, generate_series(-1, 2) gz, generate_series(-4, -1) gy;
     select * into r0 from t.traj where name = p_name and t.traj.tick = 0;
     insert into mc.entity (id, uuid, type, type_id, x, y, z, vx, vy, vz, on_ground, born_tick, phys_tick, cx, cz)
     values (eid, gen_random_uuid(), 'minecraft:item', item, r0.x, r0.y, r0.z, r0.vx, r0.vy, r0.vz, r0.og, 0, 0, floor(r0.x / 16)::int, floor(r0.z / 16)::int);
@@ -68,12 +70,12 @@ select t.is_true('slide: on_ground agrees on every tick', coalesce(bool_and(og_o
 -- the wall of the 'wall' recording (stone at x = 6, y -60..-58, z -2..8) and the row at z = 12, placed through the real world API
 select mc.set_block('minecraft:overworld', 6, y, z, 'minecraft:stone') from generate_series(-60, -58) y, generate_series(-2, 8) z;
 select mc.set_block('minecraft:overworld', x, -60, 12, 'minecraft:stone') from generate_series(3, 9) x;
-select t.is_true('after set_block the cached mask is stale (older than the chunk version) until the physics step rebuilds it',
-                 (select m.ver < c.version from mc.solid_mask m join mc.chunk c on c.dimension = m.dimension and c.cx = m.cx and c.cz = m.cz where m.dimension = 'minecraft:overworld' and m.cx = 0 and m.cz = 0 and m.sy = -4));
+select t.is_true('after set_block the trigger has dropped the mask of the edited section (it is rebuilt on demand)',
+                 not exists (select 1 from mc.solid_mask where dimension = 'minecraft:overworld' and cx = 0 and cz = 0 and sy = -4));
 select t.is_true('wall: max position deviation vs vanilla <= 1e-9 (' || coalesce(max(dpos), 0)::text || ')', coalesce(max(dpos), 0) <= 1e-9) from t.replay('wall', 0) where exists (select 1 from t.traj);
 select t.is_true('wall: velocity agrees on every processed tick (<= 1e-9)', coalesce(max(dvel), 0) <= 1e-9) from t.replay('wall', 0) where exists (select 1 from t.traj);
 select t.is_true('wall: on_ground agrees on every tick', coalesce(bool_and(og_ok), true)) from t.replay('wall', 0) where exists (select 1 from t.traj);
-select t.is_true('the physics step rebuilt the stale mask: it is current and has the wall in it (1024 floor cells + 27 wall cells + 7 row cells)',
-                 (select m.ver = c.version and m.solid_cnt = 1024 + 27 + 7 from mc.solid_mask m join mc.chunk c on c.dimension = m.dimension and c.cx = m.cx and c.cz = m.cz where m.dimension = 'minecraft:overworld' and m.cx = 0 and m.cz = 0 and m.sy = -4));
+select t.is_true('the mask was rebuilt with the wall in it (1024 floor cells + 27 wall cells + 7 row cells)',
+                 (select m.solid_cnt = 1024 + 27 + 7 from mc.solid_mask m where m.dimension = 'minecraft:overworld' and m.cx = 0 and m.cz = 0 and m.sy = -4));
 
 delete from mc.entity;

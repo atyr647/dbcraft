@@ -8,14 +8,14 @@
 -- once an item is supported and its horizontal speed is below the movement threshold it goes to DEEP SLEEP and costs nothing until a block changes next to it.
 
 -- ordinary (unblocked) movement, the same rules as the collision function with no blockers
-create or replace function mc.entity_move_free(px float8, py float8, pz float8, vx float8, vy float8, vz float8,
-    out nx float8, out ny float8, out nz float8, out nvx float8, out nvy float8, out nvz float8, out og boolean) language sql immutable parallel safe as $$
-  select case when s > 1e-7 then px + gx else px end, case when s > 1e-7 then py + gy else py end, case when s > 1e-7 then pz + gz else pz end,
-         case when gx <> vx then 0::float8 else vx end, case when gy <> vy then 0::float8 else vy end, case when gz <> vz then 0::float8 else vz end,
-         (gy <> vy) and vy < 0
-  from (select g.gx, g.gy, g.gz, g.gx * g.gx + g.gy * g.gy + g.gz * g.gz as s
+create or replace function mc.entity_move_free(px float8, py float8, pz float8, vx float8, vy float8, vz float8)
+returns table (nx float8, ny float8, nz float8, nvx float8, nvy float8, nvz float8, og boolean) language sql immutable parallel safe rows 1 as $$
+  select case when g.s > 1e-7 then px + g.gx else px end, case when g.s > 1e-7 then py + g.gy else py end, case when g.s > 1e-7 then pz + g.gz else pz end,
+         case when g.gx <> vx then 0::float8 else vx end, case when g.gy <> vy then 0::float8 else vy end, case when g.gz <> vz then 0::float8 else vz end,
+         (g.gy <> vy) and vy < 0
+  from (select q.gx, q.gy, q.gz, q.gx * q.gx + q.gy * q.gy + q.gz * q.gz as s
           from (select case when abs(vx) < 1e-7 then 0::float8 else vx end as gx, case when abs(vy) < 1e-7 then 0::float8 else vy end as gy,
-                       case when abs(vz) < 1e-7 then 0::float8 else vz end as gz) g) q
+                       case when abs(vz) < 1e-7 then 0::float8 else vz end as gz) q) g
 $$;
 
 -- movement against solid unit cells (bxs/bys/bzs: the solid cells of the swept box)
@@ -74,72 +74,93 @@ language sql stable parallel safe as $$
          or (p_tick - e.born_tick + e.id) % 4 = 0)
 $$;
 
-create or replace function mc.entity_physics(p_tick bigint) returns int language plpgsql volatile as $$
-declare n int;
+-- Masks are invalidated by a trigger (any change of a section row deletes its mask); a missing mask is built the first time an entity sweeps the section.
+create or replace function mc.entity_mask_invalidate() returns trigger language plpgsql as $$
 begin
-    -- 1. the solidity masks of the sections the active entities sweep (missing or stale ones are (re)built)
-    perform mc.entity_build_mask(s.dimension, s.cx, s.cz, s.sy)
-    from (select distinct a.dimension, qx as cx, qz as cz, qy as sy
-            from mc.entity_active(p_tick) a
-            cross join lateral mc.entity_sweep(a.x, a.y, a.z, a.vx, a.vy, a.vz, a.hw, a.h) w
-            cross join lateral generate_series(w.x0 >> 4, w.x1 >> 4) qx
-            cross join lateral generate_series(w.y0 >> 4, w.y1 >> 4) qy
-            cross join lateral generate_series(w.z0 >> 4, w.z1 >> 4) qz) s
-    left join mc.chunk ch on ch.dimension = s.dimension and ch.cx = s.cx and ch.cz = s.cz
-    left join mc.solid_mask m on m.dimension = s.dimension and m.cx = s.cx and m.cz = s.cz and m.sy = s.sy
-    where m.ver is distinct from coalesce(ch.version, -1);
+    if tg_op = 'DELETE' then delete from mc.solid_mask where dimension = old.dimension and cx = old.cx and cz = old.cz and sy = old.sy;
+    else delete from mc.solid_mask where dimension = new.dimension and cx = new.cx and cz = new.cz and sy = new.sy; end if;
+    return null;
+end $$;
+drop trigger if exists entity_mask_invalidate on mc.chunk_section;
+create trigger entity_mask_invalidate after insert or update or delete on mc.chunk_section for each row execute function mc.entity_mask_invalidate();
 
-    -- 2. one statement: sweep, find the solid cells, move, apply drag, update the rows
+-- One tick for all awake entities.  Step 1 is ONE read-only statement (sweep, solid cells, move, drag) that returns arrays; step 2 updates through unnest, which
+-- gives primary-key probes whatever the row estimates are (a join against the whole table was 25 ms of sequential scanning at 10,000 entities).
+-- An entity that sweeps a section whose mask is not built yet waits this tick; the masks of the missing sections are built after the update.
+create or replace function mc.entity_physics_ids(p_tick bigint) returns int[] language plpgsql volatile as $$
+declare ids int[]; nxs float8[]; nys float8[]; nzs float8[]; vxs float8[]; vys float8[]; vzs float8[]; ogs boolean[]; deeps boolean[]; ncxs int[]; nczs int[];
+        m_dim text[]; m_cx int[]; m_cz int[]; m_sy int[]; n int := 0;
+begin
     with a as materialized (
         select a.*, w.x0, w.x1, w.y0, w.y1, w.z0, w.z1
         from mc.entity_active(p_tick) a
         cross join lateral mc.entity_sweep(a.x, a.y, a.z, a.vx, a.vy, a.vz, a.hw, a.h) w
-    ), hits as (
-        select a.id, qx as sx, qy as sy, qz as sz, m.mask, m.slippery, a.x0, a.x1, a.y0, a.y1, a.z0, a.z1
+    ), probes as (
+        -- every section of the swept box, probed by primary key (a correlated LIMIT 1 keeps the planner from turning the probe into a scan)
+        select a.id, a.dimension, s.qx, s.qy, s.qz, m.mask, m.slippery, m.solid_cnt, m.dimension is null as unknown, a.x0, a.x1, a.y0, a.y1, a.z0, a.z1
         from a
-        cross join lateral generate_series(a.x0 >> 4, a.x1 >> 4) qx
-        cross join lateral generate_series(a.y0 >> 4, a.y1 >> 4) qy
-        cross join lateral generate_series(a.z0 >> 4, a.z1 >> 4) qz
-        join mc.solid_mask m on m.dimension = a.dimension and m.cx = qx and m.cz = qz and m.sy = qy
-        where m.solid_cnt > 0
+        cross join lateral generate_series(0, ((a.x1 >> 4) - (a.x0 >> 4) + 1) * ((a.y1 >> 4) - (a.y0 >> 4) + 1) * ((a.z1 >> 4) - (a.z0 >> 4) + 1) - 1) k
+        cross join lateral (select (a.x0 >> 4) + k % ((a.x1 >> 4) - (a.x0 >> 4) + 1) as qx,
+                                   (a.y0 >> 4) + (k / ((a.x1 >> 4) - (a.x0 >> 4) + 1)) % ((a.y1 >> 4) - (a.y0 >> 4) + 1) as qy,
+                                   (a.z0 >> 4) + k / (((a.x1 >> 4) - (a.x0 >> 4) + 1) * ((a.y1 >> 4) - (a.y0 >> 4) + 1)) as qz) s
+        left join lateral (select mm.mask, mm.slippery, mm.solid_cnt, mm.dimension from mc.solid_mask mm
+                            where mm.dimension = a.dimension and mm.cx = s.qx and mm.cz = s.qz and mm.sy = s.qy limit 1) m on true
+    ), miss as (
+        select distinct dimension, qx, qy, qz from probes where unknown
+    ), unk as (
+        select distinct id from probes where unknown
     ), cells as (
-        select h.id, bx, by, bz, h.slippery
-        from hits h
-        cross join lateral generate_series(greatest(h.x0, h.sx * 16), least(h.x1, h.sx * 16 + 15)) bx
-        cross join lateral generate_series(greatest(h.y0, h.sy * 16), least(h.y1, h.sy * 16 + 15)) by
-        cross join lateral generate_series(greatest(h.z0, h.sz * 16), least(h.z1, h.sz * 16 + 15)) bz
-        where get_bit(h.mask, ((by & 15) * 16 + (bz & 15)) * 16 + (bx & 15)) = 1
+        -- the solid cells inside the swept box: one counter per hit, coordinates by division (cross joins of series plan badly)
+        select h.id, c.bx, c.by, c.bz, h.slippery
+        from probes h
+        cross join lateral (select greatest(h.x0, h.qx * 16) as x0, least(h.x1, h.qx * 16 + 15) as x1, greatest(h.y0, h.qy * 16) as y0, least(h.y1, h.qy * 16 + 15) as y1,
+                                   greatest(h.z0, h.qz * 16) as z0, least(h.z1, h.qz * 16 + 15) as z1) r
+        cross join lateral generate_series(0, (r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1) * (r.z1 - r.z0 + 1) - 1) k
+        cross join lateral (select r.x0 + k % (r.x1 - r.x0 + 1) as bx, r.y0 + (k / (r.x1 - r.x0 + 1)) % (r.y1 - r.y0 + 1) as by,
+                                   r.z0 + k / ((r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1)) as bz) c
+        where not h.unknown and h.solid_cnt > 0 and get_bit(h.mask, ((c.by & 15) * 16 + (c.bz & 15)) * 16 + (c.bx & 15)) = 1
     ), bl as (
         select id, array_agg(bx) as bxs, array_agg(by) as bys, array_agg(bz) as bzs, bool_or(slippery) as slip from cells group by id
     ), moved as (
         select a.id, a.kind, a.gx, a.gz, f.*, false as slip from a cross join lateral mc.entity_move_free(a.x, a.y, a.z, a.vx, a.vy, a.vz) f
-         where not exists (select 1 from bl where bl.id = a.id)
+         where not exists (select 1 from bl where bl.id = a.id) and not exists (select 1 from unk where unk.id = a.id)
         union all
         select a.id, a.kind, a.gx, a.gz, f.*, bl.slip
           from a join bl on bl.id = a.id
           cross join lateral mc.entity_move(a.x, a.y, a.z, a.vx, a.vy, a.vz, a.hw, a.h, bl.bxs, bl.bys, bl.bzs) f
+         where not exists (select 1 from unk where unk.id = a.id)
     ), fin as (
-        select m.id, m.nx, m.ny, m.nz, m.og,
+        select m.id, m.nx, m.ny, m.nz, m.og, m.kind, m.gx, m.gz,
                case when m.kind = 'item' then m.nvx * m.fr else m.nvx end as fvx,
                case when m.kind = 'item' and m.og and m.nvy * 0.98::real::float8 < 0 then m.nvy * 0.98::real::float8 * -0.5 else m.nvy * 0.98::real::float8 end as fvy,
-               case when m.kind = 'item' then m.nvz * m.fr else m.nvz end as fvz,
-               m.kind, m.gx, m.gz
+               case when m.kind = 'item' then m.nvz * m.fr else m.nvz end as fvz
         from (select mv.*, case when mv.og then (case when mv.slip then mc.cell_friction('minecraft:overworld', floor(mv.nx)::int, floor(mv.ny - 0.500001)::int, floor(mv.nz)::int) else 0.6::real end * 0.98::real)::float8
                                 else 0.98::real::float8 end as fr
                 from moved mv) m
+    ), fin2 as (
+        select f.*, f.og and ((f.kind = 'item' and f.fvx * f.fvx + f.fvz * f.fvz <= 1e-7) or (f.kind = 'mob' and f.gx = 0 and f.gz = 0)) as deep from fin f
     )
-    update mc.entity e set
-        x = f.nx, y = f.ny, z = f.nz,
-        vx = case when f.deep and f.kind = 'item' then 0 else f.fvx end, vy = f.fvy, vz = case when f.deep and f.kind = 'item' then 0 else f.fvz end,
-        on_ground = f.og, phys_tick = p_tick, deep_sleep = f.deep,
-        cx = case when floor(f.nx / 16)::int = e.cx then e.cx else floor(f.nx / 16)::int end,
-        cz = case when floor(f.nz / 16)::int = e.cz then e.cz else floor(f.nz / 16)::int end
-    from (select fin.*, fin.og and ((fin.kind = 'item' and fin.fvx * fin.fvx + fin.fvz * fin.fvz <= 1e-7)
-                                    or (fin.kind = 'mob' and fin.gx = 0 and fin.gz = 0)) as deep from fin) f
-    where e.id = f.id;
-    get diagnostics n = row_count;
-    return n;
+    select (select array_agg(f.id) from fin2 f), (select array_agg(f.nx) from fin2 f), (select array_agg(f.ny) from fin2 f), (select array_agg(f.nz) from fin2 f),
+           (select array_agg(case when f.deep and f.kind = 'item' then 0 else f.fvx end) from fin2 f), (select array_agg(f.fvy) from fin2 f),
+           (select array_agg(case when f.deep and f.kind = 'item' then 0 else f.fvz end) from fin2 f),
+           (select array_agg(f.og) from fin2 f), (select array_agg(f.deep) from fin2 f),
+           (select array_agg(floor(f.nx / 16)::int) from fin2 f), (select array_agg(floor(f.nz / 16)::int) from fin2 f),
+           (select array_agg(dimension) from miss), (select array_agg(qx) from miss), (select array_agg(qz) from miss), (select array_agg(qy) from miss)
+      into ids, nxs, nys, nzs, vxs, vys, vzs, ogs, deeps, ncxs, nczs, m_dim, m_cx, m_cz, m_sy;
+
+    if ids is not null then
+        update mc.entity e set x = u.nx, y = u.ny, z = u.nz, vx = u.vx, vy = u.vy, vz = u.vz, on_ground = u.og, phys_tick = p_tick, deep_sleep = u.deep, cx = u.ncx, cz = u.ncz
+          from unnest(ids, nxs, nys, nzs, vxs, vys, vzs, ogs, deeps, ncxs, nczs) as u(id, nx, ny, nz, vx, vy, vz, og, deep, ncx, ncz)
+         where e.id = u.id;
+        get diagnostics n = row_count;
+    end if;
+    if m_dim is not null then
+        perform mc.entity_build_mask(m_dim[i], m_cx[i], m_cz[i], m_sy[i]) from generate_series(1, cardinality(m_dim)) i;
+    end if;
+    return coalesce(ids, '{}'::int[]);
 end $$;
+-- the same, returning only how many entities were processed
+create or replace function mc.entity_physics(p_tick bigint) returns int language sql volatile as $$ select cardinality(mc.entity_physics_ids(p_tick)) $$;
 
 -- A block changed: entities in deep sleep next to it wake up.  Their gravity then accumulates from the last 4-tick phase boundary, as it would have in vanilla.
 create or replace function mc.entity_wake_on_block_event() returns trigger language plpgsql as $$

@@ -43,8 +43,8 @@ begin
 end $$;
 
 -- The integer cell box swept by an entity moving by (vx, vy, vz): [x0..x1] x [y0..y1] x [z0..z1], with the 1e-7 epsilon of vanilla's collision code.
-create or replace function mc.entity_sweep(x float8, y float8, z float8, vx float8, vy float8, vz float8, hw float8, h float8,
-                                           out x0 int, out x1 int, out y0 int, out y1 int, out z0 int, out z1 int) language sql immutable parallel safe as $$
+create or replace function mc.entity_sweep(x float8, y float8, z float8, vx float8, vy float8, vz float8, hw float8, h float8)
+returns table (x0 int, x1 int, y0 int, y1 int, z0 int, z1 int) language sql immutable parallel safe rows 1 as $$   -- a set-returning SQL function is inlined into the query (OUT-parameter record functions are not: 23 us per call)
   select floor(least(x - hw, x - hw + vx) + 1e-7)::int, floor(greatest(x + hw, x + hw + vx) - 1e-7)::int,
          floor(least(y, y + vy) + 1e-7)::int,           floor(greatest(y + h, y + h + vy) - 1e-7)::int,
          floor(least(z - hw, z - hw + vz) + 1e-7)::int, floor(greatest(z + hw, z + hw + vz) - 1e-7)::int $$;
