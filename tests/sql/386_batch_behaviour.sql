@@ -250,6 +250,11 @@ select t.eq('a small game frame on a compressed connection gets a data length of
 delete from net.outbox where conn_id = 31;
 insert into mc.play_out (conn_id, data) values (31, proto.frame(mc.pid('keep_alive'), decode(repeat('ab', 1000), 'hex')));
 select mc.server_tick_batched();
-select t.is_true('a frame over the threshold cannot be compressed (no deflate in SQL): the connection is closed and the error recorded',
-                 (select closing from net.conn where conn_id = 31) and exists (select 1 from mc.error_log where step = 'reframe'));
+-- (until sql/440 there was no deflate in SQL and such a frame closed the connection; same expectations as tests/sql/420, through the batched tick)
+select t.is_true('a frame over the threshold is compressed: the connection stays open and no error is recorded',
+                 not (select closing from net.conn where conn_id = 31) and not exists (select 1 from mc.error_log where step = 'reframe'));
+select t.eq('...as [packet length][data length][zlib]: the data length is the id and the 1000 body bytes',
+            (select (proto.varint_read(d, (proto.varint_read(d, 0)).nxt)).val from (select string_agg(data, ''::bytea order by seq) d from net.outbox where conn_id = 31) q),
+            octet_length(proto.varint(mc.pid('keep_alive'))) + 1000);
+select t.is_true('...and the frame is far smaller than the packet', (select octet_length(string_agg(data, ''::bytea)) < 100 from net.outbox where conn_id = 31));
 select t.fresh();
