@@ -34,8 +34,11 @@ returns bytea language sql stable parallel safe as $$
 
 ------------------------------------------------------------------------------------------------ the interest relation (which chunk cells each player sees)
 -- Only players that crossed a chunk border (or joined, or changed the view distance) are touched.  Entities appear in / disappear from their view as cells enter / leave it.
-create or replace function mc.entity_viewers_refresh(p_tick bigint) returns int language plpgsql volatile as $$
+create or replace function mc.entity_viewers_refresh(p_tick bigint) returns int language plpgsql volatile
+set enable_hashjoin = off set enable_mergejoin = off as $$      -- the joins here are a few hundred array rows against tables of 200,000 rows: primary-key probes, never scans
 declare vr int := mc.prop_int('view-distance'); cc int[]; ncx int[]; ncz int[]; ocx int[]; ocz int[]; n int := 0;
+        rm_conn int[]; rm_cx int[]; rm_cz int[]; rm_ox int[]; rm_oz int[];      -- cells that left a view (and the old centre of that view)
+        ad_conn int[]; ad_cx int[]; ad_cz int[]; ad_nx int[]; ad_nz int[];      -- cells that entered a view (and the new centre)
 begin
     with gone as (delete from mc.entity_viewer_cell vc where not exists (select 1 from mc.player pl where pl.conn_id = vc.conn_id) returning conn_id)
     delete from mc.entity_cell_viewer v using gone g where v.conn_id = g.conn_id;
@@ -44,36 +47,39 @@ begin
      where pl.conn_id is not null and (vc.conn_id is null or vc.cx <> pl.chunk_x or vc.cz <> pl.chunk_z or vc.r <> vr);
     if cc is null then return 0; end if;
     n := cardinality(cc);
-    -- what leaves the view: the entities in the cells that left it, within their tracking range of the OLD centre, are removed
-    insert into mc.play_out (conn_id, data)
-    select q.conn, mc.pkt_remove_entities(array_agg(q.eid order by q.eid))
-      from (select ch.conn, e.id as eid
-              from unnest(cc, ncx, ncz, ocx, ocz) ch(conn, ncx, ncz, ocx, ocz)
-              cross join lateral generate_series(-vr, vr) dx cross join lateral generate_series(-vr, vr) dz
-              join mc.entity e on e.cx = ch.ocx + dx and e.cz = ch.ocz + dz and e.last_sent_tick > 0
-              join mc.entity_type_param p on p.type = e.type
-             where ch.ocx is not null and (abs(ch.ocx + dx - ch.ncx) > vr or abs(ch.ocz + dz - ch.ncz) > vr)
-               and greatest(abs(ch.ocx - e.cx), abs(ch.ocz - e.cz)) <= least(vr, p.tracking_chunks)) q
-     group by q.conn order by q.conn;
-    -- what enters the view: the entities in the new cells within their tracking range of the NEW centre appear
-    insert into mc.play_out (conn_id, data)
-    select q.conn, string_agg(q.pkt, '\x'::bytea order by q.eid)
-      from (select ch.conn, e.id as eid, mc.epkt_appear(e.id, e.uuid, e.type, e.type_id, e.x, e.y, e.z, e.vx, e.vy, e.vz, e.yaw, e.pitch, e.data) as pkt
-              from unnest(cc, ncx, ncz, ocx, ocz) ch(conn, ncx, ncz, ocx, ocz)
-              cross join lateral generate_series(-vr, vr) dx cross join lateral generate_series(-vr, vr) dz
-              join mc.entity e on e.cx = ch.ncx + dx and e.cz = ch.ncz + dz and e.last_sent_tick > 0
-              join mc.entity_type_param p on p.type = e.type
-             where (ch.ocx is null or abs(ch.ncx + dx - ch.ocx) > vr or abs(ch.ncz + dz - ch.ocz) > vr)
-               and greatest(abs(ch.ncx - e.cx), abs(ch.ncz - e.cz)) <= least(vr, p.tracking_chunks)) q
-     group by q.conn order by q.conn;
-    -- the cell relation itself
-    delete from mc.entity_cell_viewer v using unnest(cc, ncx, ncz, ocx, ocz) ch(conn, ncx, ncz, ocx, ocz), generate_series(-vr, vr) dx, generate_series(-vr, vr) dz
-     where ch.ocx is not null and v.conn_id = ch.conn and v.cx = ch.ocx + dx and v.cz = ch.ocz + dz and (abs(ch.ocx + dx - ch.ncx) > vr or abs(ch.ocz + dz - ch.ncz) > vr);
-    insert into mc.entity_cell_viewer (cx, cz, conn_id)
-    select ch.ncx + dx, ch.ncz + dz, ch.conn
-      from unnest(cc, ncx, ncz, ocx, ocz) ch(conn, ncx, ncz, ocx, ocz), generate_series(-vr, vr) dx, generate_series(-vr, vr) dz
-     where ch.ocx is null or abs(ch.ncx + dx - ch.ocx) > vr or abs(ch.ncz + dz - ch.ocz) > vr
-    on conflict do nothing;
+    -- the rings first (a few dozen cells per crossing player), as arrays: the planner then knows how small the driving side is
+    select array_agg(q.conn), array_agg(q.cx), array_agg(q.cz), array_agg(q.ox), array_agg(q.oz) into rm_conn, rm_cx, rm_cz, rm_ox, rm_oz
+      from (select ch.conn, ch.ocx + dx as cx, ch.ocz + dz as cz, ch.ocx as ox, ch.ocz as oz
+              from unnest(cc, ncx, ncz, ocx, ocz) ch(conn, ncx, ncz, ocx, ocz), generate_series(-vr, vr) dx, generate_series(-vr, vr) dz
+             where ch.ocx is not null and (abs(ch.ocx + dx - ch.ncx) > vr or abs(ch.ocz + dz - ch.ncz) > vr)) q;
+    select array_agg(q.conn), array_agg(q.cx), array_agg(q.cz), array_agg(q.nx), array_agg(q.nz) into ad_conn, ad_cx, ad_cz, ad_nx, ad_nz
+      from (select ch.conn, ch.ncx + dx as cx, ch.ncz + dz as cz, ch.ncx as nx, ch.ncz as nz
+              from unnest(cc, ncx, ncz, ocx, ocz) ch(conn, ncx, ncz, ocx, ocz), generate_series(-vr, vr) dx, generate_series(-vr, vr) dz
+             where ch.ocx is null or abs(ch.ncx + dx - ch.ocx) > vr or abs(ch.ncz + dz - ch.ocz) > vr) q;
+    if rm_conn is not null then
+        -- what leaves the view: the entities in the cells that left it, within their tracking range of the OLD centre, are removed
+        insert into mc.play_out (conn_id, data)
+        select q.conn, mc.pkt_remove_entities(array_agg(q.eid order by q.eid))
+          from (select r.conn, e.id as eid
+                  from unnest(rm_conn, rm_cx, rm_cz, rm_ox, rm_oz) r(conn, cx, cz, ox, oz)
+                  join mc.entity e on e.cx = r.cx and e.cz = r.cz and e.last_sent_tick > 0
+                  join mc.entity_type_param p on p.type = e.type
+                 where greatest(abs(r.ox - e.cx), abs(r.oz - e.cz)) <= least(vr, p.tracking_chunks)) q
+         group by q.conn order by q.conn;
+        delete from mc.entity_cell_viewer v using unnest(rm_conn, rm_cx, rm_cz) r(conn, cx, cz) where v.cx = r.cx and v.cz = r.cz and v.conn_id = r.conn;
+    end if;
+    if ad_conn is not null then
+        -- what enters the view: the entities in the new cells within their tracking range of the NEW centre appear
+        insert into mc.play_out (conn_id, data)
+        select q.conn, string_agg(q.pkt, '\x'::bytea order by q.eid)
+          from (select a.conn, e.id as eid, mc.epkt_appear(e.id, e.uuid, e.type, e.type_id, e.x, e.y, e.z, e.vx, e.vy, e.vz, e.yaw, e.pitch, e.data) as pkt
+                  from unnest(ad_conn, ad_cx, ad_cz, ad_nx, ad_nz) a(conn, cx, cz, nx, nz)
+                  join mc.entity e on e.cx = a.cx and e.cz = a.cz and e.last_sent_tick > 0
+                  join mc.entity_type_param p on p.type = e.type
+                 where greatest(abs(a.nx - e.cx), abs(a.nz - e.cz)) <= least(vr, p.tracking_chunks)) q
+         group by q.conn order by q.conn;
+        insert into mc.entity_cell_viewer (cx, cz, conn_id) select a.cx, a.cz, a.conn from unnest(ad_conn, ad_cx, ad_cz) a(conn, cx, cz) on conflict do nothing;
+    end if;
     insert into mc.entity_viewer_cell (conn_id, cx, cz, r)
     select ch.conn, ch.ncx, ch.ncz, vr from unnest(cc, ncx, ncz) ch(conn, ncx, ncz)
     on conflict (conn_id) do update set cx = excluded.cx, cz = excluded.cz, r = excluded.r;
@@ -93,7 +99,7 @@ begin
     ), fan as (
         insert into mc.play_out (conn_id, data)
         select v.conn_id, string_agg(ne.pkt, '\x'::bytea order by ne.id)
-          from ne join mc.entity_cell_viewer v on v.cx = ne.cx and v.cz = ne.cz
+          from ne cross join lateral (select vv.conn_id from mc.entity_cell_viewer vv where vv.cx = ne.cx and vv.cz = ne.cz offset 0) v     -- offset 0: an index probe per entity, not a scan of the whole relation
           join mc.entity_viewer_cell vc on vc.conn_id = v.conn_id and greatest(abs(vc.cx - ne.cx), abs(vc.cz - ne.cz)) <= ne.trk
          group by v.conn_id order by v.conn_id returning 1
     ), upd as (
@@ -138,13 +144,13 @@ begin
                         when f.rot_ch then mc.pkt_move_entity_rot(f.id, f.yaw, f.pitch, f.on_ground)
                         else '\x'::bytea end
                    || case when f.kind = 'mob' and f.rot_ch then mc.pkt_rotate_head(f.id, f.yaw) else '\x'::bytea end as pkt,
-                   mc.epkt_appear(f.id, f.uuid, f.type, f.type_id, f.x, f.y, f.z, f.vx, f.vy, f.vz, f.yaw, f.pitch, f.data) as appear
+                   case when (f.cx, f.cz) <> (f.sent_cx, f.sent_cz) then mc.epkt_appear(f.id, f.uuid, f.type, f.type_id, f.x, f.y, f.z, f.vx, f.vy, f.vz, f.yaw, f.pitch, f.data) end as appear     -- only for entities that changed chunk
               from f
         ), vn as materialized (       -- viewers of the new cell
-            select pk.id, v.conn_id from pk join mc.entity_cell_viewer v on v.cx = pk.cx and v.cz = pk.cz
+            select pk.id, v.conn_id from pk cross join lateral (select vv.conn_id from mc.entity_cell_viewer vv where vv.cx = pk.cx and vv.cz = pk.cz offset 0) v
               join mc.entity_viewer_cell vc on vc.conn_id = v.conn_id and greatest(abs(vc.cx - pk.cx), abs(vc.cz - pk.cz)) <= pk.trk
         ), vo as materialized (       -- viewers of the old cell, only for entities that changed cell
-            select pk.id, v.conn_id from pk join mc.entity_cell_viewer v on v.cx = pk.sent_cx and v.cz = pk.sent_cz
+            select pk.id, v.conn_id from pk cross join lateral (select vv.conn_id from mc.entity_cell_viewer vv where vv.cx = pk.sent_cx and vv.cz = pk.sent_cz offset 0) v
               join mc.entity_viewer_cell vc on vc.conn_id = v.conn_id and greatest(abs(vc.cx - pk.sent_cx), abs(vc.cz - pk.sent_cz)) <= pk.trk
              where (pk.cx, pk.cz) <> (pk.sent_cx, pk.sent_cz)
         ), out_ as (
@@ -181,7 +187,9 @@ declare t bigint := coalesce(p_tick, (select game_time from mc.game_state limit 
         nsent int; npick int;
 begin
     perform mc.entity_viewers_refresh(t);
-    perform mc.entity_ai(t); perform mc.entity_spawner(t); perform mc.entity_despawn(t);
+    perform mc.entity_ai(t);
+    if coalesce(current_setting('dbcraft.entity_spawner', true), 'on') <> 'off' then perform mc.entity_spawner(t); end if;       -- a switch for benchmarks and for servers that do not want natural spawning
+    perform mc.entity_despawn(t);
     t1 := clock_timestamp();
     ids := mc.entity_physics_ids(t);
     t2 := clock_timestamp();
@@ -191,6 +199,7 @@ begin
     t4 := clock_timestamp();
     insert into mc.entity_tick_log (tick, awake, moved, sent, packets, ms_physics, ms_ai, ms_tracker, ms_pickup, ms_total)
     values (t, cardinality(ids), nsent, nsent, 0, extract(epoch from t2 - t1) * 1000, extract(epoch from t1 - t0) * 1000, extract(epoch from t3 - t2) * 1000, extract(epoch from t4 - t3) * 1000, extract(epoch from t4 - t0) * 1000)
-    on conflict (tick) do update set awake = excluded.awake, ms_total = excluded.ms_total;
+    on conflict (tick) do update set awake = excluded.awake, moved = excluded.moved, sent = excluded.sent, packets = excluded.packets, ms_physics = excluded.ms_physics, ms_ai = excluded.ms_ai,
+                                     ms_tracker = excluded.ms_tracker, ms_pickup = excluded.ms_pickup, ms_total = excluded.ms_total;
     return cardinality(ids);
 end $$;
