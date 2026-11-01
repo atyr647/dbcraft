@@ -60,6 +60,15 @@ declare
     vals     int[];
     ids      int[];
     words    bigint[];
+    lw       bigint;
+    hmb      smallint[];
+    hmn      smallint[];
+    hws      smallint[];
+    hdirty   boolean;
+    oflags   boolean[];
+    nflags   boolean[];
+    col      int;
+    val      int;
     bc       int;
     fc       int;
     changed  int := 0;
@@ -98,8 +107,28 @@ begin
     nb := case when is_global then 16 else mc.block_bits_for(cardinality(pal)) end;
     if bits = 0 and nb = 0 then return 0; end if;     -- single value, every edit sets that same value
 
-    if nb = bits then
-        ---------------------------------------------------------------- fast path: same bit width, rewrite only the touched longs
+    if nb = bits and bits <> 0 and cardinality(p_idx) <= 48 then
+        ---------------------------------------------------------------- few edits, same bit width: overwrite just the affected longs in place (the section is never unpacked)
+        vpl := 64 / bits;
+        msk := (1::bigint << bits) - 1;
+        for k in 1 .. cardinality(p_idx) loop
+            i := p_idx[k];
+            nm := cn[array_position(dn, p_names[k])];
+            pos := case when is_global then mc.state_id(nm) else array_position(pal, nm) - 1 end;
+            li := (i / vpl) * 8;                                   -- byte offset of the long holding this entry
+            pp := (i % vpl) * bits;
+            lw := proto.i64_read(data, li);
+            ent := ((lw >> pp) & msk)::int;
+            if ent = pos then continue; end if;
+            old := case when is_global then mc.state_name(ent) else pal[ent + 1] end;
+            data := overlay(data placing int8send((lw & ~(msk << pp)) | (pos::bigint << pp)) from li + 1 for 8);
+            bc := bc + (case when mc.is_air(nm) then 0 else 1 end) - (case when mc.is_air(old) then 0 else 1 end);
+            fc := fc + (case when mc.has_fluid(nm) then 1 else 0 end) - (case when mc.has_fluid(old) then 1 else 0 end);
+            changed := changed + 1;
+            ev_idx[changed] := i; ev_old[changed] := old; ev_new[changed] := nm;
+        end loop;
+    elsif nb = bits then
+        ---------------------------------------------------------------- many edits, same bit width: unpack the longs once, edit, write back
         vpl := 64 / bits;
         msk := (1::bigint << bits) - 1;
         words := array(select proto.i64_read(data, w * 8) from generate_series(0, (4096 + vpl - 1) / vpl - 1) w order by w);
@@ -116,7 +145,7 @@ begin
             bc := bc + (case when mc.is_air(nm) then 0 else 1 end) - (case when mc.is_air(old) then 0 else 1 end);
             fc := fc + (case when mc.has_fluid(nm) then 1 else 0 end) - (case when mc.has_fluid(old) then 1 else 0 end);
             changed := changed + 1;
-            ev_idx := ev_idx || i; ev_old := ev_old || old; ev_new := ev_new || nm;
+            ev_idx[changed] := i; ev_old[changed] := old; ev_new[changed] := nm;
         end loop;
         data := (select string_agg(int8send(w), ''::bytea order by o) from unnest(words) with ordinality t(w, o));
     else
@@ -137,7 +166,7 @@ begin
             bc := bc + (case when mc.is_air(nm) then 0 else 1 end) - (case when mc.is_air(old) then 0 else 1 end);
             fc := fc + (case when mc.has_fluid(nm) then 1 else 0 end) - (case when mc.has_fluid(old) then 1 else 0 end);
             changed := changed + 1;
-            ev_idx := ev_idx || i; ev_old := ev_old || old; ev_new := ev_new || nm;
+            ev_idx[changed] := i; ev_old[changed] := old; ev_new[changed] := nm;
         end loop;
         data := mc.pack_longs(vals, nb);
         bits := nb;
@@ -149,7 +178,24 @@ begin
     values (p_dim, p_cx, p_cz, p_sy, bc, fc, pal, bits, data, sec.biome_palette, sec.biome_bits, sec.biome_data)
     on conflict (dimension, cx, cz, sy) do update
        set block_count = excluded.block_count, fluid_count = excluded.fluid_count, palette = excluded.palette, bits = excluded.bits, data = excluded.data;
-    update mc.chunk c set version = c.version + 1, dirty = true where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
+    -- heightmaps are kept exact incrementally (a chunk flagged hm_dirty or without heightmaps is recomputed in full by mc.ensure_chunk_current)
+    select c.hm_motion_blocking, c.hm_motion_blocking_no_leaves, c.hm_world_surface, c.hm_dirty into hmb, hmn, hws, hdirty
+      from mc.chunk c where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
+    if hws is not null and not hdirty then
+        for k in 1 .. changed loop
+            i := ev_idx[k];
+            col := (i & 15) + 16 * ((i >> 4) & 15);
+            val := p_sy * 16 + (i >> 8) + 1 - d.min_y;
+            oflags := mc.heightmap_flags(ev_old[k]);
+            nflags := mc.heightmap_flags(ev_new[k]);
+            hws[col + 1] := mc.hm_step(hws[col + 1], val, oflags[1], nflags[1], p_dim, p_cx, p_cz, col, 1, d.min_y);
+            hmb[col + 1] := mc.hm_step(hmb[col + 1], val, oflags[2], nflags[2], p_dim, p_cx, p_cz, col, 2, d.min_y);
+            hmn[col + 1] := mc.hm_step(hmn[col + 1], val, oflags[3], nflags[3], p_dim, p_cx, p_cz, col, 3, d.min_y);
+        end loop;
+    end if;
+    update mc.chunk c set version = c.version + 1, dirty = true,
+                          hm_world_surface = hws, hm_motion_blocking = hmb, hm_motion_blocking_no_leaves = hmn
+     where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
     insert into mc.block_event (dimension, x, y, z, old_state, new_state)
     select p_dim, p_cx * 16 + (e.i & 15), p_sy * 16 + (e.i >> 8), p_cz * 16 + ((e.i >> 4) & 15), e.o, e.n
       from unnest(ev_idx, ev_old, ev_new) e(i, o, n);
@@ -209,7 +255,7 @@ begin
                         array[nm], 0, '\x', array[d.default_biome])
                 on conflict (dimension, cx, cz, sy) do update
                    set block_count = excluded.block_count, fluid_count = excluded.fluid_count, palette = excluded.palette, bits = 0, data = '\x';
-                update mc.chunk c set version = c.version + 1, dirty = true where c.dimension = p_dim and c.cx = v_cx and c.cz = v_cz;
+                update mc.chunk c set version = c.version + 1, dirty = true, hm_dirty = true where c.dimension = p_dim and c.cx = v_cx and c.cz = v_cz;
                 insert into mc.block_event (kind, dimension, x, y, z, old_state, new_state) values ('section', p_dim, v_cx * 16, v_sy * 16, v_cz * 16, '*', nm);
             else
                 idxs := array(select mc.section_idx(x, y, z) from generate_series(a_x, b_x) x, generate_series(a_y, b_y) y, generate_series(a_z, b_z) z);

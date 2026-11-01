@@ -87,12 +87,14 @@ declare
     d    mc.dimension%rowtype;
     c    mc.chunk%rowtype;
     secs bytea;
+    empty bytea;
 begin
     select * into d from mc.dimension where name = p_dim;
     select * into c from mc.chunk where dimension = p_dim and cx = p_cx and cz = p_cz;
     if not found then return null; end if;
     if c.hm_world_surface is null then raise exception 'chunk %,% has no heightmaps; call mc.ensure_chunk_current first', p_cx, p_cz; end if;
-    select string_agg(case when s.sy is null then mc.empty_section_wire(p_dim) else mc.section_wire(s) end, ''::bytea order by g)
+    empty := mc.empty_section_wire(p_dim);          -- once, not once per missing section
+    select string_agg(case when s.sy is null then empty else mc.section_wire(s) end, ''::bytea order by g)
       into secs
       from generate_series(d.min_y >> 4, ((d.min_y + d.height) >> 4) - 1) g
       left join mc.chunk_section s on s.dimension = p_dim and s.cx = p_cx and s.cz = p_cz and s.sy = g;

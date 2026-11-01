@@ -180,3 +180,34 @@ select t.eq('chunk_packet of a chunk that does not exist is NULL', mc.chunk_pack
 \else
   do $d$ begin raise notice 'SKIPPED wire decode checks: no biome data (needs a capture, see tools/load_world_ref.py)'; end $d$;
 \endif
+
+-- ---------------------------------------------------------------- incremental heightmaps stay exact
+-- Edits maintain the three heightmaps themselves (raise on a higher block, rescan one column when its top block goes); after any mix of edits they must equal
+-- a full recompute from the sections.
+insert into mc.dimension (name) values ('dbcraft:e') on conflict do nothing;
+insert into mc.flat_layer (dimension, y, block) values ('dbcraft:e', -64, 'minecraft:bedrock'), ('dbcraft:e', -63, 'minecraft:dirt'), ('dbcraft:e', -62, 'minecraft:dirt'),
+                                                       ('dbcraft:e', -61, 'minecraft:grass_block') on conflict do nothing;
+select mc.generate_flat_area('dbcraft:e', 0, 0, 1, 1) as generated \gset
+select t.eq('four flat chunks generated for the heightmap property test', :generated, 4);
+create temp table hm_edits as
+  select o, (random() * 31)::int as x, -64 + (random() * 70)::int as y, (random() * 31)::int as z,
+         (array['minecraft:stone', 'minecraft:air', 'minecraft:air', 'minecraft:oak_leaves', 'minecraft:short_grass', 'minecraft:glass', 'minecraft:water',
+                'minecraft:pale_moss_carpet', 'minecraft:dirt', 'minecraft:air', 'minecraft:oak_log'])[1 + (random() * 10)::int] as block
+  from generate_series(1, 4000) o;
+select count(*) as done from (select mc.set_block('dbcraft:e', x, y, z, block) from (select * from hm_edits where o <= 2000 order by o) e) q \gset
+select mc.set_blocks('dbcraft:e', array_agg(x order by o), array_agg(y order by o), array_agg(z order by o), array_agg(block order by o)) as batched from hm_edits where o > 2000 \gset
+select t.eq('heightmaps maintained incrementally equal a full recompute (2000 single edits, then one batch of 2000)', count(*)::int, 0)
+from mc.chunk c cross join lateral mc.compute_heightmaps(c.dimension, c.cx, c.cz) h
+where c.dimension = 'dbcraft:e' and (c.hm_world_surface, c.hm_motion_blocking, c.hm_motion_blocking_no_leaves) is distinct from (h.world_surface, h.motion_blocking, h.motion_blocking_no_leaves);
+select t.is_true('...and the edits really moved them (the test is not vacuous)', (select count(*) from mc.chunk c where dimension = 'dbcraft:e' and hm_world_surface <> array_fill(4::smallint, array[256])) = 4);
+select t.is_true('...with MOTION_BLOCKING differing from WORLD_SURFACE somewhere (carpets, grass, leaves)', (select count(*) from mc.chunk c where dimension = 'dbcraft:e' and hm_motion_blocking <> hm_world_surface) > 0);
+-- a whole-section fill cannot maintain them cheaply: it flags a full recompute, which the next send performs
+select mc.fill('dbcraft:e', 0, 32, 0, 15, 47, 15, 'minecraft:stone');
+select t.eq('a whole-section fill flags the heightmaps for a full recompute', (select hm_dirty from mc.chunk where dimension = 'dbcraft:e' and cx = 0 and cz = 0), true);
+select mc.chunk_packet('dbcraft:e', 0, 0) is not null as sent \gset
+select t.eq('after sending, the heightmaps are recomputed and the flag is clear', (select hm_dirty from mc.chunk where dimension = 'dbcraft:e' and cx = 0 and cz = 0), false);
+select t.eq('...the whole-section fill raised every column to the top of that section (y 47 -> 112)', (select hm_world_surface[1] from mc.chunk where dimension = 'dbcraft:e' and cx = 0 and cz = 0), 112::smallint);
+select mc.set_block('dbcraft:e', 5, 47, 5, 'minecraft:air');
+select t.eq('edits after a recompute are incremental again and exact (removing the top block of a filled column)', (select hm_world_surface[1 + 5 + 16 * 5] from mc.chunk where dimension = 'dbcraft:e' and cx = 0 and cz = 0), 111::smallint);
+select t.eq('...equal to a full recompute', count(*)::int, 0) from mc.chunk c cross join lateral mc.compute_heightmaps(c.dimension, c.cx, c.cz) h
+where c.dimension = 'dbcraft:e' and (c.hm_world_surface, c.hm_motion_blocking, c.hm_motion_blocking_no_leaves) is distinct from (h.world_surface, h.motion_blocking, h.motion_blocking_no_leaves);

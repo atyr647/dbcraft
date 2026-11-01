@@ -52,7 +52,9 @@ create table if not exists mc.chunk (
     cz        int    not null,
     status    text   not null default 'minecraft:full',
     version   bigint not null default 0,         -- bumped by every edit; mc.chunk_cache.version must equal it
-    dirty     boolean not null default true,     -- heightmaps and light need recomputing before the next send
+    dirty     boolean not null default true,     -- light needs recomputing before the next send
+    hm_dirty  boolean not null default false,    -- heightmaps need a FULL recompute (set by operations that cannot maintain them, e.g. whole-section fills);
+                                                 -- edits through mc.edit_section keep them exact incrementally
     -- 256 values each, index = x_local + 16 * z_local, value = (top y + 1) - min_y, 0 for an empty column
     hm_motion_blocking           smallint[],
     hm_motion_blocking_no_leaves smallint[],

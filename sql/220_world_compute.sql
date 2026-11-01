@@ -47,7 +47,8 @@ begin
     select d.min_y into p_min_y from mc.dimension d where d.name = p_dim;
     if not found then raise exception 'unknown dimension %', p_dim; end if;
 
-    with secs as (
+    -- MATERIALIZED: otherwise the planner inlines the flag arrays into the per-block expression and recomputes them 4096 times per section
+    with secs as materialized (
         select s.sy, s.bits, s.data,
                case when cardinality(s.palette) > 0 then array(select (mc.heightmap_flags(n))[1] from unnest(s.palette) with ordinality p(n, o) order by o) end as wsf,
                case when cardinality(s.palette) > 0 then array(select (mc.heightmap_flags(n))[2] from unnest(s.palette) with ordinality p(n, o) order by o) end as mbf,
@@ -130,16 +131,62 @@ begin
     end loop;
 end $$;
 
--- Recompute heightmaps and light if the chunk was edited since they were last computed.
-create or replace function mc.ensure_chunk_current(p_dim text, p_cx int, p_cz int) returns boolean language plpgsql volatile as $$
-declare h record;
+-- Height value of the highest block at or below p_from_y in one column that satisfies heightmap kind p_kind (1 = WORLD_SURFACE, 2 = MOTION_BLOCKING,
+-- 3 = MOTION_BLOCKING_NO_LEAVES): (y + 1) - min_y, or 0 when there is none.  Used to re-find a column's top after its top block was removed.
+create or replace function mc.column_top(p_dim text, p_cx int, p_cz int, p_col int, p_from_y int, p_kind int) returns int language plpgsql stable as $$
+declare
+    p_min_y int;
+    s       int;
+    top_ly  int;
+    ly      int;
+    sec     record;
+    ent     int;
+    nm      text;
+    lx      int := p_col & 15;
+    lz      int := p_col >> 4;
 begin
-    perform 1 from mc.chunk c where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz and c.dirty for update;
+    select d.min_y into p_min_y from mc.dimension d where d.name = p_dim;
+    for s in reverse (p_from_y >> 4) .. (p_min_y >> 4) loop
+        select cs.block_count, cs.bits, cs.palette, cs.data into sec from mc.chunk_section cs
+         where cs.dimension = p_dim and cs.cx = p_cx and cs.cz = p_cz and cs.sy = s;
+        if not found or sec.block_count = 0 then continue; end if;
+        top_ly := case when s = p_from_y >> 4 then p_from_y & 15 else 15 end;
+        for ly in reverse top_ly .. 0 loop
+            ent := mc.entry_at(sec.bits, sec.data, (ly << 8) | (lz << 4) | lx);
+            nm := case when cardinality(sec.palette) = 0 then mc.state_name(ent) else sec.palette[ent + 1] end;
+            if (mc.heightmap_flags(nm))[p_kind] then return s * 16 + ly + 1 - p_min_y; end if;
+        end loop;
+    end loop;
+    return 0;
+end $$;
+
+-- One edit's effect on one column's height: a qualifying block above the top raises it; removing the top block (and nothing qualifying replacing it)
+-- re-finds the top below.  Called after the edited section has been written, so a rescan sees the final data.
+create or replace function mc.hm_step(h smallint, val int, oldf boolean, newf boolean, p_dim text, p_cx int, p_cz int, p_col int, p_kind int, p_min_y int)
+returns smallint language plpgsql stable as $$
+begin
+    if newf and val > h then return val::smallint; end if;
+    if oldf and not newf and val = h then return mc.column_top(p_dim, p_cx, p_cz, p_col, val - 2 + p_min_y, p_kind)::smallint; end if;
+    return h;
+end $$;
+
+-- Bring a chunk's derived data up to date: heightmaps in full when they are missing or flagged (hm_dirty), light when anything changed.
+-- Returns false when there was nothing to do.
+create or replace function mc.ensure_chunk_current(p_dim text, p_cx int, p_cz int) returns boolean language plpgsql volatile as $$
+declare
+    c mc.chunk%rowtype;
+    h record;
+begin
+    select * into c from mc.chunk k where k.dimension = p_dim and k.cx = p_cx and k.cz = p_cz for update;
     if not found then return false; end if;
-    select * into h from mc.compute_heightmaps(p_dim, p_cx, p_cz);
-    update mc.chunk c set hm_motion_blocking = h.motion_blocking, hm_motion_blocking_no_leaves = h.motion_blocking_no_leaves,
-                          hm_world_surface = h.world_surface, dirty = false
-     where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
+    if not c.dirty and not c.hm_dirty and c.hm_world_surface is not null then return false; end if;
+    if c.hm_dirty or c.hm_world_surface is null then
+        select * into h from mc.compute_heightmaps(p_dim, p_cx, p_cz);
+        update mc.chunk k set hm_motion_blocking = h.motion_blocking, hm_motion_blocking_no_leaves = h.motion_blocking_no_leaves,
+                              hm_world_surface = h.world_surface, hm_dirty = false
+         where k.dimension = p_dim and k.cx = p_cx and k.cz = p_cz;
+    end if;
     perform mc.compute_light(p_dim, p_cx, p_cz);
+    update mc.chunk k set dirty = false where k.dimension = p_dim and k.cx = p_cx and k.cz = p_cz;
     return true;
 end $$;
