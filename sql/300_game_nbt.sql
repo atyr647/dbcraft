@@ -64,7 +64,7 @@ create or replace function mc.tc_translate(key text, args bytea[] default null, 
 create or replace function mc.tc_translate_strs(key text, args text[]) returns bytea language sql immutable parallel safe as $$
   select proto.cat(array[proto.nbt_list_str('with', args), proto.nbt_str('translate', key)]) $$;
 create or replace function mc.tc_text(txt text, color text default null) returns bytea language sql immutable parallel safe as $$
-  select proto.cat(array[proto.nbt_str('text', txt), case when color is not null then proto.nbt_str('color', color) end]) $$;
+  select proto.cat(array[case when color is not null then proto.nbt_str('color', color) end, proto.nbt_str('text', txt)]) $$;   -- vanilla order: color, then text
 
 -- The clickable, hoverable player name used in join/leave/command messages (key order read from vanilla's bytes).
 create or replace function mc.tc_player(p_uuid uuid, p_name text) returns bytea language sql immutable parallel safe as $$

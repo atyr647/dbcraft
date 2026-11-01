@@ -230,4 +230,10 @@ def dist():
             corrected = len([e for e in c.events if e["name"] == "minecraft:player_position"]) > n0
             print(f"{mode:9s} jump {d:5.1f} blocks -> {'CORRECTED (moved too quickly)' if corrected else 'accepted'}"); c.close()
 
-{"social": social, "movetest": movetest, "moveseq": moveseq, "moveseq2": moveseq2, "moveseq3": moveseq3, "dist": dist}[args.scenario]()
+def kick():
+    """Provoke the real server's 'invalid_player_movement' disconnect (two position packets in one client tick) and save what it sent."""
+    c = Client("K"); time.sleep(2.0); c.tick_end = False; time.sleep(0.3); p = c.pos or (0.5, -60.0, 0.5)
+    c.pos_(p[0] + 0.1, p[1], p[2], 1); c.pos_(p[0] + 0.2, p[1], p[2], 1); time.sleep(0.8)
+    c.save("kick"); print("saved", [e["name"] for e in c.events[-3:]]); c.close()
+
+{"social": social, "movetest": movetest, "moveseq": moveseq, "moveseq2": moveseq2, "moveseq3": moveseq3, "dist": dist, "kick": kick}[args.scenario]()

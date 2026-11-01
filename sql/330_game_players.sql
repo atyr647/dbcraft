@@ -32,7 +32,10 @@ create table if not exists mc.player (
     sent_yaw real not null default 0, sent_pitch real not null default 0, last_sent_tick bigint not null default 0,
     vis_dirty boolean not null default false,          -- changed chunk since the last visibility refresh
     teleport_id int not null default 0, awaiting_teleport int,
-    keepalive_id bigint, keepalive_sent_tick bigint, latency_ms int not null default 0
+    keepalive_id bigint, keepalive_sent_tick bigint, latency_ms int not null default 0,
+    chat_sent int not null default 0,                  -- messages this player has sent (the per-sender `index` of player_chat)
+    chat_recv int not null default 0,                  -- player_chat packets this player has been sent (the per-recipient `globalIndex`)
+    inv_state int not null default 1                   -- container state id: 1 after the join's container_set_content, +1 per server-sent slot update (as observed)
 ) with (fillfactor = 60);
 create unique index if not exists player_entity_idx on mc.player (entity_id) where entity_id is not null;
 create index if not exists player_conn_idx on mc.player (conn_id) where conn_id is not null;
@@ -100,7 +103,7 @@ begin
   update mc.player set conn_id = p_conn, entity_id = nextval('mc.entity_id_seq'), vis_dirty = true,
          chunk_x = floor(x / 16)::int, chunk_z = floor(z / 16)::int,
          sent_qx = mc.quant(x), sent_qy = mc.quant(y), sent_qz = mc.quant(z), sent_yaw = yaw, sent_pitch = pitch,
-         awaiting_teleport = null, keepalive_id = null, keepalive_sent_tick = null
+         awaiting_teleport = null, keepalive_id = null, keepalive_sent_tick = null, inv_state = 1, chat_recv = 0
    where uuid = p_uuid returning * into p;
   -- 1. everyone (including the joiner) gets the join message, then the joiner's tab list entry (vanilla's order)
   insert into mc.play_out (conn_id, data)
