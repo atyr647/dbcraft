@@ -6,6 +6,8 @@
 //!
 //! STATUS: the modules below this line were written without a compiler (`cargo build` was not permitted where they were written); the core is tested.
 
+#[cfg(feature = "aesni")]
+pub mod cipher;
 pub mod config;
 pub mod conn;
 pub mod gateway;

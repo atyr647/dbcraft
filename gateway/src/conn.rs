@@ -8,6 +8,10 @@
 use crate::config::Config;
 use crate::mojang::{AuthError, Profile, SessionClient};
 use crate::serverkey::ServerKey;
+// the same interface twice: AES-NI blocks (feature "aesni", the default) or the verified std-only reference cipher
+#[cfg(feature = "aesni")]
+use crate::cipher::Cfb8;
+#[cfg(not(feature = "aesni"))]
 use dbcraft_gateway_core::aes::Cfb8;
 use dbcraft_gateway_core::frame::{inflate_frame, read_varint, FrameSplitter, MAX_FRAME};
 use dbcraft_gateway_core::hash::server_hash;
