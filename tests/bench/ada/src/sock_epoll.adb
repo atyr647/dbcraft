@@ -10,6 +10,7 @@ with System;
 
 procedure Sock_Epoll is
    use type Ada.Real_Time.Time;
+   use type Ada.Execution_Time.CPU_Time;
    package RT renames Ada.Real_Time;
    function Env (N : String; D : Integer) return Integer is (if Exists (N) then Integer'Value (Value (N)) else D);
    Port  : constant Integer := Env ("PORT", 25599);

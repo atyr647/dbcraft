@@ -3,3 +3,5 @@ bin/
 out/
 *.o
 *.ali
+out_*/
+out_sock_*.log

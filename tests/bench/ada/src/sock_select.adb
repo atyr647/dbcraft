@@ -11,6 +11,7 @@ with GNAT.Sockets;          use GNAT.Sockets;
 
 procedure Sock_Select is
    use type Ada.Real_Time.Time;
+   use type Ada.Execution_Time.CPU_Time;
    use type Ada.Real_Time.Time_Span;
    package RT renames Ada.Real_Time;
    function Env (N : String; D : Integer) return Integer is (if Exists (N) then Integer'Value (Value (N)) else D);
