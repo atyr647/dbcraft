@@ -2,7 +2,7 @@
 
 What was measured, what was changed in `mc.server_tick()`, what did not work, why parallel writers scaled so badly in the database comparison, and where the tick stands.
 All changes are SQL in `sql/430`-`sql/437` (and in-place edits of `sql/220` and `sql/430_chunk_queue.sql`, see "Relation-file churn"); every rewritten function is compared with the original on random states by `tests/sql/431_tick_perf_moves.sql`,
-`tests/sql/432_tick_perf_world.sql` and `tests/sql/437_tick_churn.sql`, and the whole suite (1,207 checks at the last run, 64 + 115 of them these) passes.  The e2e comparison with vanilla (`tests/e2e/run_all.sh`) was **not** run here.
+`tests/sql/432_tick_perf_world.sql` and `tests/sql/437_tick_churn.sql`, and the whole suite (1,380 checks after the last merge, 64 + 115 of them these) passes.  The e2e comparison with vanilla (`tests/e2e/run_all.sh`) was **not** run here.
 
 ## Result
 
@@ -222,6 +222,12 @@ On the standard workloads (no block changes, no keep-alive round) the change is 
 
 On this machine the file system costs the old code 8-10%, not the 30% the tuning worker measured on its trial (another volume and another load: that is not a contradiction), and after the change **there is no measurable difference between the disk and a RAM disk** at 500 players: the file system is no longer
 on the critical path of the tick, so a RAM disk needs no recommendation.  The objective measure is the `strace` count above: 37 -> 0.7 files per tick (0.9 with block activity, where it was 10.9).
+
+**Summary of what was gained.**  Measured under load (load average 3-8 from the other workers' jobs, so absolute times are 10-25% worse than the quiet-machine table at the top; every comparison is interleaved): ticks with block activity **-15% average, -28% p99**; the keep-alive round, **191-362 ms, fixed**
+(slowest tick of a run 245-343 -> 55-81 ms); the standard 500/2,000-player workloads **a wash** (no churn left there); a RAM disk no longer helps.  Most of the churn the tuning worker found (37 -> 1.0 files per tick) had **already been removed by the first merge**; this change took the remainder to 0.7 (0.9 with block activity, where main had 10.9).
+
+**The batched tick (`mc.server_tick_batched`, sql/380-389, another worker's, opt-in).**  It shares `mc.broadcast_block_events`, `mc.deliver_ready_chunks` and `mc.ensure_chunk_current`, so the array rewrites and the lock change apply to it.  The keep-alive bulk fix does **not**: it has its own ingest (`sql/381`) that still runs `net.handle` per packet for the answers (a 500-answer tick costs the same 200-300 ms there),
+and its `_drain` temp table and `truncate` of `mc.kick` / `net.play_inbox` are its own.  Left untouched on purpose; the same UPDATE would apply to its batch step.
 
 **What is not done.**
 
