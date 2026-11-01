@@ -11,7 +11,9 @@ case "${1:-}" in
       mkdir -p "$DATA"; [ "$(id -u)" = 0 ] && chown postgres "$DATA"
       as_pg "$PGBIN/initdb -D $DATA -A trust -E UTF8 >/dev/null"
     fi
-    as_pg "ulimit -n 20000; $PGBIN/pg_ctl -D $DATA -o '-p $PORT -k /tmp -c fsync=off -c synchronous_commit=off -c max_connections=200' -l $DATA/log -w start" >/dev/null
+    if ! as_pg "$PGBIN/pg_ctl -D $DATA status" >/dev/null 2>&1; then          # already running: nothing to do
+      as_pg "ulimit -n 20000; $PGBIN/pg_ctl -D $DATA -o '-p $PORT -k /tmp -c fsync=off -c synchronous_commit=off -c max_connections=200' -l $DATA/log -w start" >/dev/null
+    fi
     psql -h /tmp -p "$PORT" -U postgres -tAc "select 1 from pg_database where datname='dbcraft'" | grep -q 1 \
       || psql -h /tmp -p "$PORT" -U postgres -qc "create database dbcraft" ;;
   stop)  as_pg "$PGBIN/pg_ctl -D $DATA -m fast stop" ;;

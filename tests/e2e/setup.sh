@@ -13,6 +13,8 @@ tools/pg-dev.sh start
 export PGHOST=/tmp PGPORT=$DBCRAFT_PGPORT PGUSER=postgres PGDATABASE=dbcraft
 CAP=$(python3 tools/capture_to_tsv.py --path play_nocomp)
 if [ -z "$CAP" ]; then echo "no capture play_nocomp.jsonl found (see the header of this script)"; exit 1; fi
+# a gateway left running from an earlier session holds locks on the schemas about to be rebuilt
+psql -X -q -At -c "select pg_terminate_backend(pid) from pg_stat_activity where query like 'call net.run%' and pid <> pg_backend_pid()" > /dev/null 2>&1 || true
 tools/migrate.sh --fresh --dev-gateway > /dev/null
 python3 tools/load_reports.py
 python3 tools/load_datapack.py "$CAP"
