@@ -9,6 +9,7 @@ begin
     delete from mc.player; delete from mc.chat_log;
     update mc.game_state set game_time = 100, day_time = 100;
     perform setval('mc.entity_id_seq', 1, false); perform setval('net.entity_id_seq', 1, false);     -- entity ids are the same in every run
+    update mc.server_property set value = '-1' where key = 'network-compression-threshold';      -- every run starts uncompressed; ab.py --setting turns it on for a run
     update mc.server_property set value = p_max_players::text where key = 'max-players';
     update mc.server_property set value = 'false' where key = 'white-list';
 end $$;

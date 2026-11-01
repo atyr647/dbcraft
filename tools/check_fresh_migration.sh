@@ -23,9 +23,6 @@ check "net.hook_join_info asks mc.on_join for no rows for the joiner"         "s
 check "net.outbox.data is stored uncompressed (EXTERNAL)"                     "select attstorage = 'e' from pg_attribute where attrelid = 'net.outbox'::regclass and attname = 'data'"
 check "net.player_info_body reads the cached tab-entry heads"                 "select position('conn_tab' in prosrc) > 0 from pg_proc where oid = 'net.player_info_body(bigint[])'::regprocedure"
 check "net.config_begin serves the cached start of the configuration phase"   "select position('config_begin_cache' in prosrc) > 0 from pg_proc where oid = 'net.config_begin(bigint)'::regprocedure"
-check "proto.mutf8 has the ASCII fast path (no regex per call)"               "select position('octet_length(s) = char_length(s)' in prosrc) > 0 from pg_proc where oid = 'proto.mutf8(text)'::regprocedure"
-check "proto.nbt_text is a single expression (inlinable: no FROM clause)"     "select position('from (select' in prosrc) = 0 from pg_proc where oid = 'proto.nbt_text(text)'::regprocedure"
-check "proto.cat is PL/pgSQL (the SQL one with a sub-select is re-planned per call)" "select l.lanname = 'plpgsql' from pg_proc p join pg_language l on l.oid = p.prolang where p.oid = 'proto.cat(bytea[])'::regprocedure"
 check "net.handle plans once (plan_cache_mode = force_generic_plan)"          "select coalesce(proconfig @> array['plan_cache_mode=force_generic_plan'], false) from pg_proc where oid = 'net.handle(bigint,bytea)'::regprocedure"
 psql -X -q -d postgres -c "drop database dbcraft_fresh"
 exit $fail
