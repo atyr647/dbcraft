@@ -23,6 +23,7 @@ check "net.hook_join_info asks mc.on_join for no rows for the joiner"         "s
 check "net.outbox.data is stored uncompressed (EXTERNAL)"                     "select attstorage = 'e' from pg_attribute where attrelid = 'net.outbox'::regclass and attname = 'data'"
 check "net.player_info_body reads the cached tab-entry heads"                 "select position('conn_tab' in prosrc) > 0 from pg_proc where oid = 'net.player_info_body(bigint[])'::regprocedure"
 check "net.config_begin serves the cached start of the configuration phase"   "select position('config_begin_cache' in prosrc) > 0 from pg_proc where oid = 'net.config_begin(bigint)'::regprocedure"
-check "net.handle plans once (plan_cache_mode = force_generic_plan)"          "select coalesce(proconfig @> array['plan_cache_mode=force_generic_plan'], false) from pg_proc where oid = 'net.handle(bigint,bytea)'::regprocedure"
+check "net.play_entry_packets plans once (plan_cache_mode = force_generic_plan)"  "select coalesce(proconfig @> array['plan_cache_mode=force_generic_plan'], false) from pg_proc where oid = 'net.play_entry_packets(bigint,net.join_info)'::regprocedure"
+check "net.handle does NOT force generic plans (it would reach mc.on_leave: 100 leaves 14 s -> 24 s)" "select coalesce(not proconfig::text like '%plan_cache_mode%', true) from pg_proc where oid = 'net.handle(bigint,bytea)'::regprocedure"
 psql -X -q -d postgres -c "drop database dbcraft_fresh"
 exit $fail
