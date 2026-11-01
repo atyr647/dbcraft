@@ -43,6 +43,9 @@ create unlogged table if not exists net.conn (
     teleport_id    int     not null default 0,       -- last teleport id sent / expected back
     teleport_ok    boolean not null default true,
     keepalive_id   bigint,                           -- id of the keep_alive we sent and have not seen answered
+    keepalive_sent timestamptz,
+    gamemode       int,                              -- 0 survival, 1 creative, 2 adventure, 3 spectator (for player_info_update)
+    latency_ms     int not null default 0,
     loaded         boolean not null default false,   -- player_loaded received
     chunks_per_tick real,                            -- from chunk_batch_received
     client_info    jsonb,                            -- last client_information (language, view distance ...)
