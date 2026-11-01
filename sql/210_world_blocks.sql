@@ -38,43 +38,57 @@ end $$;
 create or replace function mc.edit_section(p_dim text, p_cx int, p_sy int, p_cz int, p_idx int[], p_names text[], p_canonical boolean default false)
 returns int language plpgsql volatile as $$
 declare
-    d        mc.dimension%rowtype;
-    sec      mc.chunk_section%rowtype;
-    pal      text[];
-    bits     int;
-    nb       int;
-    data     bytea;
+    d         mc.dimension%rowtype;
+    sec_ok    boolean;
+    v_bc      int;
+    v_fc      int;
+    v_pal     text[];
+    v_bits    int;
+    v_data    bytea;
+    v_bpal    text[];
+    v_bbits   int;
+    v_bdata   bytea;
+    nb        int;
     is_global boolean;
-    dn       text[];
-    cn       text[];
-    nm       text;
-    old      text;
-    k        int;
-    i        int;
-    pos      int;
-    ent      int;
-    li       int;
-    pp       int;
-    vpl      int;
-    msk      bigint;
-    vals     int[];
-    ids      int[];
-    words    bigint[];
-    lw       bigint;
-    hmb      smallint[];
-    hmn      smallint[];
-    hws      smallint[];
-    hdirty   boolean;
-    oflags   boolean[];
-    nflags   boolean[];
-    col      int;
-    val      int;
-    bc       int;
-    fc       int;
-    changed  int := 0;
-    ev_idx   int[] := '{}';
-    ev_old   text[] := '{}';
-    ev_new   text[] := '{}';
+    dn        text[];
+    cn        text[];
+    missing   text;
+    nm        text;
+    old       text;
+    k         int;
+    i         int;
+    pos       int;
+    ent       int;
+    li        int;
+    pp        int;
+    vpl       int;
+    msk       bigint;
+    vals      int[];
+    ids       int[];
+    words     bigint[];
+    lw        bigint;
+    hmb       smallint[];
+    hmn       smallint[];
+    hws       smallint[];
+    hdirty    boolean;
+    chunk_ok  boolean;
+    hm_changed boolean := false;
+    col       int;
+    val       int;
+    h1        int; h2 int; h3 int;
+    changed   int := 0;
+    ev_idx    int[] := '{}';
+    ev_old    text[] := '{}';
+    ev_new    text[] := '{}';
+    -- per-call memo of the name-derived flags: a section holds few distinct states, so each is analysed once, not once per edit
+    mn        text[] := '{}';   -- names seen
+    ma        boolean[] := '{}'; -- is air
+    mf        boolean[] := '{}'; -- has fluid
+    hn        text[] := '{}';   -- names whose heightmap flags were computed
+    hfl       boolean[] := '{}'; -- three flags per name: world_surface, motion_blocking, motion_blocking_no_leaves
+    j         int;
+    a_new     boolean; f_new boolean; a_old boolean; f_old boolean;
+    ofl       boolean[]; nfl boolean[];
 begin
     select * into d from mc.dimension where name = p_dim;
     if not found then raise exception 'unknown dimension %', p_dim; end if;
@@ -82,128 +96,254 @@ begin
         raise exception 'section % is outside dimension % (y % .. %)', p_sy, p_dim, d.min_y, d.min_y + d.height - 1;
     end if;
 
-    -- canonical state names, resolved once per distinct name
+    -- canonical state names, resolved once per distinct name, in one statement (a bare block name means its default state; unknown names are an error)
     if p_canonical then
-        dn := array(select n from unnest(p_names) n group by n order by n);
+        select array_agg(n order by n) into dn from (select distinct n from unnest(p_names) n) q;
         cn := dn;
     else
-        select array_agg(n order by n), array_agg(mc.canon_state(n) order by n) into dn, cn from (select distinct n from unnest(p_names) n) q;
+        select array_agg(q.n order by q.n), array_agg(coalesce(s.name, ds.name) order by q.n), (array_agg(q.n order by q.n) filter (where coalesce(s.name, ds.name) is null))[1]
+          into dn, cn, missing
+          from (select distinct n from unnest(p_names) n) q
+          left join ref.block_state s on s.name = q.n
+          left join ref.block b on b.name = q.n
+          left join ref.block_state ds on ds.state_id = b.default_state;
+        if missing is not null then perform mc.canon_state(missing); end if;       -- raises 'unknown block state ...'
     end if;
 
-    insert into mc.chunk (dimension, cx, cz) values (p_dim, p_cx, p_cz) on conflict do nothing;
-    select * into sec from mc.chunk_section s where s.dimension = p_dim and s.cx = p_cx and s.cz = p_cz and s.sy = p_sy for update;
-    if not found then
-        sec := (p_dim, p_cx, p_cz, p_sy, 0, 0, array['minecraft:air'], 0, ''::bytea, array[d.default_biome], 0, ''::bytea)::mc.chunk_section;
+    -- the chunk row (and its heightmaps) once; created if this is the first edit in the chunk
+    select c.hm_motion_blocking, c.hm_motion_blocking_no_leaves, c.hm_world_surface, c.hm_dirty into hmb, hmn, hws, hdirty
+      from mc.chunk c where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
+    chunk_ok := found;
+    if not chunk_ok then insert into mc.chunk (dimension, cx, cz) values (p_dim, p_cx, p_cz) on conflict do nothing; end if;
+
+    select s.block_count, s.fluid_count, s.palette, s.bits, s.data, s.biome_palette, s.biome_bits, s.biome_data
+      into v_bc, v_fc, v_pal, v_bits, v_data, v_bpal, v_bbits, v_bdata
+      from mc.chunk_section s where s.dimension = p_dim and s.cx = p_cx and s.cz = p_cz and s.sy = p_sy for update;
+    sec_ok := found;
+    if not sec_ok then
+        v_bc := 0; v_fc := 0; v_pal := array['minecraft:air']; v_bits := 0; v_data := ''::bytea; v_bpal := array[d.default_biome]; v_bbits := 0; v_bdata := ''::bytea;
     end if;
-    pal := sec.palette; bits := sec.bits; data := sec.data; bc := sec.block_count; fc := sec.fluid_count;
-    is_global := cardinality(pal) = 0;
+    is_global := cardinality(v_pal) = 0;
 
     -- grow the palette with the names this batch introduces (in order of first use)
     if not is_global then
         foreach nm in array array(select cn[array_position(dn, n)] from unnest(p_names) n) loop
-            if array_position(pal, nm) is null then pal := pal || nm; end if;
+            if array_position(v_pal, nm) is null then v_pal := v_pal || nm; end if;
         end loop;
     end if;
-    nb := case when is_global then 16 else mc.block_bits_for(cardinality(pal)) end;
-    if bits = 0 and nb = 0 then return 0; end if;     -- single value, every edit sets that same value
+    nb := case when is_global then 16 else mc.block_bits_for(cardinality(v_pal)) end;
+    if v_bits = 0 and nb = 0 then return 0; end if;     -- single value, every edit sets that same value
 
-    if nb = bits and bits <> 0 and cardinality(p_idx) <= 48 then
-        ---------------------------------------------------------------- few edits, same bit width: overwrite just the affected longs in place (the section is never unpacked)
-        vpl := 64 / bits;
-        msk := (1::bigint << bits) - 1;
+    if v_bits = 0 and nb > 0 then
+        -- single value -> palette: every entry is palette index 0 (the old single value), so the packed data starts as zeros; no unpack/repack
+        vpl := 64 / nb;
+        v_data := decode(repeat('00', ((4096 + vpl - 1) / vpl) * 16), 'hex');
+        v_bits := nb;
+    end if;
+
+    if nb = v_bits and cardinality(p_idx) <= 48 then
+        ---------------------------------------------------------------- few edits, same bit width: overwrite just the affected longs in place (never unpacked)
+        vpl := 64 / v_bits;
+        msk := (1::bigint << v_bits) - 1;
         for k in 1 .. cardinality(p_idx) loop
             i := p_idx[k];
             nm := cn[array_position(dn, p_names[k])];
-            pos := case when is_global then mc.state_id(nm) else array_position(pal, nm) - 1 end;
+            pos := case when is_global then mc.state_id(nm) else array_position(v_pal, nm) - 1 end;
             li := (i / vpl) * 8;                                   -- byte offset of the long holding this entry
-            pp := (i % vpl) * bits;
-            lw := proto.i64_read(data, li);
+            pp := (i % vpl) * v_bits;
+            lw := proto.i64_read(v_data, li);
             ent := ((lw >> pp) & msk)::int;
             if ent = pos then continue; end if;
-            old := case when is_global then mc.state_name(ent) else pal[ent + 1] end;
-            data := overlay(data placing int8send((lw & ~(msk << pp)) | (pos::bigint << pp)) from li + 1 for 8);
-            bc := bc + (case when mc.is_air(nm) then 0 else 1 end) - (case when mc.is_air(old) then 0 else 1 end);
-            fc := fc + (case when mc.has_fluid(nm) then 1 else 0 end) - (case when mc.has_fluid(old) then 1 else 0 end);
+            old := case when is_global then mc.state_name(ent) else v_pal[ent + 1] end;
+            v_data := overlay(v_data placing int8send((lw & ~(msk << pp)) | (pos::bigint << pp)) from li + 1 for 8);
+            j := array_position(mn, nm);
+            if j is null then mn := mn || nm; ma := ma || mc.is_air(nm); mf := mf || mc.has_fluid(nm); j := cardinality(mn); end if;
+            a_new := ma[j]; f_new := mf[j];
+            j := array_position(mn, old);
+            if j is null then mn := mn || old; ma := ma || mc.is_air(old); mf := mf || mc.has_fluid(old); j := cardinality(mn); end if;
+            a_old := ma[j]; f_old := mf[j];
+            v_bc := v_bc + (case when a_new then 0 else 1 end) - (case when a_old then 0 else 1 end);
+            v_fc := v_fc + (case when f_new then 1 else 0 end) - (case when f_old then 1 else 0 end);
             changed := changed + 1;
             ev_idx[changed] := i; ev_old[changed] := old; ev_new[changed] := nm;
         end loop;
-    elsif nb = bits then
+    elsif nb = v_bits then
         ---------------------------------------------------------------- many edits, same bit width: unpack the longs once, edit, write back
-        vpl := 64 / bits;
-        msk := (1::bigint << bits) - 1;
-        words := array(select proto.i64_read(data, w * 8) from generate_series(0, (4096 + vpl - 1) / vpl - 1) w order by w);
+        vpl := 64 / v_bits;
+        msk := (1::bigint << v_bits) - 1;
+        words := array(select proto.i64_read(v_data, w * 8) from generate_series(0, (4096 + vpl - 1) / vpl - 1) w order by w);
         for k in 1 .. cardinality(p_idx) loop
             i := p_idx[k];
             nm := cn[array_position(dn, p_names[k])];
-            pos := case when is_global then mc.state_id(nm) else array_position(pal, nm) - 1 end;
+            pos := case when is_global then mc.state_id(nm) else array_position(v_pal, nm) - 1 end;
             li := i / vpl + 1;
-            pp := (i % vpl) * bits;
+            pp := (i % vpl) * v_bits;
             ent := ((words[li] >> pp) & msk)::int;
             if ent = pos then continue; end if;
-            old := case when is_global then mc.state_name(ent) else pal[ent + 1] end;
+            old := case when is_global then mc.state_name(ent) else v_pal[ent + 1] end;
             words[li] := (words[li] & ~(msk << pp)) | (pos::bigint << pp);
-            bc := bc + (case when mc.is_air(nm) then 0 else 1 end) - (case when mc.is_air(old) then 0 else 1 end);
-            fc := fc + (case when mc.has_fluid(nm) then 1 else 0 end) - (case when mc.has_fluid(old) then 1 else 0 end);
+            j := array_position(mn, nm);
+            if j is null then mn := mn || nm; ma := ma || mc.is_air(nm); mf := mf || mc.has_fluid(nm); j := cardinality(mn); end if;
+            a_new := ma[j]; f_new := mf[j];
+            j := array_position(mn, old);
+            if j is null then mn := mn || old; ma := ma || mc.is_air(old); mf := mf || mc.has_fluid(old); j := cardinality(mn); end if;
+            a_old := ma[j]; f_old := mf[j];
+            v_bc := v_bc + (case when a_new then 0 else 1 end) - (case when a_old then 0 else 1 end);
+            v_fc := v_fc + (case when f_new then 1 else 0 end) - (case when f_old then 1 else 0 end);
             changed := changed + 1;
             ev_idx[changed] := i; ev_old[changed] := old; ev_new[changed] := nm;
         end loop;
-        data := (select string_agg(int8send(w), ''::bytea order by o) from unnest(words) with ordinality t(w, o));
+        v_data := (select string_agg(int8send(w), ''::bytea order by o) from unnest(words) with ordinality t(w, o));
     else
-        ---------------------------------------------------------------- slow path: the bit width changes (single -> palette, palette growth, palette -> global): repack once
-        vals := mc.unpack_longs(data, bits, 4096);                   -- bits = 0 yields zeros, i.e. palette index 0 everywhere
+        ---------------------------------------------------------------- the bit width changes (palette growth past a width, palette -> global): repack once
+        vals := mc.unpack_longs(v_data, v_bits, 4096);
         if not is_global and nb = 16 then
-            ids := mc.palette_ids(pal);                              -- palette index -> global state id (includes the names added above)
+            ids := mc.palette_ids(v_pal);                            -- palette index -> global state id (includes the names added above)
             vals := array(select ids[e + 1] from unnest(vals) with ordinality t(e, o) order by o);
         end if;
         for k in 1 .. cardinality(p_idx) loop
             i := p_idx[k];
             nm := cn[array_position(dn, p_names[k])];
-            pos := case when is_global or nb = 16 then mc.state_id(nm) else array_position(pal, nm) - 1 end;
+            pos := case when is_global or nb = 16 then mc.state_id(nm) else array_position(v_pal, nm) - 1 end;
             ent := vals[i + 1];
             if ent = pos then continue; end if;
-            old := case when is_global or nb = 16 then mc.state_name(ent) else pal[ent + 1] end;
+            old := case when is_global or nb = 16 then mc.state_name(ent) else v_pal[ent + 1] end;
             vals[i + 1] := pos;
-            bc := bc + (case when mc.is_air(nm) then 0 else 1 end) - (case when mc.is_air(old) then 0 else 1 end);
-            fc := fc + (case when mc.has_fluid(nm) then 1 else 0 end) - (case when mc.has_fluid(old) then 1 else 0 end);
+            j := array_position(mn, nm);
+            if j is null then mn := mn || nm; ma := ma || mc.is_air(nm); mf := mf || mc.has_fluid(nm); j := cardinality(mn); end if;
+            a_new := ma[j]; f_new := mf[j];
+            j := array_position(mn, old);
+            if j is null then mn := mn || old; ma := ma || mc.is_air(old); mf := mf || mc.has_fluid(old); j := cardinality(mn); end if;
+            a_old := ma[j]; f_old := mf[j];
+            v_bc := v_bc + (case when a_new then 0 else 1 end) - (case when a_old then 0 else 1 end);
+            v_fc := v_fc + (case when f_new then 1 else 0 end) - (case when f_old then 1 else 0 end);
             changed := changed + 1;
             ev_idx[changed] := i; ev_old[changed] := old; ev_new[changed] := nm;
         end loop;
-        data := mc.pack_longs(vals, nb);
-        bits := nb;
-        if nb = 16 then pal := '{}'; end if;
+        v_data := mc.pack_longs(vals, nb);
+        v_bits := nb;
+        if nb = 16 then v_pal := '{}'; end if;
     end if;
 
     if changed = 0 then return 0; end if;
-    insert into mc.chunk_section as s (dimension, cx, cz, sy, block_count, fluid_count, palette, bits, data, biome_palette, biome_bits, biome_data)
-    values (p_dim, p_cx, p_cz, p_sy, bc, fc, pal, bits, data, sec.biome_palette, sec.biome_bits, sec.biome_data)
-    on conflict (dimension, cx, cz, sy) do update
-       set block_count = excluded.block_count, fluid_count = excluded.fluid_count, palette = excluded.palette, bits = excluded.bits, data = excluded.data;
-    -- heightmaps are kept exact incrementally (a chunk flagged hm_dirty or without heightmaps is recomputed in full by mc.ensure_chunk_current)
-    select c.hm_motion_blocking, c.hm_motion_blocking_no_leaves, c.hm_world_surface, c.hm_dirty into hmb, hmn, hws, hdirty
-      from mc.chunk c where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
+    if sec_ok then
+        update mc.chunk_section s set block_count = v_bc, fluid_count = v_fc, palette = v_pal, bits = v_bits, data = v_data
+         where s.dimension = p_dim and s.cx = p_cx and s.cz = p_cz and s.sy = p_sy;
+    else
+        insert into mc.chunk_section (dimension, cx, cz, sy, block_count, fluid_count, palette, bits, data, biome_palette, biome_bits, biome_data)
+        values (p_dim, p_cx, p_cz, p_sy, v_bc, v_fc, v_pal, v_bits, v_data, v_bpal, v_bbits, v_bdata)
+        on conflict (dimension, cx, cz, sy) do update
+           set block_count = excluded.block_count, fluid_count = excluded.fluid_count, palette = excluded.palette, bits = excluded.bits, data = excluded.data;
+    end if;
+
+    -- Heightmaps are kept exact incrementally (a chunk flagged hm_dirty or without heightmaps is recomputed in full by mc.ensure_chunk_current).
+    -- An edit below the top of every column kind it could affect changes nothing (a block placed or removed under the surface), so its flags are not even looked at.
     if hws is not null and not hdirty then
         for k in 1 .. changed loop
             i := ev_idx[k];
             col := (i & 15) + 16 * ((i >> 4) & 15);
             val := p_sy * 16 + (i >> 8) + 1 - d.min_y;
-            oflags := mc.heightmap_flags(ev_old[k]);
-            nflags := mc.heightmap_flags(ev_new[k]);
-            hws[col + 1] := mc.hm_step(hws[col + 1], val, oflags[1], nflags[1], p_dim, p_cx, p_cz, col, 1, d.min_y);
-            hmb[col + 1] := mc.hm_step(hmb[col + 1], val, oflags[2], nflags[2], p_dim, p_cx, p_cz, col, 2, d.min_y);
-            hmn[col + 1] := mc.hm_step(hmn[col + 1], val, oflags[3], nflags[3], p_dim, p_cx, p_cz, col, 3, d.min_y);
+            h1 := hws[col + 1]; h2 := hmb[col + 1]; h3 := hmn[col + 1];
+            continue when val < least(h1, h2, h3);
+            j := array_position(hn, ev_old[k]);
+            if j is null then hn := hn || ev_old[k]; hfl := hfl || mc.heightmap_flags(ev_old[k]); j := cardinality(hn); end if;
+            ofl := hfl[(j - 1) * 3 + 1 : (j - 1) * 3 + 3];
+            j := array_position(hn, ev_new[k]);
+            if j is null then hn := hn || ev_new[k]; hfl := hfl || mc.heightmap_flags(ev_new[k]); j := cardinality(hn); end if;
+            nfl := hfl[(j - 1) * 3 + 1 : (j - 1) * 3 + 3];
+            hws[col + 1] := mc.hm_step(h1::smallint, val, ofl[1], nfl[1], p_dim, p_cx, p_cz, col, 1, d.min_y);
+            hmb[col + 1] := mc.hm_step(h2::smallint, val, ofl[2], nfl[2], p_dim, p_cx, p_cz, col, 2, d.min_y);
+            hmn[col + 1] := mc.hm_step(h3::smallint, val, ofl[3], nfl[3], p_dim, p_cx, p_cz, col, 3, d.min_y);
+            if hws[col + 1] <> h1 or hmb[col + 1] <> h2 or hmn[col + 1] <> h3 then hm_changed := true; end if;
         end loop;
     end if;
-    update mc.chunk c set version = c.version + 1, dirty = true,
-                          hm_world_surface = hws, hm_motion_blocking = hmb, hm_motion_blocking_no_leaves = hmn
-     where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
+    if hm_changed then
+        update mc.chunk c set version = c.version + 1, dirty = true,
+                              hm_world_surface = hws, hm_motion_blocking = hmb, hm_motion_blocking_no_leaves = hmn
+         where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
+    else
+        update mc.chunk c set version = c.version + 1, dirty = true where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
+    end if;
     insert into mc.block_event (dimension, x, y, z, old_state, new_state)
     select p_dim, p_cx * 16 + (e.i & 15), p_sy * 16 + (e.i >> 8), p_cz * 16 + ((e.i >> 4) & 15), e.o, e.n
       from unnest(ev_idx, ev_old, ev_new) e(i, o, n);
     return changed;
 end $$;
 
-create or replace function mc.set_block(p_dim text, x int, y int, z int, p_block text) returns boolean language sql volatile as $$
-  select mc.edit_section(p_dim, x >> 4, y >> 4, z >> 4, array[mc.section_idx(x, y, z)], array[p_block]) > 0 $$;
+-- One edit, the common case: the section exists, it is a palette section (not single-value, not global) and the palette either already holds the block or
+-- can take it without changing the bit width.  That path touches the database five times (section read + lock, section write, chunk bump with the one
+-- column's heightmap values, the event row) instead of the general function's dozen, and skips every lookup it can.  Anything else (a new section, a bit
+-- width change, a bare block name, an unknown name) goes to mc.edit_section, which handles it and raises the errors.
+create or replace function mc.set_block(p_dim text, x int, y int, z int, p_block text) returns boolean language plpgsql volatile as $$
+declare
+    qx    int := x >> 4;
+    qz    int := z >> 4;
+    qs    int := y >> 4;
+    i     int := ((y & 15) << 8) | ((z & 15) << 4) | (x & 15);
+    v_pal text[]; v_bits int; v_data bytea; v_bc int; v_fc int;
+    nm    text := p_block;
+    pos   int;
+    vpl   int; msk bigint; li int; pp int; lw bigint; ent int;
+    old   text;
+    min_y int; hdirty boolean; h1 int; h2 int; h3 int;
+    col   int := (x & 15) + 16 * (z & 15);
+    val   int;
+    ofl   boolean[]; nfl boolean[];
+    n1    int; n2 int; n3 int;
+begin
+    select s.palette, s.bits, s.data, s.block_count, s.fluid_count into v_pal, v_bits, v_data, v_bc, v_fc
+      from mc.chunk_section s where s.dimension = p_dim and s.cx = qx and s.cz = qz and s.sy = qs for no key update;
+    if not found or v_bits = 0 or cardinality(v_pal) = 0 then
+        return mc.edit_section(p_dim, qx, qs, qz, array[i], array[p_block]) > 0;
+    end if;
+    pos := array_position(v_pal, nm);                         -- palette entries are canonical state names: a hit needs no lookup
+    if pos is null then
+        select s.name into nm from ref.block_state s where s.name = p_block;
+        if nm is null then return mc.edit_section(p_dim, qx, qs, qz, array[i], array[p_block]) > 0; end if;     -- bare name or unknown
+        if mc.block_bits_for(cardinality(v_pal) + 1) <> v_bits then return mc.edit_section(p_dim, qx, qs, qz, array[i], array[p_block]) > 0; end if;
+        v_pal := v_pal || nm;
+        pos := cardinality(v_pal);
+    end if;
+    pos := pos - 1;                                           -- the entry value
+
+    vpl := 64 / v_bits;
+    msk := (1::bigint << v_bits) - 1;
+    li  := (i / vpl) * 8;
+    pp  := (i % vpl) * v_bits;
+    lw  := proto.i64_read(v_data, li);
+    ent := ((lw >> pp) & msk)::int;
+    if ent = pos then return false; end if;                   -- already that block
+    old := v_pal[ent + 1];
+    v_data := overlay(v_data placing int8send((lw & ~(msk << pp)) | (pos::bigint << pp)) from li + 1 for 8);
+    v_bc := v_bc + (case when mc.is_air(nm) then 0 else 1 end) - (case when mc.is_air(old) then 0 else 1 end);
+    v_fc := v_fc + (case when mc.has_fluid(nm) then 1 else 0 end) - (case when mc.has_fluid(old) then 1 else 0 end);
+    update mc.chunk_section s set block_count = v_bc, fluid_count = v_fc, palette = v_pal, data = v_data
+     where s.dimension = p_dim and s.cx = qx and s.cz = qz and s.sy = qs;
+
+    -- bump the chunk (version, dirty) and read the three heightmap values of this column in the same statement
+    update mc.chunk c set version = c.version + 1, dirty = true
+      from mc.dimension d
+     where c.dimension = p_dim and c.cx = qx and c.cz = qz and d.name = c.dimension
+    returning d.min_y, c.hm_dirty, c.hm_world_surface[col + 1], c.hm_motion_blocking[col + 1], c.hm_motion_blocking_no_leaves[col + 1]
+         into min_y, hdirty, h1, h2, h3;
+    -- heightmaps stay exact incrementally; an edit below the top of every kind cannot change them (see mc.edit_section)
+    if h1 is not null and not hdirty then
+        val := qs * 16 + (i >> 8) + 1 - min_y;
+        if val >= least(h1, h2, h3) then
+            ofl := mc.heightmap_flags(old);
+            nfl := mc.heightmap_flags(nm);
+            n1 := mc.hm_step(h1::smallint, val, ofl[1], nfl[1], p_dim, qx, qz, col, 1, min_y);
+            n2 := mc.hm_step(h2::smallint, val, ofl[2], nfl[2], p_dim, qx, qz, col, 2, min_y);
+            n3 := mc.hm_step(h3::smallint, val, ofl[3], nfl[3], p_dim, qx, qz, col, 3, min_y);
+            if n1 <> h1 or n2 <> h2 or n3 <> h3 then
+                update mc.chunk c set hm_world_surface[col + 1] = n1, hm_motion_blocking[col + 1] = n2, hm_motion_blocking_no_leaves[col + 1] = n3
+                 where c.dimension = p_dim and c.cx = qx and c.cz = qz;
+            end if;
+        end if;
+    end if;
+    insert into mc.block_event (dimension, x, y, z, old_state, new_state) values (p_dim, x, y, z, old, nm);
+    return true;
+end $$;
 
 create or replace function mc.set_blocks(p_dim text, xs int[], ys int[], zs int[], blocks text[]) returns int language plpgsql volatile as $$
 declare
