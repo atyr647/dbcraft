@@ -1,0 +1,43 @@
+[package]
+name = "dbcraft-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "dbcraft gateway: the byte pipe between Minecraft clients and the database (frames, AES-CFB8, RSA, Mojang session check)"
+license = "MIT"
+
+[workspace]
+members = ["core"]
+
+[[bin]]
+name = "dbcraft-gateway"
+path = "src/main.rs"
+
+[lib]
+name = "dbcraft_gateway"
+path = "src/lib.rs"
+
+[features]
+# AES-NI blocks from the `aes` crate for CFB8 (about 7x the speed of the std-only reference cipher): build the production gateway with --features aesni
+default = ["aesni"]
+aesni = ["dep:aes"]
+
+[dependencies]
+aes = { version = "0.8", optional = true }
+# frames, inflate, AES-128-CFB8, SHA-1 and the server hash: the verified std-only core
+dbcraft-gateway-core = { path = "core" }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "macros", "sync", "signal"] }
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
+futures-util = "0.3"
+rsa = { version = "0.9", features = ["std"] }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+log = "0.4"
+env_logger = "0.11"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

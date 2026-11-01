@@ -13,7 +13,9 @@ mc.sid/1 | 433_tick_perf_ids.sql | constant-folded reference ids
 mc.server_tick/0 | 430_tick_perf.sql | tick-performance rewrite of the integration tick
 mc.tick/0 | 430_tick_perf.sql | tick-performance rewrite of the game tick
 net.deflate_frame/2 | 440_deflate.sql | compression of frames at or above the threshold
-net.h_login/3 | 400_integration.sql | login checks (whitelist, bans, capacity) come from the game module
+net.h_login/3 | 601_online_login.sql | login checks (whitelist, bans, capacity) come from the game module (sql/400); sql/601 adds the online-mode branch (encryption request) to that same body
+mc.pie_add/7 | 601_online_login.sql | the add-player entry carries the player's profile properties (skins) read from mc.player_property; stable, still inlinable
+net.conn_tab_sync/0 | 601_online_login.sql | the cached tab-entry head (sql/464) includes the profile properties
 net.hook_chunks/4 | 430_chunk_queue.sql | chunks are requested from the asynchronous generation queue
 net.hook_disconnect/1 | 400_integration.sql | wired to mc.on_leave
 net.hook_join_info/1 | 461_join_on_join.sql | built from the real player row (400); 461: asks mc.on_join not to build the joiner's own rows and drops the unindexed DELETE that scanned the whole queue per join

@@ -115,7 +115,11 @@ Also: adacraft's golden corpus (14 of its 20 scenarios apply to SQL; the other 6
 * Transfer intent (3), cookies, resource packs, server links, the code-of-conduct screen, re-entering configuration from play, chat signing (the "initialize chat" action is always absent).
 * The tick glue (`mc.tick`) is not here; `net.process()` and `net.keepalive_tick()` are the calls it should make.
 
-## Online-mode design (not implemented)
+## Online-mode design (the original sketch; implemented differently, see docs/GATEWAY.md)
+
+> **Update.** Online mode is now implemented (`sql/600_gateway.sql`, `sql/601_online_login.sql`, `docs/GATEWAY.md`).  It differs from the sketch below in two ways: there is
+> no `net.auth_job` table to poll (the database marks the connection `await_key` and the gateway learns it from `net.gateway_ctl()`, which also carries compression and
+> state changes), and the verdict goes into `net.auth_result` and is applied by `net.apply_auth_results()` before the game tick.  The sketch is kept for its reasoning.
 
 Needs RSA decryption, AES-CFB8 on the socket and an HTTPS call to Mojang's session server: none of that can be SQL, so the gateway does exactly that and nothing else.
 

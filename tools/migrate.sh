@@ -2,7 +2,8 @@
 # usage: tools/migrate.sh [--fresh] [--dev-gateway]
 #   applies sql/*.sql in order to $PGDATABASE (or whatever DBCRAFT_PSQL connects to)
 #   --fresh          drops and recreates the dbcraft schemas first
-#   --dev-gateway    also applies sql/optional/dev_gateway.sql: the PL/Python socket procedure net.run (needs superuser and plpython3u)
+#   --dev-gateway    also applies sql/optional/dev_gateway.sql (the PL/Python socket procedure net.run, offline mode) and sql/optional/dev_gateway_online.sql
+#                    (net.run_online: the online-mode reference gateway); needs superuser and plpython3u
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PSQL=${DBCRAFT_PSQL:-psql}
@@ -24,4 +25,6 @@ done
 if [ "$DEV" = 1 ]; then
   echo "== sql/optional/dev_gateway.sql"
   $PSQL -X -q -v ON_ERROR_STOP=1 -f sql/optional/dev_gateway.sql
+  echo "== sql/optional/dev_gateway_online.sql"
+  $PSQL -X -q -v ON_ERROR_STOP=1 -f sql/optional/dev_gateway_online.sql
 fi
