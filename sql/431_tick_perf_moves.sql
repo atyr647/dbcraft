@@ -14,6 +14,7 @@
 
 create or replace function mc.apply_player_moves_general(cur_tick bigint) returns table(moved int, corrected int, kicked int) language plpgsql as $$
 declare
+  iv int := coalesce(nullif((select value::int from mc.server_property where key = 'dbcraft.player-update-interval'), 0), 2);   -- vanilla: a player's update interval is 2 ticks (EntityType.PLAYER.updateInterval(2); sendChanges runs its body when tickCount % 2 = 0; each ServerEntity counts from its own creation, so the phase differs per entity: here (tick + entity id) % interval)
   i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot'); i_rot int := mc.sid('move_player_rot');
   i_st int := mc.sid('move_player_status_only'); i_te int := mc.sid('client_tick_end'); i_tp int := mc.sid('accept_teleportation');
   kicked_conns int[];
@@ -107,9 +108,9 @@ begin
   with mv as materialized (
     select entity_id as eid, x, y, z, yaw, pitch, on_ground,
            mc.quant(x) - sent_qx as dx, mc.quant(y) - sent_qy as dy, mc.quant(z) - sent_qz as dz,
-           (yaw <> sent_yaw or pitch <> sent_pitch) as rot_changed, greatest(cur_tick - last_sent_tick, 1)::int as ticks
+           (yaw <> sent_yaw or pitch <> sent_pitch) as rot_changed, least(greatest(cur_tick - last_sent_tick, 1), iv)::int as ticks
       from mc.player
-     where conn_id is not null and (mc.quant(x) <> sent_qx or mc.quant(y) <> sent_qy or mc.quant(z) <> sent_qz or yaw <> sent_yaw or pitch <> sent_pitch)),
+     where conn_id is not null and (cur_tick + entity_id) % iv = 0 and (mc.quant(x) <> sent_qx or mc.quant(y) <> sent_qy or mc.quant(z) <> sent_qz or yaw <> sent_yaw or pitch <> sent_pitch)),
   -- Frames are assembled inline from the packet ids looked up once per call (c_*), not through the mc.pkt_* builders: each builder call is a separate
   -- function execution with its own packet-id lookup (72 us per mover measured).  The bytes are the same as mc.pkt_move_entity_pos / _pos_rot / _rot /
   -- mc.pkt_rotate_head (the tests compare them); only the teleport fallback, which is rare, still uses the builder.
@@ -149,10 +150,12 @@ end $$;
 
 create or replace function mc.apply_player_moves(cur_tick bigint) returns table(moved int, corrected int, kicked int) language plpgsql as $$
 declare
+  iv int := coalesce(nullif((select value::int from mc.server_property where key = 'dbcraft.player-update-interval'), 0), 2);   -- vanilla: a player's update interval is 2 ticks (EntityType.PLAYER.updateInterval(2); sendChanges runs its body when tickCount % 2 = 0; each ServerEntity counts from its own creation, so the phase differs per entity: here (tick + entity id) % interval)
   i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot'); i_rot int := mc.sid('move_player_rot');
   i_st int := mc.sid('move_player_status_only'); i_te int := mc.sid('client_tick_end'); i_tp int := mc.sid('accept_teleportation');
   c_pos int := mc.pid('move_entity_pos'); c_pr int := mc.pid('move_entity_pos_rot'); c_rot int := mc.pid('move_entity_rot'); c_head int := mc.pid('rotate_head');
   slow boolean; kicked_conns int[]; fin mc.move_fin[];
+  f_eid int[]; f_data bytea[]; f_ocx int[]; f_ocz int[]; v_conn int[]; v_eid int[]; v_cx int[]; v_cz int[]; any_dirty boolean;   -- the fan-out's inputs (sql/430_tick_perf_fanout.sql)
 begin
   select coalesce(count(*) filter (where m.packet_id in (i_pos, i_pr)) <> count(distinct m.conn_id) filter (where m.packet_id in (i_pos, i_pr)), false)
          or coalesce(bool_or((m.packet_id = i_pos and length(m.body) <> 25) or (m.packet_id = i_pr and length(m.body) <> 33)
@@ -217,6 +220,7 @@ begin
   -- mc.pkt_move_entity_pos / _pos_rot / _rot / mc.pkt_rotate_head (the tests compare them); only the rare teleport fallback uses the builder.
   with nv as materialized (
     select p.conn_id, p.entity_id as eid, p.sent_qx, p.sent_qy, p.sent_qz, p.sent_yaw, p.sent_pitch, p.last_sent_tick,
+           p.chunk_x as ocx, p.chunk_z as ocz, p.vis_dirty as ovd,       -- the state mc.visible was computed from (before this tick's moves)
            f.conn_id is not null as touched,
            case when f.has_pos then greatest(-3.0e7, least(3.0e7, f.x)) else p.x end as nx,
            case when f.has_pos then greatest(-2.0e7, least(2.0e7, f.y)) else p.y end as ny,
@@ -231,11 +235,11 @@ begin
      where p.conn_id is not null),
   mv as materialized (
     select nv.*, mc.quant(nx) - sent_qx as dx, mc.quant(ny) - sent_qy as dy, mc.quant(nz) - sent_qz as dz,
-           (nyaw <> sent_yaw or npitch <> sent_pitch) as rot_changed, greatest(cur_tick - last_sent_tick, 1)::int as ticks
+           (nyaw <> sent_yaw or npitch <> sent_pitch) as rot_changed, least(greatest(cur_tick - last_sent_tick, 1), iv)::int as ticks
       from nv
-     where mc.quant(nx) <> sent_qx or mc.quant(ny) <> sent_qy or mc.quant(nz) <> sent_qz or nyaw <> sent_yaw or npitch <> sent_pitch),
+     where (cur_tick + eid) % iv = 0 and (mc.quant(nx) <> sent_qx or mc.quant(ny) <> sent_qy or mc.quant(nz) <> sent_qz or nyaw <> sent_yaw or npitch <> sent_pitch)),
   pk as materialized (
-    select mv.eid,
+    select mv.eid, mv.ocx, mv.ocz,
       (case when abs(dx) > 32767 or abs(dy) > 32767 or abs(dz) > 32767 then mc.pkt_teleport_entity(mv.eid, nx, ny, nz, 0, 0, 0, nyaw, npitch, nog)
             else proto.varint(octet_length(q.b) + 1) || set_byte('\x00'::bytea, 0, q.id) || q.b end)
       || case when rot_changed then proto.varint(octet_length(h.b) + 1) || set_byte('\x00'::bytea, 0, c_head) || h.b else '\x'::bytea end as data
@@ -250,6 +254,7 @@ begin
     cross join lateral (select proto.varint(mv.eid) || set_byte('\x00'::bytea, 0, mc.angle_byte(nyaw)) as b) h),
   upd as (
     update mc.player p set x = n.nx, y = n.ny, z = n.nz, yaw = n.nyaw, pitch = n.npitch, on_ground = n.nog, chunk_x = n.ncx, chunk_z = n.ncz, vis_dirty = n.nvd,
+           vis_ocx = case when n.nvd and not n.ovd then n.ocx else p.vis_ocx end, vis_ocz = case when n.nvd and not n.ovd then n.ocz else p.vis_ocz end,   -- the chunk mc.visible was computed from (sql/468)
            sent_qx = case when m.eid is not null then mc.quant(n.nx) else p.sent_qx end,
            sent_qy = case when m.eid is not null then mc.quant(n.ny) else p.sent_qy end,
            sent_qz = case when m.eid is not null then mc.quant(n.nz) else p.sent_qz end,
@@ -258,12 +263,17 @@ begin
            last_sent_tick = case when m.eid is not null then cur_tick else p.last_sent_tick end
       from nv n left join mv m on m.eid = n.eid
      where p.conn_id = n.conn_id and (n.touched or m.eid is not null)
-    returning 1),
-  outq as (
-    insert into mc.play_out (conn_id, data)
-    select v.viewer_conn, string_agg(pk.data, '\x'::bytea order by pk.eid) from mc.visible v join pk on pk.eid = v.target_eid group by v.viewer_conn
     returning 1)
-  select (select count(*) from mv)::int into moved;
+  -- the fan-out is a separate step (mc.fanout_moves: one blob per occupied chunk in a crowd, rows through mc.visible otherwise): this statement hands it the
+  -- packets of the movers and a snapshot of every online player's chunk BEFORE the moves (what mc.visible is the cache of)
+  select (select count(*) from mv)::int,
+         coalesce((select array_agg(pk.eid order by pk.eid) from pk), '{}'), coalesce((select array_agg(pk.data order by pk.eid) from pk), '{}'),
+         coalesce((select array_agg(pk.ocx order by pk.eid) from pk), '{}'), coalesce((select array_agg(pk.ocz order by pk.eid) from pk), '{}'),
+         coalesce((select array_agg(nv.conn_id order by nv.conn_id) from nv), '{}'), coalesce((select array_agg(nv.eid order by nv.conn_id) from nv), '{}'),
+         coalesce((select array_agg(nv.ocx order by nv.conn_id) from nv), '{}'), coalesce((select array_agg(nv.ocz order by nv.conn_id) from nv), '{}'),
+         coalesce((select bool_or(nv.ovd) from nv), false)
+    into moved, f_eid, f_data, f_ocx, f_ocz, v_conn, v_eid, v_cx, v_cz, any_dirty;
+  perform mc.fanout_moves(f_eid, f_data, f_ocx, f_ocz, v_conn, v_eid, v_cx, v_cz, any_dirty);
 
   delete from mc.play_in_work where packet_id in (i_pos, i_pr, i_rot, i_st, i_te, i_tp);
   return next;

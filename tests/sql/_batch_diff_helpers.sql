@@ -35,7 +35,7 @@ begin
     update mc.player set awaiting_teleport = teleport_id where random() < 0.15 and conn_id is not null;
     insert into mc.visible (viewer_eid, target_eid, viewer_conn)
     select a.entity_id, b.entity_id, a.conn_id from mc.player a join mc.player b on b.entity_id <> a.entity_id and abs(a.chunk_x - b.chunk_x) <= 2 and abs(a.chunk_z - b.chunk_z) <= 2
-     where a.conn_id is not null and b.conn_id is not null and random() < 0.9;
+     where a.conn_id is not null and b.conn_id is not null;     -- consistent with the rule (mc.visible is a cache of it; sql/468 recomputes only the pairs that change)
     if p_whole then
         insert into net.conn (conn_id, state, name, uuid, compression, entity_id, view_cx, view_cz, gamemode)
         select conn_id, 'play', name, uuid, -1, entity_id,

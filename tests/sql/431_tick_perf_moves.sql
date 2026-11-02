@@ -11,6 +11,7 @@ declare i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_
         r record; k int; kind int; nx float8; nz float8; ny float8;
 begin
   perform setseed(p_seed);
+  update mc.server_property set value = '2' where key = 'view-distance';       -- the visibility relation below is built with a range of 2 chunks: the server rule (and the per-chunk fan-out) must agree
   truncate mc.play_out, mc.play_in, mc.play_in_work, mc.visible, mc.kick;
   delete from mc.player;
   insert into mc.player (uuid, name, conn_id, entity_id, x, y, z, yaw, pitch, on_ground, chunk_x, chunk_z, sent_qx, sent_qy, sent_qz, sent_yaw, sent_pitch,
@@ -71,7 +72,7 @@ begin
 end $$;
 -- everything that can differ, as one comparable text per component
 create or replace function t.digest() returns table(what text, val text) language sql as $$
-  select 'player', coalesce(string_agg(md5(p::text), ',' order by p.uuid), '') from mc.player p
+  select 'player', coalesce(string_agg(md5((to_jsonb(p) - 'vis_ocx' - 'vis_ocz')::text), ',' order by p.uuid), '') from mc.player p
   union all select 'out_per_conn', coalesce(string_agg(conn_id || ':' || md5(d), ',' order by conn_id), '')
               from (select conn_id, string_agg(encode(data, 'hex'), '|' order by seq) d from mc.play_out group by conn_id) q
   union all select 'kick', coalesce(string_agg(conn_id || ':' || encode(reason_nbt, 'hex'), ',' order by conn_id), '') from mc.kick

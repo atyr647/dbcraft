@@ -12,6 +12,8 @@ select t.reset();
 truncate mc.visible;
 update mc.game_state set spawn_x = 0.5, spawn_y = 64, spawn_z = 0.5, spawn_yaw = 0;
 update mc.server_property set value = '10' where key = 'view-distance';
+-- these tests pin the bytes of a move packet tick by tick: send on every tick (the cadence itself, vanilla's interval of 2 with a per-entity phase, is tested in tests/sql/468)
+update mc.server_property set value = '1' where key = 'dbcraft.player-update-interval';
 
 ------------------------------------------------------------------------------------------------ join
 select mc.on_join(1, '00000000-0000-0000-0000-000000003301', 'P1');
@@ -49,8 +51,10 @@ select t.send(1, 'move_player_pos', t.pos(1.5, 64, 0.5));
 select t.send(1, 'client_tick_end', '\x');
 select t.eq('apply: one mover', (select moved from mc.apply_player_moves(10)), 1);
 select t.eq('P1 moved', (select x from mc.player where name = 'P1'), 1.5::float8);
-select t.eq('P2 receives a relative move of exactly one block (4096/4096) with 10 ticks since the last update', t.out(2),
-  mc.pkt_move_entity_pos((select entity_id from mc.player where name = 'P1'), 4096, 0, 0, 10, true));
+-- ticks is the update interval, not the game ticks since the last update: vanilla sends ticks = 2 even for the first move after a long idle (recorded: docs/PERF-CROWD.md);
+-- the interval is pinned to 1 in this file, so ticks = 1 here although 10 game ticks passed
+select t.eq('P2 receives a relative move of exactly one block (4096/4096) with ticks = the update interval (1)', t.out(2),
+  mc.pkt_move_entity_pos((select entity_id from mc.player where name = 'P1'), 4096, 0, 0, 1, true));
 select t.eq('the mover itself receives nothing', t.out(1), '\x'::bytea);
 select t.is_true('input consumed', not exists (select 1 from mc.play_in));
 
