@@ -42,6 +42,12 @@ insert into net.inbox (conn_id, payload) select 901, (select decode(string_agg(m
 select t.is_true('the inbox bloats too', pg_total_relation_size('net.inbox') > 20000000);
 delete from net.inbox;
 select t.is_true('a drained inbox is truncated by the trim', net.trim_queues() >= 1 and pg_total_relation_size('net.inbox') < 100000);
+-- mc.play_in (filled and consumed inside one tick) is trimmed too
+truncate mc.play_in;
+insert into mc.play_in (conn_id, packet_id, body) select 901, 1, (select decode(string_agg(md5(random()::text || x::text), ''), 'hex') from generate_series(1, 512) x where g > 0) from generate_series(1, 3000) g;
+delete from mc.play_in;
+select t.is_true('mc.play_in bloats too', pg_total_relation_size('mc.play_in') > 20000000);
+select t.is_true('a drained mc.play_in is truncated by the trim', net.trim_queues() >= 1 and pg_total_relation_size('mc.play_in') < 100000);
 update mc.server_property set value = '0' where key = 'dbcraft.queue-trim-bytes';
 insert into net.outbox (conn_id, data) select 1, decode(repeat(md5(g::text), 512), 'hex') from generate_series(1, 3000) g;
 delete from net.outbox;

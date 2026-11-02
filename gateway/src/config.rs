@@ -32,10 +32,11 @@ pub struct Config {
     pub maintenance_tables: String,
 }
 
-/// Tables vacuumed by the maintenance thread: NOT the queues net.inbox/net.outbox (net.drain_outbox() truncates them: a vacuum of a queue that is empty at that moment
-/// would only store reltuples = 0, see sql/435 and sql/780).
-pub const DEFAULT_MAINTENANCE_TABLES: &str = "net.conn, mc.player, mc.visible, mc.chunk_wanted, mc.chunk_request, mc.play_in, mc.pending_ack, mc.kick, mc.block_event, \
-mc.block_actor, mc.game_state, mc.server_tick_log, mc.tick_log, net.gateway_control, net.gateway_stats";
+/// Tables vacuumed by the maintenance thread.  NEVER a table the tick TRUNCATEs (mc.play_out, mc.play_in_work, net.batch, mc.pending_ack, mc.block_actor, mc.play_in): a
+/// VACUUM holds a lock that makes the tick's TRUNCATE wait (5 seconds under load, docs/SOAK.md).  Not net.inbox/net.outbox either: net.drain_outbox() truncates them
+/// (sql/780), and a vacuum of a queue that is empty at that moment would only store reltuples = 0 (sql/435).
+pub const DEFAULT_MAINTENANCE_TABLES: &str = "net.conn, mc.player, mc.visible, mc.chunk_wanted, mc.chunk_request, mc.kick, mc.block_event, mc.game_state, \
+mc.server_tick_log, mc.tick_log, net.gateway_control, net.gateway_stats";
 
 /// A table list is spliced into a VACUUM statement: only identifiers of the form schema.table (lower-case letters, digits, underscore) are accepted.
 pub fn valid_table_list(s: &str) -> bool {

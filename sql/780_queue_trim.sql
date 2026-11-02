@@ -52,6 +52,7 @@ begin
     if lim <= 0 then return 0; end if;
     if net.trim_queue('net.outbox', lim) then n := n + 1; end if;
     if net.trim_queue('net.inbox', lim) then n := n + 1; end if;
+    if net.trim_queue('mc.play_in', lim) then n := n + 1; end if;                              -- filled and consumed inside one tick: empty here too
     return n;
 end $$;
 
