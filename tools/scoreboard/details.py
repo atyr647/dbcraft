@@ -17,10 +17,10 @@ for line in open(path):
               "| fill100k", {k: round(v, 1) for k, v in x["fill_100k"].items()})
         if "set_blocks_1000_scattered_ms" in x:
             print("   set_blocks, 1000 scattered edits in one call (ms):", x["set_blocks_1000_scattered_ms"])
-    if r.get("tag") == "tail" and x:
+    if r.get("tag") in ("tail2", "tail-unbounded", "explore-default", "explore-batched") and x:
         s = x.get("series_avg_ms") or []
         t = max(1, len(s) // 3)
-        print(r["server"], "tail: %d windows; mean tick first third %.1f ms, last third %.1f ms" % (len(s), sum(s[:t]) / t, sum(s[-t:]) / t),
+        print(r.get("tag"), r["server"], "tail: %d windows; mean tick first third %.1f ms, last third %.1f ms" % (len(s), sum(s[:t]) / t, sum(s[-t:]) / t),
               "| gc pauses", x.get("gc_pauses"), "max", x.get("gc_pause_max_ms"), "p99", x.get("gc_pause_p99_ms"),
               "| dbcraft: over50", x.get("over50"), "over100", x.get("over100"), "p99.9", x.get("mspt_p999"), "max", x.get("mspt_max"), "tps", x.get("tps"),
               "| failures", x.get("failures"), "failed clients", x.get("failed"), "| busy", round(r.get("machine_busy_frac", 0), 2), "load", r["load_before"]["load1"])

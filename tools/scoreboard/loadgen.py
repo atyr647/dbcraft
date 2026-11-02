@@ -103,6 +103,7 @@ class Client(asyncio.Protocol):
         self.pending_token = None
         self.sent_at = 0.0
         self.disconnect_info = None
+        self.t_failed = None
 
     # ---- connection
     def connection_made(self, tr):
@@ -214,7 +215,8 @@ class Client(asyncio.Protocol):
                     self.pending_token = None
             elif name == "minecraft:disconnect":
                 self.failed = "disconnect in play"
-                self.disconnect_info = body[:160].hex()
+                self.disconnect_info = "".join(chr(b) if 32 <= b < 127 else "." for b in body[:200])     # the text component's keys are readable in the NBT
+                self.t_failed = time.perf_counter()
 
     # ---- behaviour, called once per tick
     def tick(self, now):
@@ -324,6 +326,13 @@ async def main():
             for c in failed:
                 d["failures"][c.failed] = d["failures"].get(c.failed, 0) + 1
             d["rtt_ms"] = [r for c in clients if c.probe for r in c.rtts]
+            reasons = {}
+            for c in failed:
+                if c.disconnect_info:
+                    reasons[c.disconnect_info[:120]] = reasons.get(c.disconnect_info[:120], 0) + 1
+            d["disconnect_reasons"] = reasons
+            tf = sorted(c.t_failed - t0 for c in failed if c.t_failed)
+            d["failure_times_s"] = [round(tf[0], 1), round(tf[len(tf) // 2], 1), round(tf[-1], 1)] if tf else []
         return d
 
     # ---- wait until ready

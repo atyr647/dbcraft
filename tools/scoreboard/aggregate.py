@@ -76,6 +76,8 @@ def main():
             continue
         label = {"idle0": "idle, 0 players", "pop": "%d players, %d%% moving" % (n, round(mv * 100)), "storm": "login storm, %d joins in 1 s" % n,
                  "blocks": "block edits", "chunkload": "one joiner, view distance %d" % vd, "world10k": "10,000-chunk flat world"}[scen]
+        if tag and tag not in ("core", "storm", "misc", "misc2", "misc3"):
+            label += " [%s]" % tag
         mode = g["dbcraft"][0]["server"].split(":")[-1]
         notq = sum(1 for r in g["vanilla"] + g["dbcraft"] if not r.get("quiet_reached", True))
         loads = [r["load_before"]["load1"] for r in g["vanilla"] + g["dbcraft"]]

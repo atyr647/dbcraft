@@ -298,11 +298,15 @@ def merge_done(done):
             out[k] += d.get(k, [])
         for f, c in d.get("failures", {}).items():
             out["failures"][f] = out["failures"].get(f, 0) + c
+        for f, c in d.get("disconnect_reasons", {}).items():
+            out.setdefault("disconnect_reasons", {})[f] = out.get("disconnect_reasons", {}).get(f, 0) + c
+        out.setdefault("failure_times_s", []).extend(d.get("failure_times_s", []))
     return out
 
 
 def client_summary(m):
-    s = {"clients": m["clients"], "in_play": m["in_play"], "failed": m["failed"], "failures": m["failures"], "rx_mib": m["rx_bytes"] / 1048576.0}
+    s = {"clients": m["clients"], "in_play": m["in_play"], "failed": m["failed"], "failures": m["failures"], "rx_mib": m["rx_bytes"] / 1048576.0,
+         "disconnect_reasons": m.get("disconnect_reasons"), "failure_times_s": m.get("failure_times_s")}
     if m["rtt_ms"]:
         r = C.stats(m["rtt_ms"])
         s.update({"rtt_n": r["n"], "rtt_p50": r["p50"], "rtt_p95": r["p95"], "rtt_p99": r["p99"], "rtt_max": r["max"]})
