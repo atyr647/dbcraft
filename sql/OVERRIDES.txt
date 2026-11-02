@@ -57,3 +57,4 @@ mc.entity_viewers_refresh/1 | 541_entity_lanes.sql | the 'enters the view' annou
 mc.entity_tracker/2 | 542_entity_tracker_fast.sql | mob movement packets built by one tight function (mc.epkt_mob_move), byte-identical to the chain of small functions
 mc.entity_tick/1 | 541_entity_lanes.sql | the entity tick with the lane steps (dbcraft.entity_lanes = off gives the exact sweep for everybody)
 mc.deliver_ready_chunks/0 | 791_join_chunk_budget.sql | adds the shared per-tick chunk budget (dbcraft.chunk-budget-per-tick) to sql/430's delivery; identical bytes per connection
+net.drain_outbox/0 | 780_queue_trim.sql | the same drain, plus net.trim_queues(): a big EMPTY queue is truncated so the DELETE-per-tick queues cannot bloat without a vacuum (docs/SOAK.md)

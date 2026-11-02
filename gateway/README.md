@@ -49,6 +49,8 @@ The config file is `key=value` lines; every key has an environment override `DBC
 | `tick_ms` | 50 | tick period (drift-free) |
 | `tick_fn` | `mc.server_tick()` | or `mc.server_tick_batched()` (an allowlist; nothing else is accepted) |
 | `inbox_mode` | `copy` | how inbound frames reach `net.inbox`: binary `copy` or an `unnest` insert |
+| `maintenance_s` | 5 | seconds between maintenance passes: a thread with its own connection runs `VACUUM (ANALYZE, SKIP_LOCKED)` on `maintenance_tables`; 0 = off (then run `tools/janitor.sh` or rely on autovacuum with `autovacuum_naptime = 1s`). See `docs/SOAK.md` |
+| `maintenance_tables` | `net.conn, mc.player, mc.visible, mc.chunk_wanted, ...` | schema-qualified tables (a-z, 0-9, `_`) separated by commas or spaces; NOT the queues `net.inbox`/`net.outbox` (the database truncates them itself: `sql/780`) |
 | `max_connections`, `max_connections_per_ip` | 20000, 16 | connection limits (0 = unlimited per IP) |
 | `new_connections_per_ip_per_sec`, `login_attempts_per_ip_per_min` | 5, 20 | rate limits (0 = unlimited) |
 | `read_timeout_s` | 30 | idle sockets and stalls inside a frame are closed |

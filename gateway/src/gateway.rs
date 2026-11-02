@@ -11,6 +11,7 @@ use crate::ffi::pq::{self, Param, Pg, PgError};
 use crate::ffi::sys::{self, Epoll, EventFd, EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP};
 use crate::keypkt::parse_key_packet;
 use crate::limits::{LimitConfig, Limits};
+use crate::maint::Maintenance;
 use crate::mojang::{Outcome, PoolConfig, SessionPool, Verdict};
 use crate::reader::{Await, Item, Reader, ReaderLimits};
 use crate::wq::WriteQueue;
@@ -88,6 +89,8 @@ pub struct Gateway {
     key_pkt: u32,
     pool: SessionPool,
     limits: Limits,
+    /// the vacuum thread with its own connection (cfg.maintenance_s > 0), see maint.rs and docs/SOAK.md
+    maint: Option<Maintenance>,
     conns: HashMap<u64, Conn>,
     next_id: u64,
     has_control: bool,
@@ -183,6 +186,7 @@ impl Gateway {
                 cfg.listen, cfg.tick_ms, cfg.tick_fn, cfg.inbox_mode, cfg.session_url, cleaned
             ),
         );
+        let maint = if cfg.maintenance_s > 0 { Some(Maintenance::spawn(&cfg.database_url, cfg.maintenance_s, &cfg.maintenance_tables)) } else { None };
         Ok(Gateway {
             tick: Duration::from_millis(cfg.tick_ms),
             cfg,
@@ -196,6 +200,7 @@ impl Gateway {
             key_pkt,
             pool,
             limits,
+            maint,
             conns: HashMap::new(),
             next_id: 1,
             has_control,
@@ -758,6 +763,10 @@ impl Gateway {
         let all: Vec<u64> = self.conns.keys().copied().collect();
         for id in all {
             self.drop_conn(id, false, "");
+        }
+        if let Some(m) = self.maint.take() {
+            let (passes, errors) = m.stop();
+            log(self.start, &format!("maintenance thread stopped after {passes} vacuum passes, {errors} errors"));
         }
         log(self.start, "stopped");
     }

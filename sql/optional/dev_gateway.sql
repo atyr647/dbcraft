@@ -101,11 +101,15 @@ while True:
         late = 1
     ids, payloads, accepted = [], [], []
     dropped = []
-    # ---- I/O until the tick is due
+    # ---- I/O until the tick is due.  ALWAYS one pass over the ready sockets, even when the tick is already late: a loop that overruns must not stop reading
+    # (it used to break out at once when `left <= 0`, so under sustained overload no socket was ever read, keep-alive answers sat in the kernel buffers and the
+    # server kicked every player for not answering: docs/SOAK.md)
+    first_pass = True
     while True:
         left = deadline - time.perf_counter()
-        if left <= 0: break
-        for key, mask in sel.select(timeout=left):
+        if left <= 0 and not first_pass: break
+        first_pass = False
+        for key, mask in sel.select(timeout=max(left, 0.0)):
             if key.data is None:
                 try:
                     while True:
