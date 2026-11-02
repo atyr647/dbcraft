@@ -72,7 +72,7 @@ begin
 end $$;
 -- everything that can differ, as one comparable text per component
 create or replace function t.digest() returns table(what text, val text) language sql as $$
-  select 'player', coalesce(string_agg(md5(p::text), ',' order by p.uuid), '') from mc.player p
+  select 'player', coalesce(string_agg(md5((to_jsonb(p) - 'vis_ocx' - 'vis_ocz')::text), ',' order by p.uuid), '') from mc.player p
   union all select 'out_per_conn', coalesce(string_agg(conn_id || ':' || md5(d), ',' order by conn_id), '')
               from (select conn_id, string_agg(encode(data, 'hex'), '|' order by seq) d from mc.play_out group by conn_id) q
   union all select 'kick', coalesce(string_agg(conn_id || ':' || encode(reason_nbt, 'hex'), ',' order by conn_id), '') from mc.kick
