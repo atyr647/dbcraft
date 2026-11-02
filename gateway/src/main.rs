@@ -9,6 +9,7 @@ mod gateway;
 mod json;
 mod keypkt;
 mod limits;
+mod maint;
 mod mojang;
 mod reader;
 mod wq;

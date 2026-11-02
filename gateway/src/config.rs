@@ -26,6 +26,27 @@ pub struct Config {
     pub rsa_bits: u32,
     /// how the tick's inbound frames reach the database: "copy" (binary COPY) or "unnest" (one INSERT with array parameters)
     pub inbox_mode: String,
+    /// seconds between the maintenance passes (a thread with its own connection: VACUUM (ANALYZE, SKIP_LOCKED) of `maintenance_tables`); 0 = off.  docs/SOAK.md
+    pub maintenance_s: u64,
+    /// schema-qualified tables, separated by commas or spaces: the tables that grow by DELETE/UPDATE and that autovacuum is too slow for (default: see below)
+    pub maintenance_tables: String,
+}
+
+/// Tables vacuumed by the maintenance thread: NOT the queues net.inbox/net.outbox (net.drain_outbox() truncates them: a vacuum of a queue that is empty at that moment
+/// would only store reltuples = 0, see sql/435 and sql/780).
+pub const DEFAULT_MAINTENANCE_TABLES: &str = "net.conn, mc.player, mc.visible, mc.chunk_wanted, mc.chunk_request, mc.play_in, mc.pending_ack, mc.kick, mc.block_event, \
+mc.block_actor, mc.game_state, mc.server_tick_log, mc.tick_log, net.gateway_control, net.gateway_stats";
+
+/// A table list is spliced into a VACUUM statement: only identifiers of the form schema.table (lower-case letters, digits, underscore) are accepted.
+pub fn valid_table_list(s: &str) -> bool {
+    let items: Vec<&str> = s.split(|c: char| c == ',' || c.is_whitespace()).filter(|t| !t.is_empty()).collect();
+    !items.is_empty()
+        && items.iter().all(|t| {
+            let mut parts = t.split('.');
+            let (a, b, c) = (parts.next(), parts.next(), parts.next());
+            let ident = |p: &str| !p.is_empty() && p.len() <= 63 && p.chars().all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_') && !p.starts_with(|ch: char| ch.is_ascii_digit());
+            c.is_none() && matches!((a, b), (Some(x), Some(y)) if ident(x) && ident(y))
+        })
 }
 
 impl Default for Config {
@@ -49,6 +70,8 @@ impl Default for Config {
             session_retries: 1,
             rsa_bits: 1024,
             inbox_mode: "copy".into(),
+            maintenance_s: 5,
+            maintenance_tables: DEFAULT_MAINTENANCE_TABLES.into(),
         }
     }
 }
@@ -101,6 +124,8 @@ impl Config {
                 "session_retries" => num!(session_retries, k, v),
                 "rsa_bits" => num!(rsa_bits, k, v),
                 "inbox_mode" => self.inbox_mode = v.clone(),
+                "maintenance_s" => num!(maintenance_s, k, v),
+                "maintenance_tables" => self.maintenance_tables = v.clone(),
                 other => return Err(format!("unknown setting {other:?}")),
             }
         }
@@ -126,6 +151,12 @@ impl Config {
         if self.prelogin_max_frame == 0 || self.prelogin_max_frame > 2_097_151 {
             return Err("prelogin_max_frame must be between 1 and 2097151".into());
         }
+        if self.maintenance_s > 3600 {
+            return Err("maintenance_s must be at most 3600 (0 turns the maintenance off)".into());
+        }
+        if self.maintenance_s > 0 && !valid_table_list(&self.maintenance_tables) {
+            return Err("maintenance_tables must be schema.table names (a-z, 0-9, _) separated by commas or spaces".into());
+        }
         Ok(())
     }
 
@@ -140,7 +171,7 @@ impl Config {
         for key in [
             "database_url", "listen", "tick_ms", "tick_fn", "max_connections", "max_connections_per_ip", "new_connections_per_ip_per_sec", "login_attempts_per_ip_per_min",
             "read_timeout_s", "max_pending_bytes", "prelogin_max_frame", "prelogin_max_bytes", "session_url", "session_timeout_ms", "session_workers", "session_retries",
-            "rsa_bits", "inbox_mode",
+            "rsa_bits", "inbox_mode", "maintenance_s", "maintenance_tables",
         ] {
             if let Some(v) = env(&format!("DBCRAFT_GW_{}", key.to_ascii_uppercase())) {
                 over.insert(key.to_string(), v);
