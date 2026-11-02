@@ -55,7 +55,7 @@ for st in ("login", "configuration"):
 # ---- 2. the entry burst
 EXACT = {"change_difficulty", "player_abilities", "set_held_slot", "recipe_book_settings", "recipe_book_add", "commands", "initialize_border",
          "ticking_state", "ticking_step", "post_effects", "container_set_content", "set_experience", "game_event", "player_info_update"}
-ENTITY_PREFIX = {"set_entity_data", "update_attributes"}                    # body starts with the entity id VarInt
+ENTITY_PREFIX = {"set_entity_data"}                    # body starts with the entity id VarInt
 NAME_ONLY = {"login", "entity_event", "player_position", "server_data", "set_time", "set_default_spawn_position", "set_chunk_cache_center"}
 def burst(events):
     out = []
@@ -72,6 +72,9 @@ for a, b in zip(v, o):
     ba, bb = body_of(a), body_of(b)
     if n == "update_recipes":                                    # same content; vanilla's order varies between its own runs
         if len(ba) != len(bb) or sorted(ba) != sorted(bb): bad.append(f"{n} (vanilla {len(ba)} B, ours {len(bb)} B)")
+    elif n == "update_attributes":                               # same attribute records; vanilla iterates a hash map, so the order differs between its own runs (checked: equal as a multiset of bytes)
+        sa, sb = ba[vi(ba, 0)[1]:], bb[vi(bb, 0)[1]:]
+        if len(sa) != len(sb) or sorted(sa) != sorted(sb): bad.append(f"{n} (vanilla {len(sa)} B, ours {len(sb)} B)")
     elif n in ("update_advancements", "set_health"):             # player state (advancement dates, saturation): replayed from the capture, length only
         if len(ba) != len(bb): bad.append(f"{n} length (vanilla {len(ba)} B, ours {len(bb)} B)")
     elif n in EXACT:
