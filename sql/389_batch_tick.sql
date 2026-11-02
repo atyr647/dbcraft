@@ -94,7 +94,12 @@ begin
     t3 := clock_timestamp();
     -- 6: chunk streaming
     begin
-        if f_ref then perform net.stream_chunks_ref(); elsif f_ch then perform net.stream_chunks_batched(); else perform net.stream_chunks(); end if;
+        -- the batched streaming variants predate the asynchronous chunk queue (sql/430) and only send chunks to players that crossed a border: the chunks that
+        -- were requested at a join and generated LATER are delivered by mc.deliver_ready_chunks (net.stream_chunks calls it itself).  Found by the scoreboard:
+        -- without this a joiner into an unexplored world got no chunk at all under the batched tick (docs/SCOREBOARD.md).
+        if f_ref then perform net.stream_chunks_ref(); perform mc.deliver_ready_chunks();
+        elsif f_ch then perform net.stream_chunks_batched(); perform mc.deliver_ready_chunks();
+        else perform net.stream_chunks(); end if;
     exception when others then
         insert into mc.error_log (tick, step, message) values (cur, 'stream_chunks', sqlerrm); raise warning 'stream_chunks failed: %', sqlerrm;
     end;
