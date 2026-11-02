@@ -143,10 +143,10 @@ EOF
   cleanup_vanilla; sleep 1
   echo "    phase 2/2: the same world, view distance 2: recording ..."
   vstart 2
+  rec status --status          # first: nobody has connected yet, so the response says 0 players online (tests/sql/110 expects that; right after a login the bot is still being dropped)
   rec play_nocomp --seconds 8
   [ -s "$DBCRAFT_CAPTURES/play_nocomp.jsonl" ] || { echo "the main capture failed"; exit 1; }
   rec play --seconds 6
-  rec status --status
   rec badname --name "has space"
   rec play_known --known-core --seconds 4
   rec play_disconnect --bad-teleport --seconds 4
