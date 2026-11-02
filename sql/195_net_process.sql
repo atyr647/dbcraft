@@ -59,6 +59,7 @@ end $$;
 create or replace function net.process() returns int language plpgsql as $$
 declare r record; n int; handled int[] := net.handled_play_ids();
 begin
+    perform net.join_gate();                          -- sql/790: admission gate for logins (parks/releases hello packets; a no-op when nothing is queued or the budget is off)
     truncate net.batch;
     with t as (delete from net.inbox returning conn_id, seq, payload) insert into net.batch select conn_id, seq, payload from t;
     get diagnostics n = row_count;

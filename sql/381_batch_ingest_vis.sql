@@ -13,6 +13,7 @@ declare n int; r record;
         handled int[] := net.handled_play_ids();
         valid   int[] := (select coalesce(array_agg(protocol_id), '{}') from ref.packet where state = 'play' and direction = 'serverbound');
 begin
+    perform net.join_gate();                          -- sql/790: admission gate for logins (parks/releases hello packets; a no-op when nothing is queued or the budget is off)
     if exists (select 1 from net.batch) then delete from net.batch; end if;           -- leftovers of a failed tick (the baseline truncates here)
     with inb as (delete from net.inbox returning conn_id, seq, payload),
          c as materialized (select i.conn_id, i.seq, i.payload, net.pid(i.payload) as pid, n.state as st, coalesce(n.closing, true) as closing
