@@ -127,7 +127,7 @@ select t.reset(); truncate mc.kick;
 update mc.game_state set game_time = 19; update mc.player set keepalive_id = null, keepalive_sent_tick = 1000000;
 select t.eq('tick returns the tick number', mc.tick(), 20::bigint);
 select t.eq('tick 20: B''s earlier /tp (5 blocks) goes out as one relative move (20480/4096), then the game time',
-  t.out(1), mc.pkt_move_entity_pos((select entity_id from mc.player where name = 'B'), 0, 0, 20480, 20, true) || mc.pkt_set_time(20));
+  t.out(1), mc.pkt_move_entity_pos((select entity_id from mc.player where name = 'B'), 0, 0, 20480, 2, true) || mc.pkt_set_time(20));   -- ticks = the update interval (2), as in vanilla's recording (tests/game_verify.py: +1.0 block, 2 ticks), not the 20 game ticks that passed
 select t.eq('tick log row written', (select players from mc.tick_log where tick = 20), 2);
 select t.is_true('tick log has phase timings', (select ms_total >= 0 and ms_moves >= 0 and ms_visibility >= 0 from mc.tick_log where tick = 20));
 select t.reset();
