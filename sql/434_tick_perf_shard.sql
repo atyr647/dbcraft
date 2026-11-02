@@ -10,6 +10,7 @@
 
 create or replace function mc.apply_player_moves_shard(cur_tick bigint, p_k int, p_n int) returns table(moved int, corrected int, kicked int) language plpgsql as $$
 declare
+  iv int := coalesce(nullif((select value::int from mc.server_property where key = 'dbcraft.player-update-interval'), 0), 2);   -- vanilla: a player's update interval is 2 ticks (EntityType.PLAYER.updateInterval(2); sendChanges runs its body when tickCount % 2 = 0; each ServerEntity counts from its own creation, so the phase differs per entity: here (tick + entity id) % interval)
   i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot'); i_rot int := mc.sid('move_player_rot');
   i_st int := mc.sid('move_player_status_only'); i_te int := mc.sid('client_tick_end'); i_tp int := mc.sid('accept_teleportation');
   c_pos int := mc.pid('move_entity_pos'); c_pr int := mc.pid('move_entity_pos_rot'); c_rot int := mc.pid('move_entity_rot'); c_head int := mc.pid('rotate_head');
@@ -92,9 +93,9 @@ begin
      where p.conn_id = any (my)),
   mv as materialized (
     select nv.*, mc.quant(nx) - sent_qx as dx, mc.quant(ny) - sent_qy as dy, mc.quant(nz) - sent_qz as dz,
-           (nyaw <> sent_yaw or npitch <> sent_pitch) as rot_changed, greatest(cur_tick - last_sent_tick, 1)::int as ticks
+           (nyaw <> sent_yaw or npitch <> sent_pitch) as rot_changed, least(greatest(cur_tick - last_sent_tick, 1), iv)::int as ticks
       from nv
-     where mc.quant(nx) <> sent_qx or mc.quant(ny) <> sent_qy or mc.quant(nz) <> sent_qz or nyaw <> sent_yaw or npitch <> sent_pitch),
+     where (cur_tick + eid) % iv = 0 and (mc.quant(nx) <> sent_qx or mc.quant(ny) <> sent_qy or mc.quant(nz) <> sent_qz or nyaw <> sent_yaw or npitch <> sent_pitch)),
   pk as materialized (
     select mv.eid,
       (case when abs(dx) > 32767 or abs(dy) > 32767 or abs(dz) > 32767 then mc.pkt_teleport_entity(mv.eid, nx, ny, nz, 0, 0, 0, nyaw, npitch, nog)

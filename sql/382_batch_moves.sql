@@ -7,11 +7,13 @@
 -- The statement must not update a row twice (PostgreSQL allows one update per row per statement): confirmation, correction, apply and sent_* are folded into `eff`.
 create or replace function mc.moves_batched(cur_tick bigint) returns table(moved int, corrected int, kicked int) language plpgsql as $$
 declare
+  iv int := coalesce(nullif((select value::int from mc.server_property where key = 'dbcraft.player-update-interval'), 0), 2);   -- vanilla: a player's update interval is 2 ticks (EntityType.PLAYER.updateInterval(2); sendChanges runs its body when tickCount % 2 = 0; each ServerEntity counts from its own creation, so the phase differs per entity: here (tick + entity id) % interval)
   i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot'); i_rot int := mc.sid('move_player_rot');
   i_st int := mc.sid('move_player_status_only'); i_te int := mc.sid('client_tick_end'); i_tp int := mc.sid('accept_teleportation');
   c_pos int := mc.pid('move_entity_pos'); c_pr int := mc.pid('move_entity_pos_rot'); c_rot int := mc.pid('move_entity_rot'); c_head int := mc.pid('rotate_head');
   kick_nbt bytea := proto.nbt_root(mc.disconnect_nbt('multiplayer.disconnect.invalid_player_movement', null));
   kick_pkt bytea := mc.pkt_disconnect(proto.nbt_root(mc.disconnect_nbt('multiplayer.disconnect.invalid_player_movement', null)));
+  f_eid int[]; f_data bytea[]; f_ocx int[]; f_ocz int[]; v_conn int[]; v_eid int[]; v_cx int[]; v_cz int[]; any_dirty boolean;   -- the fan-out's inputs (sql/430_tick_perf_fanout.sql)
 begin
   with
   raw as materialized (select m.seq, m.conn_id, m.packet_id, m.body from mc.play_in_work m where m.packet_id in (i_pos, i_pr, i_rot, i_st, i_te, i_tp)),
@@ -80,13 +82,13 @@ begin
       from st1 s),
   -- 7. tell the viewers: the packet per mover is built ONCE (MATERIALIZED, see sql/340) and fanned out, concatenated per viewer connection
   mv as materialized (
-    select e.entity_id as eid, e.uuid, e.ex as x, e.ey as y, e.ez as z, e.eyaw as yaw, e.epitch as pitch, e.eground as on_ground,
+    select e.entity_id as eid, e.chunk_x as ocx, e.chunk_z as ocz, e.uuid, e.ex as x, e.ey as y, e.ez as z, e.eyaw as yaw, e.epitch as pitch, e.eground as on_ground,
            mc.quant(e.ex) - e.sent_qx as dx, mc.quant(e.ey) - e.sent_qy as dy, mc.quant(e.ez) - e.sent_qz as dz,
-           (e.eyaw <> e.sent_yaw or e.epitch <> e.sent_pitch) as rot_changed, greatest(cur_tick - e.last_sent_tick, 1)::int as ticks
+           (e.eyaw <> e.sent_yaw or e.epitch <> e.sent_pitch) as rot_changed, least(greatest(cur_tick - e.last_sent_tick, 1), iv)::int as ticks
       from eff e
-     where mc.quant(e.ex) <> e.sent_qx or mc.quant(e.ey) <> e.sent_qy or mc.quant(e.ez) <> e.sent_qz or e.eyaw <> e.sent_yaw or e.epitch <> e.sent_pitch),
+     where (cur_tick + e.entity_id) % iv = 0 and (mc.quant(e.ex) <> e.sent_qx or mc.quant(e.ey) <> e.sent_qy or mc.quant(e.ez) <> e.sent_qz or e.eyaw <> e.sent_yaw or e.epitch <> e.sent_pitch)),
   pk as materialized (
-    select mv.eid,
+    select mv.eid, mv.ocx, mv.ocz,
       (case when abs(dx) > 32767 or abs(dy) > 32767 or abs(dz) > 32767 then mc.pkt_teleport_entity(mv.eid, x, y, z, 0, 0, 0, yaw, pitch, on_ground)
             else proto.varint(octet_length(q.b) + 1) || set_byte('\x00'::bytea, 0, q.id) || q.b end)
       || case when rot_changed then proto.varint(octet_length(h.b) + 1) || set_byte('\x00'::bytea, 0, c_head) || h.b else '\x'::bytea end as data
@@ -125,11 +127,19 @@ begin
       select conn_id, 1 as ph, kick_pkt as data from kk
       union all
       select conn_id, 2, mc.pkt_player_position(tid, x, y, z, 0, 0, 0, yaw, pitch, 0) from cr
-      union all
-      select v.viewer_conn, 3, string_agg(pk.data, '\x'::bytea order by pk.eid) from mc.visible v join pk on pk.eid = v.target_eid group by v.viewer_conn
     ) u order by ph
     returning 1),
   dlt as (delete from mc.play_in_work where packet_id in (i_pos, i_pr, i_rot, i_st, i_te, i_tp) returning 1)
-  select (select count(*) from mv)::int, (select count(*) from cr)::int, (select count(*) from kk)::int into moved, corrected, kicked;
+  select (select count(*) from mv)::int, (select count(*) from cr)::int, (select count(*) from kk)::int,
+         coalesce((select array_agg(pk.eid order by pk.eid) from pk), '{}'), coalesce((select array_agg(pk.data order by pk.eid) from pk), '{}'),
+         coalesce((select array_agg(pk.ocx order by pk.eid) from pk), '{}'), coalesce((select array_agg(pk.ocz order by pk.eid) from pk), '{}'),
+         coalesce((select array_agg(e.conn_id order by e.conn_id) from eff e where e.conn_id is not null), '{}'),
+         coalesce((select array_agg(e.entity_id order by e.conn_id) from eff e where e.conn_id is not null), '{}'),
+         coalesce((select array_agg(e.chunk_x order by e.conn_id) from eff e where e.conn_id is not null), '{}'),
+         coalesce((select array_agg(e.chunk_z order by e.conn_id) from eff e where e.conn_id is not null), '{}'),
+         coalesce((select bool_or(e.vis_dirty) from eff e where e.conn_id is not null), false)
+    into moved, corrected, kicked, f_eid, f_data, f_ocx, f_ocz, v_conn, v_eid, v_cx, v_cz, any_dirty;
+  -- phase 3 of the ordered output (after kicks and corrections): the viewers' movement packets, one blob per occupied chunk in a crowd
+  perform mc.fanout_moves(f_eid, f_data, f_ocx, f_ocz, v_conn, v_eid, v_cx, v_cz, any_dirty);
   return next;
 end $$;

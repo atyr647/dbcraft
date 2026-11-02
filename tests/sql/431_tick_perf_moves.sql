@@ -11,6 +11,7 @@ declare i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_
         r record; k int; kind int; nx float8; nz float8; ny float8;
 begin
   perform setseed(p_seed);
+  update mc.server_property set value = '2' where key = 'view-distance';       -- the visibility relation below is built with a range of 2 chunks: the server rule (and the per-chunk fan-out) must agree
   truncate mc.play_out, mc.play_in, mc.play_in_work, mc.visible, mc.kick;
   delete from mc.player;
   insert into mc.player (uuid, name, conn_id, entity_id, x, y, z, yaw, pitch, on_ground, chunk_x, chunk_z, sent_qx, sent_qy, sent_qz, sent_yaw, sent_pitch,
