@@ -75,4 +75,66 @@ The Rust gateway does not have this flaw: every iteration calls `epoll_wait` (ti
 | Guard | `tests/soak/run.sh`, `tools/soak/soak.py --check` | see below |
 | Regression test | `tests/sql/780_queue_trim.sql` | bloat is reproduced, trimmed, never loses a row, the drain returns every byte and trims, 0 disables |
 
-RESULTS_PLACEHOLDER
+## A third finding: vacuuming a table the tick TRUNCATEs stalls the tick
+
+The first fixed run still had two 5-second stalls (ticks 10900 and 11240).  `tools/janitor.sh` vacuumed `mc.play_out`; the tick `TRUNCATE`s `mc.play_out` every 20th
+tick, and a TRUNCATE needs ACCESS EXCLUSIVE, which waits behind the vacuum's lock.  Rule, now written into `tools/janitor.sh` and `gateway/src/config.rs`: **never vacuum a
+table the tick truncates** (`mc.play_out`, `mc.play_in_work`, `net.batch`, `mc.pending_ack`, `mc.block_actor`).  `net.inbox`, `net.outbox` and `mc.play_in` are not vacuumed
+either: `net.drain_outbox()` trims them (sql/780).
+
+## Results after the fixes (200 walking players, view distance 10, 20 minutes, PL/Python gateway + `tools/janitor.sh`)
+
+`tests/soak/run.sh` / `tools/soak/soak.py --check`: **RESULT: PASS** (0 clients dropped, every queue under 16 MB, no growth).  Other workers' test suites ran on the same
+machine during the first minutes (load average 3-9), so the first five minutes are slower than the rest; that is the login burst (201 joiners at view distance 10) competing
+with two chunk generators, not a trend.  One sample per minute (full data: `tools/soak/report.py /tmp/soak-proof-plpy.jsonl`):
+
+| t (s) | players | SQL tick (ms) | gateway loop (ms) | ticks/s | `net.outbox` (MB) | `net.inbox` (MB) | `mc.play_out` (MB) | gateway RSS (MiB) |
+|---|---|---|---|---|---|---|---|---|
+| 60 | 201 | 78 | 78 | 9.6 | 6.9 | 4.3 | 5.6 | 156 |
+| 120 | 201 | 59 | 80 | 12.1 | 7.8 | 2.0 | 0.0 | 156 |
+| 180 | 201 | 132 | 286 | 9.5 | 4.4 | 8.2 | 7.3 | 159 |
+| 241 | 201 | 132 | 405 | 8.0 | 0.0 | 5.9 | 3.9 | 163 |
+| 301 | 201 | 43 | 55 | 18.8 | 0.0 | 3.8 | 0.0 | 163 |
+| 361 | 201 | 39 | 47 | 20.0 | 6.4 | 0.0 | 0.0 | 163 |
+| 421 | 201 | 37 | 40 | 20.0 | 6.2 | 7.7 | 0.0 | 164 |
+| 481 | 201 | 36 | 26 | 19.6 | 6.8 | 5.5 | 2.5 | 164 |
+| 542 | 201 | 31 | 35 | 19.7 | 4.1 | 3.2 | 0.0 | 164 |
+| 602 | 201 | 34 | 35 | 20.0 | 0.0 | 0.0 | 0.0 | 164 |
+| 662 | 201 | 33 | 32 | 20.0 | 5.1 | 7.1 | 0.0 | 164 |
+| 722 | 201 | 36 | 20 | 17.9 | 0.0 | 4.7 | 0.0 | 164 |
+| 782 | 201 | 35 | 32 | 19.3 | 7.1 | 2.5 | 2.3 | 164 |
+| 842 | 201 | 28 | 27 | 20.0 | 5.2 | 0.0 | 0.0 | 164 |
+| 902 | 201 | 27 | 22 | 20.0 | 6.3 | 6.6 | 0.0 | 164 |
+| 963 | 201 | 28 | 32 | 20.0 | 7.2 | 4.3 | 0.0 | 164 |
+| 1023 | 201 | 27 | 28 | 20.0 | 5.0 | 2.0 | 0.0 | 164 |
+| 1083 | 201 | 28 | 24 | 20.0 | 7.3 | 8.0 | 0.0 | 164 |
+| 1143 | 201 | 25 | 27 | 20.0 | 7.4 | 5.6 | 0.0 | 164 |
+| 1203 | 201 | 32 | 23 | 19.5 | 4.9 | 3.4 | 0.0 | 164 |
+
+The queues saw-tooth between 0 and the 8 MiB bound instead of reaching 1.2 GB; the tick time **falls** from minute 5 to minute 20 (36 ms to about 27 ms) and the
+slow first five minutes are the login burst.  Baseline for comparison: all clients dropped at 339 s with the loop at 90 ms and 1.4 GB of queues.  The same scenario
+with the Rust gateway (8 minutes, maintenance thread on by default): PASS, 201 players, tick 100 ms during the join burst and 31 ms at the end, queues 5-19 MB.
+
+## The guard
+
+```
+tests/soak/run.sh [plpython|rust] [MINUTES=10] [CLIENTS=200]
+python3 tools/soak/soak.py --kind rust --setup --check --n 200 --minutes 20      # the driver itself, own cluster via DBCRAFT_PGPORT
+```
+
+It fails (exit 1) when the SQL tick or the gateway loop time of the last quarter of the steady state is more than `--max-growth` (default 2.0, `SOAK_MAX_GROWTH`) times
+that of the first quarter, when any client drops (`--allow-drops`, default 0), or when a queue table (`net.inbox`, `net.outbox`, `mc.play_out`, `mc.play_in`,
+`mc.play_in_work`, `net.play_inbox`, `net.batch`) exceeds `--max-queue-mb` (default 64, `SOAK_MAX_QUEUE_MB`).  It is sensitive to a loaded machine: judge it on a quiet one.
+The unit-level guard is `tests/sql/780_queue_trim.sql` (bloat reproduced, trimmed, no row lost).
+
+## Requirements and remaining risks
+
+* **PL/Python dev gateway: run `tools/janitor.sh` next to it.**  The statistics blindness is in principle unfixable inside one long CALL.  The queue trimming (sql/780) keeps
+  the server alive without it, but `mc.chunk_wanted`, `mc.visible`, `net.conn` and the logs then depend on autovacuum, which never hears about them.
+* The Rust gateway runs its own maintenance thread (`maintenance_s`, `maintenance_tables`); with it off, use the janitor or `autovacuum_naptime = 1s`.
+* Queue trimming assumes **one gateway session**; with several gateways set `dbcraft.queue-trim-bytes = 0` and vacuum the queues instead.
+* A TRUNCATE invalidates cached plans that mention the table: it happens once per trim (every few seconds at this load) and costs a re-plan, visible as the 51 ms `drain`
+  samples in the early runs.  A larger bound trades memory for fewer trims.
+* `net.drain_outbox_ref()` (opt-in experimental variant) does not trim.
+* Not measured: runs longer than 20 minutes, more than 200 players, a quiet machine (load was 3-9 from other workers, so absolute times are pessimistic), and the Rust
+  gateway for 20 minutes (8 minutes only).
