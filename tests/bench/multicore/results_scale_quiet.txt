@@ -1,0 +1,72 @@
+# Model name: Intel(R) Xeon(R) Processor @ 2.10GHz;Thread(s) per core: 1;Core(s) per socket: 4;Socket(s): 1;
+cpu  13017947 197227 1592541 7815927 256099 0 365686 172467 0 0
+round=1 workload=cpu clients=1 tps=33.893304 load_before=0.41 psi=avg10=0.12
+round=1 workload=cpu clients=2 tps=64.955857 load_before=0.42 psi=avg10=0.06
+round=1 workload=cpu clients=3 tps=89.769823 load_before=0.55 psi=avg10=1.05
+round=1 workload=cpu clients=4 tps=117.034012 load_before=0.69 psi=avg10=3.36
+round=1 workload=compute clients=1 tps=927.148501 load_before=0.95 psi=avg10=2.30
+round=1 workload=compute clients=2 tps=2018.196188 load_before=0.88 psi=avg10=1.36
+round=1 workload=compute clients=3 tps=3332.040665 load_before=0.97 psi=avg10=1.73
+round=1 workload=compute clients=4 tps=4679.371955 load_before=1.13 psi=avg10=3.37
+round=1 workload=upd_log clients=1 tps=102.705675 load_before=1.33 psi=avg10=1.85
+round=1 workload=upd_log clients=2 tps=147.631051 load_before=1.30 psi=avg10=1.16
+round=1 workload=upd_log clients=3 tps=193.139416 load_before=1.25 psi=avg10=1.95
+round=1 workload=upd_log clients=4 tps=213.896517 load_before=1.39 psi=avg10=7.53
+round=1 workload=upd_unl clients=1 tps=147.366931 load_before=1.60 psi=avg10=4.37
+round=1 workload=upd_unl clients=2 tps=240.297441 load_before=1.43 psi=avg10=1.96
+round=1 workload=upd_unl clients=3 tps=388.719811 load_before=1.47 psi=avg10=1.92
+round=1 workload=upd_unl clients=4 tps=450.252860 load_before=1.47 psi=avg10=4.38
+round=1 workload=queue clients=1 tps=71.036740 load_before=1.67 psi=avg10=2.52
+round=1 workload=queue clients=2 tps=140.054849 load_before=1.70 psi=avg10=1.46
+round=1 workload=queue clients=3 tps=259.655683 load_before=1.58 psi=avg10=1.82
+round=1 workload=queue clients=4 tps=329.282835 load_before=1.70 psi=avg10=3.94
+round=1 workload=tick clients=1 tps=40.736622 load_before=1.80 psi=avg10=2.41
+round=1 workload=tick clients=2 tps=77.047631 load_before=1.74 psi=avg10=1.23
+round=1 workload=tick clients=3 tps=106.671027 load_before=1.76 psi=avg10=1.51
+round=1 workload=tick clients=4 tps=126.672763 load_before=2.04 psi=avg10=4.44
+round=1 workload=tick_shared clients=1 tps=41.077237 load_before=2.28 psi=avg10=2.80
+round=1 workload=tick_shared clients=2 tps=70.728149 load_before=2.00 psi=avg10=1.58
+round=1 workload=tick_shared clients=3 tps=93.210529 load_before=2.00 psi=avg10=1.89
+round=1 workload=tick_shared clients=4 tps=119.022081 load_before=1.99 psi=avg10=4.46
+round=2 workload=cpu clients=1 tps=35.388697 load_before=2.15 psi=avg10=2.93
+round=2 workload=cpu clients=2 tps=61.063889 load_before=2.06 psi=avg10=1.31
+round=2 workload=cpu clients=3 tps=85.717732 load_before=1.89 psi=avg10=1.22
+round=2 workload=cpu clients=4 tps=117.878764 load_before=1.98 psi=avg10=3.78
+round=2 workload=compute clients=1 tps=906.770869 load_before=2.04 psi=avg10=2.19
+round=2 workload=compute clients=2 tps=1754.405276 load_before=1.96 psi=avg10=2.26
+round=2 workload=compute clients=3 tps=2839.294832 load_before=1.96 psi=avg10=2.73
+round=2 workload=compute clients=4 tps=3904.531434 load_before=1.88 psi=avg10=4.11
+round=2 workload=upd_log clients=1 tps=79.386155 load_before=2.05 psi=avg10=2.34
+round=2 workload=upd_log clients=2 tps=148.243070 load_before=1.81 psi=avg10=1.43
+round=2 workload=upd_log clients=3 tps=196.314833 load_before=1.82 psi=avg10=2.05
+round=2 workload=upd_log clients=4 tps=212.006974 load_before=1.92 psi=avg10=5.62
+round=2 workload=upd_unl clients=1 tps=117.416033 load_before=1.99 psi=avg10=3.52
+round=2 workload=upd_unl clients=2 tps=241.449432 load_before=1.91 psi=avg10=1.93
+round=2 workload=upd_unl clients=3 tps=328.541488 load_before=1.85 psi=avg10=1.64
+round=2 workload=upd_unl clients=4 tps=437.038766 load_before=1.94 psi=avg10=3.39
+round=2 workload=queue clients=1 tps=83.633370 load_before=2.08 psi=avg10=2.32
+round=2 workload=queue clients=2 tps=152.207763 load_before=2.00 psi=avg10=1.60
+round=2 workload=queue clients=3 tps=247.911679 load_before=2.00 psi=avg10=1.66
+round=2 workload=queue clients=4 tps=320.094054 load_before=1.91 psi=avg10=3.55
+round=2 workload=tick clients=1 tps=36.775434 load_before=2.16 psi=avg10=2.29
+round=2 workload=tick clients=2 tps=72.043809 load_before=2.05 psi=avg10=1.43
+round=2 workload=tick clients=3 tps=104.247944 load_before=2.04 psi=avg10=1.70
+round=2 workload=tick clients=4 tps=116.151863 load_before=2.12 psi=avg10=4.08
+round=2 workload=tick_shared clients=1 tps=41.053439 load_before=2.01 psi=avg10=2.73
+round=2 workload=tick_shared clients=2 tps=66.056143 load_before=1.93 psi=avg10=1.40
+round=2 workload=tick_shared clients=3 tps=94.603045 load_before=1.78 psi=avg10=1.94
+round=2 workload=tick_shared clients=4 tps=115.022404 load_before=1.96 psi=avg10=4.96
+# wait events, tick workload, 4 clients
+tps=123.410652
+wait events for tick with 4 clients (samples):
+    192 CPU
+     24 LWLock:WALBufMapping
+     15 Timeout:SpinDelay
+      4 IO:WALWrite
+      2 IO:DataFileExtend
+# wait events, upd_log workload, 4 clients
+tps=194.422763
+wait events for upd_log with 4 clients (samples):
+    198 CPU
+     41 Timeout:SpinDelay
+# done

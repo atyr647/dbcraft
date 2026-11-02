@@ -116,6 +116,8 @@ begin
     exception when others then
         insert into mc.error_log (tick, step, message) values (cur, 'kicks', sqlerrm); raise warning 'kicks failed: %', sqlerrm;
     end;
+    -- 7b: the entity simulation, opt-in (dbcraft.entity-mode, sql/550)
+    if mc.entity_mode() <> 'off' then perform mc.entity_step(cur); end if;
     -- 8: drain the game's queue into the connection layer's
     if f_ref then
         n_out := mc.drain_batched_ref(cur);

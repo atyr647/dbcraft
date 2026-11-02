@@ -12,6 +12,7 @@ psql -X -q -At -d "$DB" -v ON_ERROR_STOP=1 -f ../../integration/bench.sql -f sha
 psql -X -q -At -d "$DB" -v ON_ERROR_STOP=1 -c "select ibench.setup($N, 100)" -c "select count(*) from mc.refresh_visibility()" -c "vacuum (analyze) mc.player, mc.visible, net.conn" > /dev/null
 printf 'select par2.iter(0, 1);\n' > /tmp/shard_n1.sql
 printf 'select par2.iter(:client_id, 2);\n' > /tmp/shard_n2.sql
+printf 'select par2.iter(:client_id, 3);\n' > /tmp/shard_n3.sql
 printf 'select par2.iter(:client_id, 4);\n' > /tmp/shard_n4.sql
 ref() { $PGB -n -c "$1" -j "$1" -T 3 -f cpu_only.sql pgb 2>&1 | awk '/^tps =/ {print $3}'; }
 run() { psql -X -q -At -d "$DB" -c "truncate mc.play_out, mc.play_in_work" > /dev/null; $PGB -n -c "$1" -j "$1" -T "$SECS" -f "/tmp/shard_n$1.sql" "$DB" 2>&1 | awk '/^tps =/ {print $3}'; }
@@ -19,7 +20,7 @@ printf 'players %s; load average at start %s\n' "$N" "$(cut -d' ' -f1 /proc/load
 printf '%8s %12s %12s %12s   %s\n' workers "ms per tick" "speed-up" "reference" "efficiency"
 for r in $(seq 1 "$ROUNDS"); do
   r1=$(ref 1); t1=$(run 1); base_ms=$(echo "1000 / $t1" | bc -l)
-  for w in 1 2 4; do
+  for w in 1 2 3 4; do
     if [ "$w" != 1 ]; then rw=$(ref "$w"); tw=$(run "$w"); else rw=$r1; tw=$t1; fi
     ms=$(echo "1000 / ($tw / $w)" | bc -l); sp=$(echo "$base_ms / $ms" | bc -l); rs=$(echo "$rw / $r1" | bc -l)
     printf '%8d %12.1f %12.2f %12.2f   %.2f\n' "$w" "$ms" "$sp" "$rs" "$(echo "$sp / $rs" | bc -l)"

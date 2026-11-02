@@ -1,0 +1,46 @@
+## off 200 2000 160 50
+A mode=off players=200 mobs=2000 crowd=0 pace=50 load=0.77 | n 140 | wall avg 18.6 p10 11.8 p50 17.6 p95 31.1 p99 35.0 max 35.9 | cpu avg 16.6 p10 9.5 p50 15.5 p95 29.2 p99 33.5 | runq-wait avg 0.0 | phases process 2.9 game 10.3 blocks 0.2 chunks 3.8 drain 1.1 | out rows 312 KB 358
+wall 8.2 s for 160 ticks = 51.4 ms per tick
+## inline 200 2000 160 50
+A mode=inline players=200 mobs=2000 crowd=0 pace=50 load=0.89 | n 140 | wall avg 62.1 p10 44.5 p50 60.2 p95 88.7 p99 96.0 max 109.9 | cpu avg 59.8 p10 42.4 p50 57.1 p95 85.9 p99 94.6 | runq-wait avg 0.0 | phases process 2.4 game 9.3 blocks 0.1 chunks 3.2 drain 46.7 | out rows 643 KB 336
+wall 11.2 s for 160 ticks = 70.1 ms per tick
+
+
+entity tick log (inline mode / B): ms_total avg 47.5 awake avg 996
+## split 200 2000 160 50
+A mode=split players=200 mobs=2000 crowd=0 pace=50 load=0.91 | n 140 | wall avg 25.3 p10 14.7 p50 24.1 p95 40.0 p99 52.2 max 62.3 | cpu avg 22.9 p10 12.6 p50 21.4 p95 36.7 p99 50.4 | runq-wait avg 0.0 | phases process 2.8 game 12.7 blocks 0.2 chunks 6.3 drain 2.9 | out rows 671 KB 466
+wall 8.2 s for 160 ticks = 51.5 ms per tick
+entity ticks 139 of 160 | ms avg 47.9 p50 49.4 p99 81.7 max 88.9
+entity lag (ticks behind A when B started the tick): 0:107  1:14  2:23  3:1
+entity tick log (inline mode / B): ms_total avg 52.4 awake avg 1085
+## off 500 2000 100 0
+A mode=off players=500 mobs=2000 crowd=0 pace=0 load=0.92 | n 80 | wall avg 51.1 p10 36.8 p50 48.4 p95 73.1 p99 95.8 max 98.9 | cpu avg 49.0 p10 34.4 p50 46.5 p95 71.7 p99 92.8 | runq-wait avg 0.0 | phases process 4.2 game 31.9 blocks 0.2 chunks 12.0 drain 2.5 | out rows 819 KB 1024
+wall 6.0 s for 100 ticks = 60.1 ms per tick
+## inline 500 2000 100 0
+A mode=inline players=500 mobs=2000 crowd=0 pace=0 load=0.94 | n 80 | wall avg 128.3 p10 93.8 p50 114.0 p95 219.7 p99 251.6 max 258.9 | cpu avg 125.2 p10 90.5 p50 110.8 p95 218.8 p99 251.3 | runq-wait avg 0.0 | phases process 4.2 game 32.0 blocks 0.2 chunks 10.3 drain 81.2 | out rows 1869 KB 1083
+wall 15.0 s for 100 ticks = 149.5 ms per tick
+
+
+entity tick log (inline mode / B): ms_total avg 89.9 awake avg 1134
+## split 500 2000 100 0
+A mode=split players=500 mobs=2000 crowd=0 pace=0 load=1.18 | n 80 | wall avg 60.3 p10 46.7 p50 57.8 p95 86.0 p99 96.4 max 97.3 | cpu avg 57.6 p10 43.1 p50 54.8 p95 85.6 p99 93.6 | runq-wait avg 0.0 | phases process 3.8 game 37.5 blocks 0.2 chunks 12.8 drain 5.4 | out rows 1775 KB 1152
+wall 7.1 s for 100 ticks = 71.0 ms per tick
+entity ticks 78 of 100 | ms avg 58.7 p50 53.5 p99 114.5 max 121.7
+entity lag (ticks behind A when B started the tick): 0:63  1:9  2:7
+entity tick log (inline mode / B): ms_total avg 80.0 awake avg 1239
+## off 500 2000 100 0 1
+A mode=off players=500 mobs=2000 crowd=1 pace=0 load=1.15 | n 80 | wall avg 67.0 p10 51.0 p50 69.1 p95 90.0 p99 94.8 max 94.9 | cpu avg 64.7 p10 47.6 p50 65.9 p95 88.0 p99 91.4 | runq-wait avg 0.0 | phases process 4.2 game 37.9 blocks 0.2 chunks 13.6 drain 10.8 | out rows 852 KB 3343
+wall 7.7 s for 100 ticks = 76.7 ms per tick
+## inline 500 2000 100 0 1
+A mode=inline players=500 mobs=2000 crowd=1 pace=0 load=1.12 | n 80 | wall avg 202.4 p10 150.9 p50 197.7 p95 282.2 p99 312.8 max 315.5 | cpu avg 198.9 p10 148.9 p50 193.8 p95 280.0 p99 308.5 | runq-wait avg 0.0 | phases process 3.5 game 36.6 blocks 0.2 chunks 8.6 drain 153.2 | out rows 1769 KB 5557
+wall 42.7 s for 100 ticks = 426.9 ms per tick
+
+
+entity tick log (inline mode / B): ms_total avg 334.7 awake avg 939
+## split 500 2000 100 0 1
+A mode=split players=500 mobs=2000 crowd=1 pace=0 load=1.45 | n 80 | wall avg 119.6 p10 74.0 p50 112.3 p95 207.9 p99 241.5 max 243.0 | cpu avg 117.0 p10 71.0 p50 110.4 p95 204.9 p99 239.5 | runq-wait avg 0.0 | phases process 5.6 game 81.2 blocks 0.4 chunks 16.7 drain 13.2 | out rows 787 KB 3127
+wall 12.5 s for 100 ticks = 124.9 ms per tick
+
+
+
+## done

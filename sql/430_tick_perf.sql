@@ -159,6 +159,9 @@ begin
     exception when others then
         insert into mc.error_log (tick, step, message) values (cur, 'kicks', sqlerrm); raise warning 'kicks failed: %', sqlerrm;
     end;
+    -- 7b: the entity simulation (opt-in, dbcraft.entity-mode, sql/550): 'inline' runs mc.entity_tick(cur) here, 'split' only applies what the entity connection asked for
+    -- (pickups); 'off' (the default) costs one property lookup
+    if mc.entity_mode() <> 'off' then perform mc.entity_step(cur); end if;
     -- 8: mc.play_out -> net.outbox, row for row in generation order; net.drain_outbox() concatenates per connection when the gateway reads (concatenating here
     -- as well cost 24 ms instead of 9 ms per tick at 2,000 players: the same bytes were aggregated twice).  Connections without compression (the common case) are
     -- written straight to net.outbox by the same statement; the frames of connections with compression come back in an array (no scratch table: a temp table
@@ -178,7 +181,8 @@ begin
             perform net.close(r.conn_id);
         end;
     end loop;
-    if cur % 20 = 0 and pg_relation_size('mc.play_out') > 0 then truncate mc.play_out; end if;          -- empty after the drain above; see the housekeeping note at the top
+    -- (split mode: another connection INSERTs into mc.play_out concurrently; TRUNCATE would wait for its transaction and destroy its committed rows, so the queue is only ever DELETEd)
+    if cur % 20 = 0 and pg_relation_size('mc.play_out') > 0 and mc.entity_mode() <> 'split' then truncate mc.play_out; end if;          -- empty after the drain above; see the housekeeping note at the top
     t5 := clock_timestamp();
     select count(*)::int into n_players from mc.player where conn_id is not null;
     insert into mc.server_tick_log (tick, frames_in, players, frames_out, ms_total, ms_process, ms_game, ms_blocks, ms_chunks, ms_drain)

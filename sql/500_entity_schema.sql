@@ -9,10 +9,10 @@ create table if not exists mc.entity_type_param (
     width           float8 not null,
     height          float8 not null,
     gravity         float8 not null,                 -- blocks/tick^2 (ItemEntity: 0.04, from the bytecode; LivingEntity: 0.08)
-    update_interval int not null,                    -- tracker: position check every N ticks (EntityType.updateInterval; mobs 3 as seen in the captured stepped deltas)
+    update_interval int not null,                    -- tracker: position check every N ticks (EntityType.updateInterval: the Builder default is 3, items 20, players 2; read from the bytecode)
     track_delta     boolean not null,                -- tracker also sends set_entity_motion when the velocity changed
     linear_delta    boolean not null,                -- true: VecDelta.Linear (flags 0/1 + 3 shorts, as the captured item packets); false: Stepped (ticks + 3 shorts)
-    tracking_chunks int not null,                    -- clientTrackingRange in chunks (FROM MEMORY: item 6, cow 10, zombie 8; not verified)
+    tracking_chunks int not null,                    -- clientTrackingRange in chunks (read from the 26.3 bytecode, EntityTypes + EntityType$Builder: item 6, cow 10, zombie 8; the Builder default is 5; docs/PERF-ENTITY.md, tests/sql/551)
     max_age         int,                             -- items despawn at 6000 ticks
     walk_speed      float8,                          -- mobs: blocks per tick while walking (APPROXIMATE, not vanilla's attribute model)
     can_chase       boolean not null default false

@@ -52,9 +52,11 @@ net.pkt_name/3 | 480_inlining.sql | key lookup as PL/pgSQL
 net.setting/1 | 480_inlining.sql | key lookup as PL/pgSQL
 mc.entity_active/1 | 541_entity_lanes.sql | the physics step skips entities that walk in a lane (analytic movement, docs/PERF-ENTITY.md)
 mc.entity_mask_invalidate/0 | 541_entity_lanes.sql | also drops the chunk's floor summary (lanes are validated against it)
-mc.entity_wake_on_block_event/0 | 541_entity_lanes.sql | a changed block also ends the lanes of the mobs near it
 mc.entity_viewers_refresh/1 | 541_entity_lanes.sql | the 'enters the view' announcement of a lane mob uses its viewers' delta base (it is not rewritten while it walks)
-mc.entity_tracker/2 | 542_entity_tracker_fast.sql | mob movement packets built by one tight function (mc.epkt_mob_move), byte-identical to the chain of small functions
-mc.entity_tick/1 | 541_entity_lanes.sql | the entity tick with the lane steps (dbcraft.entity_lanes = off gives the exact sweep for everybody)
+mc.entity_tracker/2 | 551_entity_fanout.sql | sql/542 (mob movement packets by one tight function, byte-identical) plus the remove_entities packet built once per entity instead of once per viewer pair (a crowd: 40 ms)
 mc.deliver_ready_chunks/0 | 791_join_chunk_budget.sql | adds the shared per-tick chunk budget (dbcraft.chunk-budget-per-tick) to sql/430's delivery; identical bytes per connection
 net.drain_outbox/0 | 780_queue_trim.sql | the same drain, plus net.trim_queues(): a big EMPTY queue is truncated so the DELETE-per-tick queues cannot bloat without a vacuum (docs/SOAK.md)
+mc.entity_lane_step/1 | 551_entity_fanout.sql | fan-out per chunk cell: one blob per (cell, tracking range) per viewer; viewers in the same order of cells (docs/PERF-ENTITY.md Part 2)
+mc.entity_wake_on_block_event/0 | 550_entity_split.sql | in split mode the block change is a command row for the entity connection instead of an UPDATE of its rows (sql/550 header); otherwise sql/541's body
+mc.entity_tick/1 | 550_entity_split.sql | sql/541's entity tick plus two hooks: the entity connection applies A's commands first, pickups go through mc.entity_pickup_dispatch (split mode files requests)
+mc.entity_despawn/1 | 551_entity_fanout.sql | the no-viewer test probes the interest relation per mob (offset 0) instead of hashing all of it (36 ms every 20th tick at 500 players)

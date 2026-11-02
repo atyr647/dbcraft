@@ -1,5 +1,8 @@
 # Can parallel query speed up the tick?
 
+> Update: this note is about Postgres's own parallel query (still neutral or slower). Using SEVERAL CONNECTIONS (sharded movement, the entity simulation on its own connection) was
+> re-measured on a quiet machine in docs/PERF-MULTICORE.md, with different results.
+
 **Short answer: no, not on PostgreSQL 16 and not for tick-sized work.** The tick uses one core while three idle. This note measures the ceiling of using Postgres's own parallel
 query (and two substitutes) on those idle cores, and finds that every variant is neutral or slower. Nothing was built into `sql/`; everything here is a measurement
 script under `tests/bench/parallel/`.
