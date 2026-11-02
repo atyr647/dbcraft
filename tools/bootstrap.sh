@@ -90,11 +90,12 @@ if have_caps && [ "$RECAPTURE" = 0 ]; then ok "captures in $DBCRAFT_CAPTURES"; e
   VPORT=${DBCRAFT_VANILLA_PORT:-25619}; VDIR="$DBCRAFT_HOME/vanilla"
   rm -rf "$VDIR"; mkdir -p "$VDIR" "$DBCRAFT_CAPTURES"
   echo "eula=true" > "$VDIR/eula.txt"      # Mojang's EULA: by running the server you accept it (https://aka.ms/MinecraftEULA)
-  cat > "$VDIR/server.properties" <<EOF
+  vprops() {   # $1 = view distance.  The tests expect this MOTD and 5 slots (tests/sql/110): do not change them.
+    cat > "$VDIR/server.properties" <<EOF
 online-mode=false
 server-port=$VPORT
 level-type=minecraft\:flat
-view-distance=2
+view-distance=$1
 simulation-distance=2
 network-compression-threshold=-1
 spawn-protection=0
@@ -112,27 +113,36 @@ white-list=false
 enforce-whitelist=false
 level-name=world
 EOF
-  echo "    starting a throwaway vanilla server on port $VPORT ..."
-  # (cd; then the background command: `cd && cmd &` would background the whole list and $! would be the subshell, not Java)
-  ( cd "$VDIR"; nohup "$JAVA" -Xmx1G -jar "$DBCRAFT_SERVER_JAR" nogui >server.log 2>&1 & echo $! > "$VDIR/server.pid" )
+  }
   cleanup_vanilla() {
     [ -f "$VDIR/server.pid" ] || return 0
-    local pid; pid=$(cat "$VDIR/server.pid"); kill "$pid" 2>/dev/null || return 0
-    for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.5; done
-    kill -9 "$pid" 2>/dev/null || true       # it saves the world on SIGTERM; this is only for a hung shutdown
+    local pid; pid=$(cat "$VDIR/server.pid"); kill "$pid" 2>/dev/null || return 0     # SIGTERM: the server saves the world, then exits
+    for _ in $(seq 1 60); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.5; done
+    kill -9 "$pid" 2>/dev/null || true       # only for a hung shutdown
+  }
+  vstart() {   # $1 = view distance
+    vprops "$1"; : > "$VDIR/server.log"
+    # (cd; then the background command: `cd && cmd &` would background the whole list and $! would be the subshell, not Java)
+    ( cd "$VDIR"; nohup "$JAVA" -Xmx1G -jar "$DBCRAFT_SERVER_JAR" nogui >server.log 2>&1 & echo $! > "$VDIR/server.pid" )
+    for _ in $(seq 1 120); do grep -q "Done (" "$VDIR/server.log" 2>/dev/null && break; sleep 1; done
+    grep -q "Done (" "$VDIR/server.log" || { echo "vanilla server did not start, see $VDIR/server.log"; exit 1; }
   }
   trap cleanup_vanilla EXIT
-  for _ in $(seq 1 120); do grep -q "Done (" "$VDIR/server.log" 2>/dev/null && break; sleep 1; done
-  grep -q "Done (" "$VDIR/server.log" || { echo "vanilla server did not start, see $VDIR/server.log"; exit 1; }
   # success = the recording exists: the bot exits non-zero when vanilla refuses it on purpose (an invalid name, a bad teleport), and that refusal IS the recording
   rec() { name=$1; shift; rm -f "$DBCRAFT_CAPTURES/$name.jsonl"
           python3 tools/capture_vanilla.py --port "$VPORT" --out "$DBCRAFT_CAPTURES/$name.jsonl" "$@" >"$DBCRAFT_LOG/capture-$name.log" 2>&1 || true
           if [ -s "$DBCRAFT_CAPTURES/$name.jsonl" ]; then echo "    recorded $name ($(wc -l < "$DBCRAFT_CAPTURES/$name.jsonl") packets)"
           else echo "    note     capture $name failed (see $DBCRAFT_LOG/capture-$name.log): tests that need it will skip"; fi; }
-  # Warm the vanilla world first: on a brand-new world the first chunks are sent before vanilla's light engine has finished with them, so a first-login capture
-  # holds different light data than every later one.  The tests (tests/sql/240) compare dbcraft's chunks with the steady-state form.
-  echo "    warming the vanilla world (3 throwaway logins) ..."
-  for w in 1 2 3; do python3 tools/capture_vanilla.py --port "$VPORT" --out "$DBCRAFT_LOG/warmup-$w.jsonl" --seconds 4 >/dev/null 2>&1 || true; done
+  # On a brand-new world vanilla's light engine has not finished with the chunks around the spawn when they are first sent, and the chunks on the edge of the loaded
+  # area are lit without their neighbours: a first-login capture holds different light data than a steady-state one (tests/sql/240 compares dbcraft with the
+  # steady state).  So: phase 1 loads and lights a large area (view distance 8) with two throwaway logins and saves it; phase 2 restarts the SAME world with view
+  # distance 2, so every chunk of the capture is loaded from disk, fully lit.
+  echo "    phase 1/2: a throwaway vanilla server (port $VPORT, view distance 8) generates and lights the area around the spawn ..."
+  vstart 8
+  for w in 1 2; do python3 tools/capture_vanilla.py --port "$VPORT" --out "$DBCRAFT_LOG/warmup-$w.jsonl" --seconds 8 >/dev/null 2>&1 || true; done
+  cleanup_vanilla; sleep 1
+  echo "    phase 2/2: the same world, view distance 2: recording ..."
+  vstart 2
   rec play_nocomp --seconds 8
   [ -s "$DBCRAFT_CAPTURES/play_nocomp.jsonl" ] || { echo "the main capture failed"; exit 1; }
   rec play --seconds 6
