@@ -227,6 +227,10 @@ class Client(asyncio.Protocol):
                 self.turn_at = now + random.uniform(3.0, 8.0)
             self.x += math.cos(self.heading) * SPEED
             self.z += math.sin(self.heading) * SPEED
+            b = self.args.bound
+            if b and (abs(self.x) > b or abs(self.z) > b):      # stay inside the explored area: turn back towards the origin
+                self.heading = math.atan2(-self.z, -self.x) + random.uniform(-0.6, 0.6)
+                self.turn_at = now + random.uniform(2.0, 5.0)
             out += frame("play", "minecraft:move_player_pos", struct.pack(">dddB", self.x, self.y, self.z, 1))
         self.tr.write(out)
 
@@ -259,6 +263,7 @@ async def main():
     ap.add_argument("--quiet", type=float, default=2.0, help="seconds without a chunk packet before a client counts as ready")
     ap.add_argument("--expect-chunks", type=int, default=0, help="chunks a client must have received to count as ready: (2*(view distance+1)+1)^2")
     ap.add_argument("--view-distance", type=int, default=10, help="view distance the clients ask for in client_information")
+    ap.add_argument("--bound", type=float, default=0.0, help="walkers turn back when they pass +-bound blocks (0 = they walk on: they leave the explored area)")
     ap.add_argument("--hold", type=float, default=30.0)
     ap.add_argument("--probe", action="store_true", help="add one chat-echo round-trip probe client")
     ap.add_argument("--no-go", action="store_true", help="do not wait for GO on stdin")

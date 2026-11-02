@@ -10,7 +10,7 @@ path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(C.OUT, "results.jsonl"
 for line in open(path):
     r = json.loads(line)
     x = r.get("result", {})
-    if r.get("tag") == "misc2" and r["scenario"] == "blocks" and r["rep"] == 0:
+    if r.get("tag") == "misc2" and r["scenario"] == "blocks" and r["rep"] == 0 and "single_edit" in x:
         print(r["server"], "failed commands:", x.get("failed_commands"), "responses:", {k: (v or "")[:60] for k, v in (x.get("responses") or {}).items()},
               "| gamerule:", (x.get("gamerule_response") or "")[:70])
         print("   single", {k: round(v, 2) for k, v in x["single_edit"].items()}, "| fill1k", {k: round(v, 2) for k, v in x["fill_1k"].items()},
@@ -24,6 +24,6 @@ for line in open(path):
               "| gc pauses", x.get("gc_pauses"), "max", x.get("gc_pause_max_ms"), "p99", x.get("gc_pause_p99_ms"),
               "| dbcraft: over50", x.get("over50"), "over100", x.get("over100"), "p99.9", x.get("mspt_p999"), "max", x.get("mspt_max"), "tps", x.get("tps"),
               "| failures", x.get("failures"), "failed clients", x.get("failed"), "| busy", round(r.get("machine_busy_frac", 0), 2), "load", r["load_before"]["load1"])
-    if r["scenario"] == "chunkload" and r.get("tag") == "misc" and x:
+    if r["scenario"] == "chunkload" and r.get("tag") == "misc3" and x:
         print(r["server"], "chunkload rep", r["rep"], {k: {"to_last_chunk_s": [round(t, 2) for t in v.get("to_last_chunk_s", [])], "chunks": v.get("chunks"), "mib": round(v.get("mib", 0), 1)}
                                                       for k, v in x.items() if isinstance(v, dict)})

@@ -231,7 +231,7 @@ def wait_quiet(max_busy, wait_s):
 
 # ---------------------------------------------------------------------------------------------------------------------------- load generator
 class LoadGens:
-    def __init__(self, port, n, moving, vd, join_spread, ready_timeout, hold, procs=None, probe=True, first0=0):
+    def __init__(self, port, n, moving, vd, join_spread, ready_timeout, hold, procs=None, probe=True, first0=0, bound=0):
         self.procs = []
         self.q = queue.Queue()
         per = 110
@@ -242,7 +242,7 @@ class LoadGens:
         for i, sz in enumerate(sizes):
             args = [sys.executable, LOADGEN, "--port", str(port), "--n", str(sz), "--first", str(first), "--join-spread", str(join_spread),
                     "--moving", str(moving), "--ready-timeout", str(ready_timeout), "--hold", str(hold), "--expect-chunks", str(chunks_expected(vd)),
-                    "--seed", str(100 + i), "--view-distance", str(vd)]
+                    "--seed", str(100 + i), "--view-distance", str(vd), "--bound", str(bound)]
             self.names += ["Bot%d" % j for j in range(first, first + sz)]
             if probe and i == 0:
                 args.append("--probe")
@@ -338,7 +338,7 @@ def scenario_pop(srv, a):
     srv.start(a.vd, a.n, first_names, a.spread)
     pregen_s = srv.pregenerate((a.spread + 15) // 16 + a.vd + 2)
     time.sleep(2.0)
-    lg = LoadGens(srv.port, a.n, a.moving, a.vd, a.join_spread, a.ready_timeout, a.hold)
+    lg = LoadGens(srv.port, a.n, a.moving, a.vd, a.join_spread, a.ready_timeout, a.hold, bound=a.bound)
     try:
         ready = lg.wait_event("READY", a.ready_timeout + 60)
         if len(ready) < len(lg.procs):
@@ -408,6 +408,7 @@ def main():
     ap.add_argument("--vd", type=int, default=10)
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--hold", type=float, default=45.0)
+    ap.add_argument("--bound", type=float, default=0.0, help="walkers stay within +-bound blocks (inside the pre-generated area); 0 = unbounded")
     ap.add_argument("--spread", type=int, default=480, help="players spawn within +-spread blocks of the origin")
     ap.add_argument("--settle", type=float, default=8.0)
     ap.add_argument("--join-spread", type=float, default=20.0)
