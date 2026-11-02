@@ -14,13 +14,33 @@ select (select count(*) from cap) > 0 and :'have_biomes'::boolean as have_captur
 
   -- Regenerate each chunk and compare.  Vanilla sends light layer 0 two ways (an "empty" bit, or a present all-zero array, a transient of its
   -- light engine on the first chunks of a session); both mean the same light, so each chunk must match in one of the two forms.
+  -- Vanilla writes the heightmap entries of a chunk packet in an order that depends on the JVM run (hash order of an enum-keyed map): to a client the map is the
+  -- same.  Both sides are compared with the entries in type order.
+  create function pg_temp.norm(p_hex text) returns text language plpgsql as $f$
+  declare b bytea := decode(p_hex, 'hex'); o int; cnt int; i int; st int; ty int; n int; tys int[] := '{}'; ents bytea[] := '{}'; head bytea; tail bytea;
+  begin
+      select nxt into o from proto.varint_read(b, 0);               -- frame length
+      select nxt into o from proto.varint_read(b, o);               -- packet id
+      o := o + 8;                                                   -- chunk x and z
+      head := substring(b from 1 for o);
+      select val, nxt into cnt, o from proto.varint_read(b, o);     -- number of heightmap entries
+      for i in 1..cnt loop
+          st := o;
+          select val, nxt into ty, o from proto.varint_read(b, o);  -- heightmap type
+          select val, nxt into n, o from proto.varint_read(b, o);   -- number of longs
+          o := o + n * 8;
+          tys := tys || ty; ents := ents || substring(b from st + 1 for o - st);
+      end loop;
+      tail := substring(b from o + 1);
+      return encode(head || proto.varint(cnt) || coalesce((select string_agg(e, ''::bytea order by y) from unnest(tys, ents) u(y, e)), '\x'::bytea) || tail, 'hex');
+  end $f$;
   create function pg_temp.verdict(p_cx int, p_cz int, p_framed text) returns text language plpgsql as $f$
   begin
       perform mc.generate_flat('minecraft:overworld', p_cx, p_cz, true);
       perform mc.ensure_chunk_current('minecraft:overworld', p_cx, p_cz);
-      if encode(proto.frame(mc.chunk_packet_id(), mc.chunk_packet_body('minecraft:overworld', p_cx, p_cz)), 'hex') = p_framed then return 'exact'; end if;
+      if pg_temp.norm(encode(proto.frame(mc.chunk_packet_id(), mc.chunk_packet_body('minecraft:overworld', p_cx, p_cz)), 'hex')) = pg_temp.norm(p_framed) then return 'exact'; end if;
       perform mc.compute_light('minecraft:overworld', p_cx, p_cz, true);
-      if encode(proto.frame(mc.chunk_packet_id(), mc.chunk_packet_body('minecraft:overworld', p_cx, p_cz)), 'hex') = p_framed then return 'sky0-as-data'; end if;
+      if pg_temp.norm(encode(proto.frame(mc.chunk_packet_id(), mc.chunk_packet_body('minecraft:overworld', p_cx, p_cz)), 'hex')) = pg_temp.norm(p_framed) then return 'sky0-as-data'; end if;
       return 'MISMATCH';
   end $f$;
   create temp table verdicts as select cx, cz, pg_temp.verdict(cx, cz, framed) v from cap;
@@ -33,8 +53,8 @@ select (select count(*) from cap) > 0 and :'have_biomes'::boolean as have_captur
 
   -- the cached path returns the same bytes as the uncached one
   select t.eq('mc.chunk_packet (cached) equals the capture for an exact chunk',
-              (select encode(mc.chunk_packet('minecraft:overworld', v.cx, v.cz), 'hex') from verdicts v where v.v = 'exact' limit 1),
-              (select c.framed from cap c join verdicts v using (cx, cz) where v.v = 'exact' limit 1));
+              (select pg_temp.norm(encode(mc.chunk_packet('minecraft:overworld', v.cx, v.cz), 'hex')) from verdicts v where v.v = 'exact' limit 1),
+              (select pg_temp.norm(c.framed) from cap c join verdicts v using (cx, cz) where v.v = 'exact' limit 1));
 \else
   do $d$ begin raise notice 'SKIPPED oracle test: no capture found (run the vanilla server and tools/capture_vanilla.py)'; end $d$;
 \endif

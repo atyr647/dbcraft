@@ -28,7 +28,8 @@ read <https://aka.ms/MinecraftEULA> first.
 
 Requirements (installed by `make setup` through `apt`): `postgresql-16`, `libpq5`, `libpq-dev`, `libssl-dev`, `libcurl4t64`, `zlib1g-dev`,
 `openjdk-25-jre-headless` (setup time only: the generator and the capture), `python3` (standard library only), `curl`, `unzip`, `ca-certificates`; `rustc`
-to build the gateway (it builds with plain `rustc`, no cargo and no crates: `gateway/build.sh`); optionally `postgresql-plpython3-16` for the PL/Python
+to build the gateway (it builds with plain `rustc`, no cargo and no crates: `gateway/build.sh`; **tested only with rustc 1.97 from rustup**: Ubuntu 24.04's packaged
+`rustc` is much older and has not been tried: if it fails, the build is skipped with a note and the PL/Python gateway is used); optionally `postgresql-plpython3-16` for the PL/Python
 development gateway (offline mode only; it is the fallback when `rustc` is missing).  Docker is also supported, see [docker/README.md](docker/README.md).
 
 ## Edit the world with SQL

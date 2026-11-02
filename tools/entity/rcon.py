@@ -6,7 +6,7 @@ state of vanilla's entity physics (doubles as printed by /data).
 
 usage: tools/entity/rcon.py cmd 'any command'
        tools/entity/rcon.py record NAME 'SUMMON_NBT' TICKS [--x X] [--y Y] [--z Z]
-          -> tests/fixtures/captured/entity_traj_NAME.json   (gitignored: it is data from Mojang's server)
+          -> $DBCRAFT_CAPTURES/entity_traj_NAME.json (default ~/.cache/dbcraft/captures; never committed: it is data from Mojang's server)
 Server: a vanilla copy with enable-rcon=true, rcon.port=25624 (RCON_PORT), rcon.password=entitytest (RCON_PW).  Standard library only.
 """
 import json, os, re, socket, struct, sys, time
@@ -83,8 +83,9 @@ def main():
         rows.append({"tick": t, "pos": pos, "motion": mot, "on_ground": og, "age": age[0] if age else None})
         r.cmd("tick step 1")
         time.sleep(0.12)
-    os.makedirs("tests/fixtures/captured", exist_ok=True)
-    json.dump({"name": name, "nbt": nbt, "start": [x, y, z], "rows": rows}, open(f"tests/fixtures/captured/entity_traj_{name}.json", "w"))
+    outdir = os.environ.get("DBCRAFT_CAPTURES") or os.path.join(os.environ.get("DBCRAFT_HOME", os.path.expanduser("~/.cache/dbcraft")), "captures")
+    os.makedirs(outdir, exist_ok=True)
+    json.dump({"name": name, "nbt": nbt, "start": [x, y, z], "rows": rows}, open(os.path.join(outdir, f"entity_traj_{name}.json"), "w"))
     print(name, "recorded", len(rows), "ticks; first", rows[0]["pos"], "last", rows[-1]["pos"], rows[-1]["on_ground"])
     r.cmd("kill @e[type=item]")
     r.cmd("tick unfreeze")

@@ -100,7 +100,7 @@ network-compression-threshold=-1
 spawn-protection=0
 enable-rcon=false
 enable-query=false
-motd=dbcraft-capture
+motd=vanilla-oracle
 max-players=5
 gamemode=creative
 difficulty=peaceful
@@ -118,8 +118,15 @@ EOF
   trap cleanup_vanilla EXIT
   for _ in $(seq 1 120); do grep -q "Done (" "$VDIR/server.log" 2>/dev/null && break; sleep 1; done
   grep -q "Done (" "$VDIR/server.log" || { echo "vanilla server did not start, see $VDIR/server.log"; exit 1; }
-  rec() { name=$1; shift; python3 tools/capture_vanilla.py --port "$VPORT" --out "$DBCRAFT_CAPTURES/$name.jsonl" "$@" >"$DBCRAFT_LOG/capture-$name.log" 2>&1 \
-            && echo "    recorded $name ($(wc -l < "$DBCRAFT_CAPTURES/$name.jsonl") packets)" || echo "    note     capture $name failed (see $DBCRAFT_LOG/capture-$name.log): tests that need it will skip"; }
+  # success = the recording exists: the bot exits non-zero when vanilla refuses it on purpose (an invalid name, a bad teleport), and that refusal IS the recording
+  rec() { name=$1; shift; rm -f "$DBCRAFT_CAPTURES/$name.jsonl"
+          python3 tools/capture_vanilla.py --port "$VPORT" --out "$DBCRAFT_CAPTURES/$name.jsonl" "$@" >"$DBCRAFT_LOG/capture-$name.log" 2>&1 || true
+          if [ -s "$DBCRAFT_CAPTURES/$name.jsonl" ]; then echo "    recorded $name ($(wc -l < "$DBCRAFT_CAPTURES/$name.jsonl") packets)"
+          else echo "    note     capture $name failed (see $DBCRAFT_LOG/capture-$name.log): tests that need it will skip"; fi; }
+  # Warm the vanilla world first: on a brand-new world the first chunks are sent before vanilla's light engine has finished with them, so a first-login capture
+  # holds different light data than every later one.  The tests (tests/sql/240) compare dbcraft's chunks with the steady-state form.
+  echo "    warming the vanilla world (3 throwaway logins) ..."
+  for w in 1 2 3; do python3 tools/capture_vanilla.py --port "$VPORT" --out "$DBCRAFT_LOG/warmup-$w.jsonl" --seconds 4 >/dev/null 2>&1 || true; done
   rec play_nocomp --seconds 8
   [ -s "$DBCRAFT_CAPTURES/play_nocomp.jsonl" ] || { echo "the main capture failed"; exit 1; }
   rec play --seconds 6
@@ -153,4 +160,5 @@ fi
 
 say "done in $(( $(date +%s) - STARTED )) s"
 if [ "$CHECK" = 1 ]; then [ "$MISSING" = 0 ] && echo "everything is in place" || { echo "something is missing: run tools/bootstrap.sh"; exit 1; }; exit 0; fi
+if [ "$DATA_ONLY" = 1 ]; then echo "Mojang data is ready under $DBCRAFT_HOME"; exit 0; fi
 if [ "$UP" = 1 ]; then tools/dev-up.sh; else echo "start the server with:  tools/dev-up.sh   (or: make up)"; fi

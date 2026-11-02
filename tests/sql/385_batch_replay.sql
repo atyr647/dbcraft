@@ -7,7 +7,7 @@
 
 create table t.cap (idx int, dir text, state text, pid int, name text, len int, hex text);
 \copy t.cap from program 'python3 tools/capture_to_tsv.py play_nocomp'
-select count(*) > 0 as have from t.cap \gset
+select coalesce(bool_or(name = 'minecraft:login' and dir = 'clientbound' and md5(hex) = '9fe6e9034c2f33d669b23b371c36ce58'), false) as have, count(*) > 0 as have_any from t.cap \gset
 \if :have
     \! python3 tools/load_datapack.py "$(python3 tools/capture_to_tsv.py --path play_nocomp)"
     \! python3 tools/load_static_packets.py "$(python3 tools/capture_to_tsv.py --path play_nocomp)"
@@ -65,5 +65,5 @@ select count(*) > 0 as have from t.cap \gset
                 (select hex from t.ours where idx = (select max(idx) from t.ours where pid = :chunk_id) + 1), encode(proto.frame(:bfin, proto.varint(49)), 'hex'));
     select t.eq('nothing else was sent in that tick', (select count(*) from t.ours where idx >= (select count(*) from t.theirs) and pid not in (:chunk_id, :bstart, :bfin))::int, 0);
 \else
-    select t.skip('no vanilla capture (tools/capture_vanilla.py --out tests/fixtures/captured/play_nocomp.jsonl)');
+    select t.skip(case when :'have_any'::boolean then 'the capture is not the reference session this test replays (it needs that one run of the vanilla server: entity id 20, hashed seed aa7208e3219d34cc, spawn -6.5 -60 -5.5, game time 2984); a capture recorded by tools/bootstrap.sh is a different run, so this byte-for-byte replay is SKIPPED' else 'no vanilla capture (tools/bootstrap.sh records one; or tools/capture_vanilla.py)' end);
 \endif
