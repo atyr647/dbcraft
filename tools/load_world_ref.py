@@ -2,14 +2,14 @@
 """Load the data-driven registry ids the world needs (biomes, dimension types) into mc.biome / mc.dimension_type.
 
 usage: tools/load_world_ref.py [CAPTURE.jsonl]
-       default capture: $DBCRAFT_CAPTURE, else /home/user/dbcraft/tests/fixtures/captured/play_nocomp.jsonl
+       default capture: $DBCRAFT_CAPTURE, else play_nocomp.jsonl from $DBCRAFT_CAPTURES / $DBCRAFT_HOME/captures / tests/fixtures/captured
 Reads the configuration-phase minecraft:registry_data packets recorded by tools/capture_vanilla.py: each carries a registry id and the entry keys
 in id order, so the id of an entry is its position.  Connection settings come from the libpq environment (or DBCRAFT_PSQL).
 Exit status 3 (and a message) when the capture is missing, so callers can skip.  Standard library only; nothing is written to the repository.
 """
 import json, os, struct, subprocess, sys
 
-path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("DBCRAFT_CAPTURE", "/home/user/dbcraft/tests/fixtures/captured/play_nocomp.jsonl")
+path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("DBCRAFT_CAPTURE") or __import__("_capture").find_capture("play_nocomp") or ""
 if not os.path.exists(path):
     print(f"no capture at {path}", file=sys.stderr)
     sys.exit(3)

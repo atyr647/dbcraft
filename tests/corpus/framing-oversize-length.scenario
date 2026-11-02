@@ -1,0 +1,14 @@
+corpus_format: 1
+id: framing-oversize-length
+title: Frame length above protocol maximum
+description: A declared length of 2097152 exceeds the maximum packet length and is rejected.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: serverbound
+  input: 80 80 80 01
+  outcome: rejected

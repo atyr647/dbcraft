@@ -8,6 +8,7 @@
 # The structural checks (override list, clean migration, inlining guard) run at the end exactly as in run.sh.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
+. tools/env.sh
 export DBCRAFT_PGPORT=${DBCRAFT_PGPORT:-54329}
 JOBS=${JOBS:-4}
 PREFIX=${DBCRAFT_TESTDB:-dbcraft_p}
@@ -22,7 +23,7 @@ echo "== template database $TPL"
 $ADMIN -c "drop database if exists $TPL" -c "create database $TPL" 2>/dev/null
 ( export PGDATABASE=$TPL
   tools/migrate.sh --fresh >/dev/null 2>&1 || { echo "FAIL migration"; exit 1; }
-  REPORTS=${DBCRAFT_REPORTS:-/home/user/atyr647/adacraft/generated/26.3/reports}
+  REPORTS=${DBCRAFT_REPORTS:-${DBCRAFT_HOME:-$HOME/.cache/dbcraft}/reports}
   if [ -d "$REPORTS" ]; then tools/load_reports.py >/dev/null || { echo "FAIL load_reports"; exit 1; }; else echo "NOTE: no reports found; tests needing ref.* data will fail"; fi
   CAP="$(python3 tools/capture_to_tsv.py --path play_nocomp 2>/dev/null || true)"
   if [ -n "$CAP" ]; then

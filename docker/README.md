@@ -3,23 +3,29 @@
 PostgreSQL 16 with PL/Python, the dbcraft schema, the recommended server configuration (`docker/postgresql.conf`, explained in [docs/TUNING.md](../docs/TUNING.md)) and,
 optionally, the **development gateway** (the PL/Python procedure `net.run`, offline mode, no compression) listening on port 25565.
 
-The production gateway (online mode, encryption, deflate) is not built; this container is for development and for trying the server with a real client.
+The container uses the PL/Python development gateway (offline mode only).  The Rust gateway (online mode, encryption, deflate) is built on the host with `make gateway`
+and is not part of this image (the Debian base image's `rustc` is too old to rely on; building it in a container is a follow-up).
 
 ```
 export DBCRAFT_PASSWORD=choose-one
-export DBCRAFT_REPORTS_DIR=/path/to/generator/reports            # your own output of the Minecraft data generator (blocks.json, registries.json, packets.json ...)
-export DBCRAFT_CAPTURES_DIR=/path/to/tests/fixtures/captured     # play_nocomp.jsonl from tools/capture_vanilla.py (registries, tags, opaque packets)
 docker compose up --build
 ```
 
+That is all: the first run starts a one-shot job (`mojang-data`, `docker/Dockerfile.data`) that runs `tools/bootstrap.sh --data-only` into the volume `dbcraft-mojang`.
+It downloads the pinned vanilla server jar from Mojang (SHA-1 verified), runs the official data generator from it and records a capture of a throwaway vanilla server
+(about two minutes, needs Internet access; by running Mojang's server it accepts Mojang's EULA for you, <https://aka.ms/MinecraftEULA>).  `dbcraft` starts after it
+has finished, mounts the volume read-only at `/data` and initialises the database from it.  Later runs find the finished volume and skip the job.
+
 ## Mojang data
 
-None of it is in the image or in git.  Two read-only mounts supply it:
+None of it is in an image or in git.  It lives in the volume `dbcraft-mojang`, which the job fills on your machine:
 
-| Mount | Needed for | Without it |
-|---|---|---|
-| `/data/reports` (`DBCRAFT_REPORTS_DIR`) | block states, items, packet ids (`ref.*`) | the server cannot run; the init script says so |
-| `/data/captures` (`DBCRAFT_CAPTURES_DIR`), file `play_nocomp.jsonl` | datapack registries, tags, a few opaque packets, world reference data | logins stop in the configuration phase |
+| Path in the volume | Made by | Needed for | Without it |
+|---|---|---|---|
+| `/data/reports` | the official data generator, run from the downloaded jar | block states, items, packet ids (`ref.*`) | the server cannot run; the init script says so |
+| `/data/captures/play_nocomp.jsonl` (+ a few more) | `tools/capture_vanilla.py` against a throwaway vanilla server | datapack registries, tags, a few opaque packets, world reference data | logins stop in the configuration phase |
+
+You can still mount your own reports and captures instead (replace the volume by bind mounts of `/data/reports` and `/data/captures`).
 
 ## What happens on first start
 
@@ -42,3 +48,8 @@ stops it for good) and `tools/janitor.sh`, which vacuums and analyses the hot ta
 Docker is not available in the environment this was written in (a client but no daemon), so **the image was not built and the compose file was not run**.  What was run:
 the configuration file was used to start a real PostgreSQL 16 cluster and the benchmark loop ran against it; `docker/initdb.d/10-dbcraft.sh` was run against that
 cluster with the same environment variables the image sets; `bash -n` on the entrypoint scripts.  See the end of docs/TUNING.md for the exact commands.
+
+The setup-time data job (`docker/Dockerfile.data`) runs `tools/bootstrap.sh --data-only --no-apt`.  That exact command was run on the host in an empty directory
+(`DBCRAFT_HOME=...`, about 70 s: jar download and SHA-1 check, generator, recordings; exit 0); the image build and `docker compose up` themselves were **not** run.
+Known limits: the image uses the PL/Python development gateway (the Rust gateway is built on the host), and `ubuntu:24.04` must provide `openjdk-25-jre-headless`
+(it does on the machine this was tested on; the package comes from the `noble-updates` pocket).

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from game_verify import CAP, DB, PORT, BOB, OP, load, body, varint
 
 want = sys.argv[1] if len(sys.argv) > 1 else ""
-reports = os.environ.get("DBCRAFT_REPORTS", "/home/user/atyr647/adacraft/generated/26.3/reports")
+reports = os.environ.get("DBCRAFT_REPORTS", os.path.join(os.environ.get("DBCRAFT_HOME", os.path.expanduser("~/.cache/dbcraft")), "reports"))
 pk = json.load(open(os.path.join(reports, "packets.json")))["play"]["clientbound"]
 NAME = {e["protocol_id"]: n.replace("minecraft:", "") for n, e in pk.items()}
 

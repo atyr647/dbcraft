@@ -1,0 +1,17 @@
+corpus_format: 1
+id: handshake-valid-status
+title: Valid handshake, status intent
+description: Handshake with next-state status is accepted.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: STATUS
+
+step:
+  direction: serverbound
+  input: 10 00 89 06 09 6C 6F 63 61 6C 68 6F 73 74 63 DD 01
+  outcome: accepted
+  packet_id: 0x00
+  state_after: STATUS
+  canonical: true

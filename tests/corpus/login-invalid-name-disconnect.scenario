@@ -1,0 +1,15 @@
+corpus_format: 1
+id: login-invalid-name-disconnect
+title: Invalid name disconnect and close
+description: Login Start with a space in the name is rejected and closes with a Login Disconnect pending.
+category: login
+protocol: 777
+provenance: hand-authored
+initial_state: LOGIN
+final_state: LOGIN
+
+step:
+  direction: serverbound
+  input: 1B 00 09 68 61 73 20 73 70 61 63 65 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10
+  outcome: rejected
+  rejection_category: disconnect

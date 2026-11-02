@@ -1,0 +1,21 @@
+# dbcraft setup-time data job: downloads the pinned vanilla server jar from Mojang (SHA-1 verified), runs the official data generator from it and records a
+# few packets of a throwaway vanilla server.  The results go into the volume mounted at /data (reports/ and captures/), never into an image layer or into git.
+#
+#   docker compose up        (runs this job once, then starts dbcraft; later runs skip every finished step)
+FROM ubuntu:24.04
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openjdk-25-jre-headless python3 ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# by running the vanilla server this job accepts Mojang's EULA for you: https://aka.ms/MinecraftEULA (tools/bootstrap.sh writes eula=true)
+ENV DBCRAFT_HOME=/data/home \
+    DBCRAFT_REPORTS=/data/reports \
+    DBCRAFT_CAPTURES=/data/captures \
+    DBCRAFT_SERVER_JAR=/data/server-26.3.jar
+
+WORKDIR /opt/dbcraft
+COPY tools /opt/dbcraft/tools
+RUN chmod +x /opt/dbcraft/tools/*.sh /opt/dbcraft/tools/*.py
+
+ENTRYPOINT ["/opt/dbcraft/tools/bootstrap.sh", "--data-only", "--no-apt"]

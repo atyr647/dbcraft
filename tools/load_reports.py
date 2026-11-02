@@ -7,7 +7,7 @@ The reports are Mojang's generated data; they are read from your own generator o
 """
 import json, os, subprocess, sys
 
-DEFAULT = "/home/user/atyr647/adacraft/generated/26.3/reports"
+DEFAULT = os.path.join(os.environ.get("DBCRAFT_HOME", os.path.expanduser("~/.cache/dbcraft")), "reports")
 report_dir = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("DBCRAFT_REPORTS", DEFAULT)
 psql = os.environ.get("DBCRAFT_PSQL", "psql").split()
 

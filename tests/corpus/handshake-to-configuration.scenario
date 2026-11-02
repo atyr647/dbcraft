@@ -1,0 +1,14 @@
+corpus_format: 1
+id: handshake-to-configuration
+title: Jump from HANDSHAKE to CONFIGURATION
+description: A handshake with intent 4 (not a valid intent) cannot jump to CONFIGURATION.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: serverbound
+  input: 10 00 89 06 09 6C 6F 63 61 6C 68 6F 73 74 63 DD 04
+  outcome: rejected

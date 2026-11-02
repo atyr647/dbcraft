@@ -25,8 +25,8 @@ def vi(b, o):
 
 if len(sys.argv) > 1: cap = sys.argv[1]
 else:
-    c = glob.glob(os.path.join(here, "tests/fixtures/captured/play*.jsonl")) + glob.glob("/home/user/dbcraft/tests/fixtures/captured/play*.jsonl")
-    if not c: sys.exit("no capture found: run tools/capture_vanilla.py first")
+    c = [p for d in __import__("_capture").capture_dirs() for p in glob.glob(os.path.join(d, "play*.jsonl"))]
+    if not c: sys.exit("no capture found: run tools/bootstrap.sh (it records one from the vanilla server) or tools/capture_vanilla.py")
     cap = max(c, key=os.path.getmtime)
 rows = [json.loads(l) for l in open(cap)]
 play = [r for r in rows if r["state"] == "play" and r["dir"] == "clientbound"]
