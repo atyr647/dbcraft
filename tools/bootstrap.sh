@@ -113,8 +113,14 @@ enforce-whitelist=false
 level-name=world
 EOF
   echo "    starting a throwaway vanilla server on port $VPORT ..."
-  ( cd "$VDIR" && nohup "$JAVA" -Xmx1G -jar "$DBCRAFT_SERVER_JAR" nogui >server.log 2>&1 & echo $! > "$VDIR/server.pid" )
-  cleanup_vanilla() { if [ -f "$VDIR/server.pid" ]; then kill "$(cat "$VDIR/server.pid")" 2>/dev/null || true; fi; }
+  # (cd; then the background command: `cd && cmd &` would background the whole list and $! would be the subshell, not Java)
+  ( cd "$VDIR"; nohup "$JAVA" -Xmx1G -jar "$DBCRAFT_SERVER_JAR" nogui >server.log 2>&1 & echo $! > "$VDIR/server.pid" )
+  cleanup_vanilla() {
+    [ -f "$VDIR/server.pid" ] || return 0
+    local pid; pid=$(cat "$VDIR/server.pid"); kill "$pid" 2>/dev/null || return 0
+    for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.5; done
+    kill -9 "$pid" 2>/dev/null || true       # it saves the world on SIGTERM; this is only for a hung shutdown
+  }
   trap cleanup_vanilla EXIT
   for _ in $(seq 1 120); do grep -q "Done (" "$VDIR/server.log" 2>/dev/null && break; sleep 1; done
   grep -q "Done (" "$VDIR/server.log" || { echo "vanilla server did not start, see $VDIR/server.log"; exit 1; }
