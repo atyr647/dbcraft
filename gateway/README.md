@@ -1,50 +1,61 @@
 # dbcraft gateway
 
 The byte pipe between Minecraft clients and the database.  It does what SQL cannot (sockets, AES-128-CFB8, RSA, the Mojang session check, inflating inbound frames)
-and nothing else: no game state, no rules, no packet parsing beyond the one login frame it intercepts in online mode.  Design, contract and test status:
-[`docs/GATEWAY.md`](../docs/GATEWAY.md).
+and nothing else: no game state, no rules, no packet parsing beyond the one login frame it intercepts in online mode.  Design, contract, verified results and
+numbers: [`docs/GATEWAY.md`](../docs/GATEWAY.md).
+
+**Zero crates.io dependencies.**  Only `std` plus the system libraries the machine already has, bound by hand-written `extern "C"` declarations:
+libpq (Postgres), libcrypto (OpenSSL 3: RSA, AES-128-CFB8), libcurl (the session-server GET) and libc (epoll, eventfd, signalfd).
 
 ```
 gateway/
-  core/     std-only crate, no dependencies, TESTED: frame splitting (adacraft's rules), inflate, AES-128-CFB8, SHA-1, Minecraft's server hash
-  src/      the gateway proper (tokio, tokio-postgres, rsa, reqwest/rustls): config, RSA key, Mojang client, connection tasks, tick loop
+  build.sh      plain rustc build and test runner (no cargo needed)
+  Cargo.toml    optional: a manifest with only a path dependency, `cargo build --release --offline` works too
+  core/         std-only crate: frame splitting (adacraft's rules), inflate, AES-128-CFB8 reference cipher, SHA-1, Minecraft's server hash
+  src/
+    main.rs       startup, signals, config
+    gateway.rs    the single-threaded epoll loop and the 50 ms tick (one database transaction per tick)
+    reader.rs     per-connection read state machine (decrypt, split, inflate, spot the login key frame); pure, socket-free
+    mojang.rs     bounded worker pool for hasJoined (libcurl), results come back through an eventfd
+    keypkt.rs json.rs config.rs limits.rs wq.rs   login key packet parser, JSON parser, config, per-IP limits, write queue with backpressure
+    ffi/          the only unsafe code: sys.rs (libc), pq.rs (libpq), ossl.rs (libcrypto), curl.rs (libcurl); every unsafe block states its invariant
 ```
-
-**Status, in one line:** `core/` builds with plain `rustc` and is tested; `src/` was written where `cargo build` was not permitted and has never been compiled.
-Expect a first build to need small fixes.  Everything it must do is specified by running code: the SQL half (`sql/600`, `sql/601`, tested) and the reference
-implementation of the same contract (`sql/optional/dev_gateway_online.sql`, end-to-end tested against real RSA/AES).
 
 ## Build and test
 
 ```
-cd gateway/core && rustc --edition 2021 --test src/lib.rs -O -o /tmp/core_tests && /tmp/core_tests     # unit tests of the core (no cargo needed)
-cd gateway && cargo build --release                                                                  # the gateway (default feature: aesni, AES-NI blocks from the `aes` crate)
-cd gateway && cargo test                                                                             # core + gateway unit tests
-tests/gateway/cfb8_openssl.sh                                                                        # the cipher against the openssl binary
+gateway/build.sh              # release build -> gateway/target/dbcraft-gateway
+gateway/build.sh debug        # with debug info and overflow checks (what valgrind runs)
+gateway/build.sh test         # core + gateway unit tests (75), built with `rustc --test`
 ```
+
+Needs the dev libraries' runtime `.so` files only (libpq.so.5, libcrypto.so.3, libcurl.so.4); libcurl is linked by soname because no `libcurl.so` symlink is installed.
+Integration scripts (each needs its own Postgres cluster, see the scripts' headers): `tests/gateway/run_e2e_rust.sh`, `tests/gateway/run_online_rust.sh THRESHOLD`,
+`tests/gateway/gateway_valgrind.sh`, `tests/gateway/soak_rust.sh`, `tests/gateway/run_load_rust.sh N`.
 
 ## Run
 
 ```
-DBCRAFT_GW_DATABASE_URL="host=/var/run/postgresql user=postgres dbname=dbcraft" \
-DBCRAFT_GW_LISTEN=0.0.0.0:25565 \
-target/release/dbcraft-gateway [config.toml]
+DBCRAFT_GW_DATABASE_URL="host=/var/run/postgresql user=postgres dbname=dbcraft" DBCRAFT_GW_LISTEN=0.0.0.0:25565 gateway/target/dbcraft-gateway [config-file]
 ```
 
-Needs the database migrated (`tools/migrate.sh`, which includes `sql/600_gateway.sql` and `sql/601_online_login.sql`) and `mc.server_property` / `net.setting` configured
-(`online-mode`, `network-compression-threshold`).  Every setting below has an environment override `DBCRAFT_GW_<NAME>` and can be put in the TOML file.
+The config file is `key=value` lines; every key has an environment override `DBCRAFT_GW_<KEY>`.  SIGTERM / SIGINT shut down cleanly.  Needs the database migrated
+(`tools/migrate.sh`).  At startup the gateway publishes its RSA public key (`net.server_key`), calls `net.gateway_start()` and clears a stale stop flag.
 
-| setting | default | meaning |
+| key | default | meaning |
 |---|---|---|
-| `database_url` | `host=/tmp port=5432 user=postgres dbname=dbcraft` | libpq-style connection string |
+| `database_url` | `host=/tmp port=5432 user=postgres dbname=dbcraft` | libpq connection string |
 | `listen` | `0.0.0.0:25565` | the Minecraft port |
-| `tick_ms` | 50 | tick period; `net.setting` key `tick_ms` overrides it, re-read every 5 s |
-| `tick_fn`, `drain_fn` | `mc.server_tick()`, `net.drain_outbox()` | what a tick calls (use `mc.server_tick_batched()` for the batched pipeline); `net.setting` keys `gateway_tick`, `gateway_drain` override |
-| `max_connections`, `max_connections_per_ip` | 20000, 16 | connection limits (0 = no per-IP limit) |
-| `new_connections_per_ip_per_sec`, `login_attempts_per_ip_per_min` | 5, 20 | rate limits (a login attempt = a key response, which costs an RSA decryption) |
-| `read_timeout_s`, `write_timeout_s` | 30, 30 | idle or stalled-in-a-frame sockets and blocked writes are closed |
-| `max_pending_bytes` | 8 MiB | a client that cannot keep up (unsent bytes above this) is disconnected |
-| `prelogin_max_frame`, `prelogin_max_bytes` | 32768, 262144 | frame and total size limits before the play state |
-| `session_url`, `session_timeout_ms`, `session_concurrency`, `session_retries` | Mojang, 5000, 64, 1 | the hasJoined check (`session_url` is configurable for tests) |
-| `rsa_bits` | 1024 | size of the key pair published to `net.server_key` (vanilla uses 1024) |
-| `stats` | true | one row per second in `net.gateway_stats` |
+| `tick_ms` | 50 | tick period (drift-free) |
+| `tick_fn` | `mc.server_tick()` | or `mc.server_tick_batched()` (an allowlist; nothing else is accepted) |
+| `inbox_mode` | `copy` | how inbound frames reach `net.inbox`: binary `copy` or an `unnest` insert |
+| `max_connections`, `max_connections_per_ip` | 20000, 16 | connection limits (0 = unlimited per IP) |
+| `new_connections_per_ip_per_sec`, `login_attempts_per_ip_per_min` | 5, 20 | rate limits (0 = unlimited) |
+| `read_timeout_s` | 30 | idle sockets and stalls inside a frame are closed |
+| `max_pending_bytes` | 8 MiB | a client that cannot keep up is disconnected |
+| `prelogin_max_frame`, `prelogin_max_bytes` | 32768, 262144 | size limits before the play state |
+| `session_url`, `session_timeout_ms`, `session_workers`, `session_retries` | (net.setting), 5000, 32, 1 | the hasJoined check |
+| `rsa_bits` | 1024 | size of the published key (vanilla uses 1024) |
+
+A note on OpenSSL 3.0 (Ubuntu): RSA PKCS#1 v1.5 decryption uses *implicit rejection*, so a bad padding returns success with pseudo-random bytes.  The gateway therefore
+requires a secret of exactly 16 bytes and the verify token it sent, and nothing else is trusted.

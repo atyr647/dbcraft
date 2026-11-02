@@ -11,10 +11,10 @@ It holds no game state and parses no packet except the one login frame it interc
 | SQL half: control channel, encryption request, verdicts, profile properties | `sql/600_gateway.sql`, `sql/601_online_login.sql` | **tested**: `tests/sql/600_gateway_online.sql` (46 checks; the control stamp lives in the side table `net.conn_ctl`, so `net.conn` rows stay comparable between runs); override and inlining guards green on a clean migration |
 | Reference implementation of the whole contract, as database code | `sql/optional/dev_gateway_online.sql` (`net.run_online`) | **tested end to end** with real RSA and AES-CFB8 (OpenSSL via Python `cryptography`), a stub session server and an encrypting client: `tests/gateway/online_test.py`, 27 checks, with compression off and at threshold 256 |
 | Std-only core: frame splitting, inflate, AES-128-CFB8, SHA-1, server hash | `gateway/core/` | **tested**: 22 unit tests + 216 real-zlib inflate vectors + adacraft's corpus + randomised stress + AES-CFB8 against the `openssl` binary (40 random rounds, both directions) |
-| The gateway proper (tokio, Postgres, RSA, HTTPS) | `gateway/src/` | **never compiled.** `cargo build` was refused twice, including after the project owner granted permission (`cd gateway && cargo build --release` and `cargo test --lib`: "denied by the Claude Code auto mode classifier. Reason: [Code from External]"); nothing was worked around. It is written against the tested core and the proven contract; `rustc` accepts its syntax and its uses of the core API type-check, the only errors left are the unresolved crates. Expect a first build to need small fixes. |
+| The gateway proper (zero crates: std + libpq, libcrypto, libcurl, libc through hand-written FFI) | `gateway/src/`, `gateway/build.sh` | **built and run.** Plain `rustc` and `cargo build --release --offline` (path-only manifest) both work; nothing was denied. 75 unit tests pass (core 30, gateway 45; includes parser, config, limiter, write-queue backpressure, FFI round trips, randomised stress). Offline e2e comparisons pass (`tests/gateway/run_e2e_rust.sh`). Online mode: 27 of 27 checks pass at compression off and at threshold 256 (`tests/gateway/run_online_rust.sh`), also with the gateway under valgrind (0 errors, 0 bytes definitely lost). A **real vanilla 26.3 client**, offline, joined through it, walked (4.3 blocks/s), broke a block and chatted, and stayed connected for a 5-minute soak with 0 gateway errors and 0 protocol errors in the client log. |
 | Real Mojang session server | | **never called** (tests use a local stub) |
-| A real vanilla client in online mode | | **untested** (it needs a Mojang account); the offline path with a real client is tested elsewhere (`docs/REAL-CLIENT.md`) against the SQL server and the PL/Python gateway, not against the Rust gateway |
-| Rust gateway performance | | **not measured** (nothing to run); estimates below are from `docs/*-EVALUATION.md` |
+| A real vanilla client in online mode | | **untested** (it needs a Mojang account) |
+| Rust gateway performance | | **measured at 20 and 500 clients and at 2,000 (where the database, not the gateway, gave out); 5,000 not run**: see "Measured: the Rust gateway" |
 
 ## Division of labour
 
@@ -136,17 +136,48 @@ Two things the load test found, neither a gateway bug: (1) the first runs showed
 session server (`http.server` listens with a backlog of 5, so 30 simultaneous `join` calls overflowed it); fixed in `tests/gateway/stub_mojang.py`.  (2) One login in the
 first runs got `authservers_down`: the correct answer to a session-server timeout (1 s in the tests) on a machine at load 10.
 
-Not measured: the Rust gateway (never built), more than 300 simultaneous logins, a real Mojang round trip.  What the design estimates say about steady-state play traffic
+Not measured by that test: more than 300 simultaneous logins, a real Mojang round trip.  What the design estimates say about steady-state play traffic
 (not logins) is in `docs/TCL-EVALUATION.md`, `docs/GO-EVALUATION.md` and `docs/TCL-PATH.md`: about 2,600 to 3,000 players per core for a native gateway with AES-NI.
+
+## Measured: the Rust gateway
+
+Build: `gateway/build.sh`.  Machine: 4 CPUs shared with other workers (load average 1 to 2.6 during these runs, about 8 other Postgres clusters idle or lightly busy).  Own cluster on port 54655
+(54555 was taken by another worker), gateway on 25651.  Load generator: `tests/gateway/load_clients.py` (real offline join per client: handshake, login, configuration, entry, chunks;
+then `client_tick_end` at 20 Hz, 20% of clients walking at 4.3 blocks/s; a few probe clients time input to corrective teleport).  Runner: `tests/gateway/run_load_rust.sh`.
+Settings: view_distance 2, `max-players` raised, per-IP limits off, `mc.server_tick()`, `inbox_mode=copy`.  All clients spawn at the same point, so every player sees every other (worst case for the SQL fan-out).
+
+| clients | gateway CPU (steady) | Postgres CPU | gateway RSS | tick (avg / max, DB-side) | late ticks | probe latency p50 / p95 / p99 |
+|---|---|---|---|---|---|---|
+| 1 real client, 5 min soak | not sampled | not sampled | not sampled | 5.1 to 6.3 ms avg, 11 to 13 ms max | 0 | n/a |
+| 20 | 1.8% of a core | 14% | 13.6 MB | 8.2 ms / 25 ms | 0 | n/a |
+| 500 | 5.8% of a core | 91.5% of a core | 29 MB (58 kB per connection) | 62.8 ms / 123 ms (16 ticks/s) | 296 in the window | 95 / 182 / 1784 ms |
+| 2,000 | not meaningful | about 105% of a core | 63 MB at 1,713 connections | seconds per tick | n/a | 1.9 s / 9.6 s / 22 s |
+
+What this says, plainly:
+
+* **The gateway is not the bottleneck; the database is.**  At 500 players the gateway used 5.8% of one core (about 5.8 microseconds per client per tick, including AES off, framing, COPY encoding and the drain) while Postgres was at 91%
+  and the tick already overran its 50 ms budget (avg 63 ms).  At 2,000 clients only 1,713 got in (287 timed out in the login storm: join p50 28 s, p95 85 s) and the tick was in seconds.
+  So with this SQL server and this spawn pattern the sustainable size on this machine is a few hundred players, far below the design estimate of about 2,800 players per core, which is a *gateway* estimate and still plausible
+  for the gateway (extrapolating 5.8 microseconds per client-tick gives about 58% of a core at 5,000, but that is an extrapolation from a run whose ticks were slow, not a measurement).
+* The join storm is the dominant cost (every join sends the registry burst and chunks): 500 joins took p50 5.1 s, p95 10.4 s at a ramp of 400 per second.
+* RSS per connection 58 kB at 500 (no per-connection thread).
+* **5,000 clients: not run**, since 2,000 already showed the database collapsing and a run would have measured the same wall; **the PL/Python gateway comparison and the lockstep AES experiment were not done** (encryption is off in offline mode, so there was nothing to measure for it).
+* The load generator itself (Python, 2 to 3 processes on the same 4 CPUs) uses a lot of the machine, so all client-side latencies are upper bounds.
+* inbox `copy` versus `unnest` was **not compared**; `copy` was used throughout.
+
+Soak: `tests/gateway/soak_rust.sh 5`.  Caveat: the client did not actually advance across chunk borders in the soak (z stayed about 10; the position oscillated near a hole it had dug earlier), so border crossings are covered by the e2e test (3 crossings), not by the soak.
+
+Real client results (screenshots in `/tmp/mc-client/shots/`, not committed): joined, flat grass world rendered, 2 s of walking moved z from 0.5 to 9.13, a block broken (server holds the block as air), chat and a command recorded in `mc.chat_log`.  The client's nine "Exception" log lines are its own failed calls to Mojang account and Realms services (401), the same as against vanilla.
+
+Things found while building (all fixed): OpenSSL 3.0 implicit rejection in PKCS#1 v1.5 (see the README), `EVP_RSA_gen` is a macro (the binding uses `EVP_PKEY_Q_keygen`), and a stale `net.gateway_control.stop = true` left by a previous run's cleanup made a new gateway exit at once (it now clears the flag at startup).
 
 ## Known gaps and next steps
 
-1. **Build it.**  `cd gateway && cargo build --release`, fix what the compiler finds, `cargo test`.  Then run the online test against it:
-   `DBCRAFT_RUST_GATEWAY=gateway/target/release/dbcraft-gateway tests/gateway/run_online.sh -1` and `... 256`; the same 27 checks must pass.
-2. Run the offline e2e comparisons (`tests/e2e/`) and the real client (`tools/realclient/`) against the Rust gateway.
-3. Measure it: 500, 2,000 and 5,000 simulated clients, CPU per tick, memory per connection, tick overrun rate (the load generators of `tests/e2e` and `tests/gateway/online_load.py` are the start).
-4. The AES-NI path (`gateway/src/cipher.rs`, the `aes` crate) is written but, like the rest of `gateway/src`, never built; CFB8 *decryption* of inbound data can additionally be
-   done several blocks at a time (the keystream depends only on ciphertext), and encryption of several connections can run in lockstep; both only if measurement says so.
+1. Done: built, unit tested, e2e, online (27/27, valgrind clean), real client offline, 5-minute soak.
+2. Still open: a real client in online mode (needs a Mojang account), the real session server, 5,000-client run, `copy` versus `unnest` comparison, a comparison with the PL/Python gateway under the same load, and the
+   database-side cost of joins and of everybody seeing everybody (that, not the gateway, is what limited the 500 and 2,000 client runs).
+3. Optional and only if measurement ever shows encryption matters: several connections' AES in lockstep, multi-block CFB8 decryption.  Not needed offline.
+4. The gateway uses libcrypto's AES-NI CFB8 (`EVP_aes_128_cfb8`); the std-only core cipher is kept as the tested reference.
 5. **Keep three function copies in sync.**  `sql/601_online_login.sql` redefines `net.h_login` (a copy of the body in `sql/400_integration.sql` plus the online branch),
    `mc.pie_add` (a copy of `sql/310`'s with `mc.profile_props`) and `net.conn_tab_sync` (a copy of `sql/464`'s with the properties).  They are listed in `sql/OVERRIDES.txt`; a
    later edit of the original in its own file is silently overridden by 601 unless it is repeated there.  The clean fix is to move the online branch and the properties into the

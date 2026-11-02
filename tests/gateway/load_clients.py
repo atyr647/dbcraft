@@ -48,7 +48,7 @@ def offline_uuid(name):
 
 
 def frame(state, name, body=b""):
-    p = varint(ID[(state, "serverbound", name)]) + body
+    p = varint(ID[(state, "serverbound", "minecraft:" + name)]) + body
     return varint(len(p)) + p
 
 
@@ -136,7 +136,7 @@ async def one_client(i, a, st, t_end_box, moving, probe):
                     send("login", "login_acknowledged")
                     state = "configuration"
                 elif n == "minecraft:login_disconnect":
-                    raise RuntimeError("login refused")
+                    raise RuntimeError("login refused: " + body[o:o + 200].decode("latin1"))
             elif state == "configuration":
                 if n == "minecraft:select_known_packs":
                     send("configuration", "select_known_packs", varint(0))
@@ -176,7 +176,9 @@ async def one_client(i, a, st, t_end_box, moving, probe):
                     raise RuntimeError("disconnected in play")
             if time.perf_counter() > t_end_box[0] + 2:
                 break
-    except (asyncio.IncompleteReadError, ConnectionError, RuntimeError, asyncio.TimeoutError, OSError):
+    except (asyncio.IncompleteReadError, ConnectionError, RuntimeError, asyncio.TimeoutError, OSError, KeyError, IndexError, struct.error) as e:
+        if os.environ.get("LOAD_DEBUG"):
+            print("client", name, "ended:", repr(e), file=sys.stderr)
         if joined:
             st.dropped += 1
         else:
@@ -195,7 +197,7 @@ async def worker(ids, a, st, probes):
     tasks = []
     start = time.perf_counter()
     for k, i in enumerate(ids):
-        moving = (i % 1000) < a.moving * 1000
+        moving = (i % 1000) < a.moving * 1000 and i not in probes
         tasks.append(asyncio.ensure_future(one_client(i, a, st, t_end_box, moving, i in probes)))
         if a.ramp > 0 and (k + 1) % max(1, int(a.ramp / a.procs / 10)) == 0:
             await asyncio.sleep(0.1)                   # ramp: a.ramp clients per second over all processes
