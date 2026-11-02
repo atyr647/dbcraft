@@ -106,8 +106,23 @@ tests/e2e/run_all.sh   # end to end over TCP against recordings of the real vani
 gateway/build.sh test  # the gateway's unit tests
 ```
 
-The suite needs the data `make setup` creates (`$DBCRAFT_HOME`); tests that need extra recordings (e.g. `entity_traj_*.json` from `tools/entity/rcon.py record`, the
-real-terrain chunk captures) **skip with a notice** when they are absent.  `tools/check_overrides.py`, `tools/check_inlining.sh` and `tools/check_fresh_migration.sh`
+**Verified from a clean state** (the adacraft checkout, a cached jar and the author's recordings all hidden): `make setup` took about 100 s, then `make test` passed
+**45 of 45 files, 1,463 checks**, plus 43 structural guards, with the three byte-for-byte replay tests below skipping.  With the author's reference recording present the
+same suite runs 1,640 checks.
+
+Which test needs which data (all of it under `$DBCRAFT_HOME`, made by `make setup` unless noted):
+
+| Data | Tests | Without it |
+|---|---|---|
+| the generator reports (`reports/`) | everything that touches `ref.*` | required: setup stops |
+| the recordings `play_nocomp`, `status`, `play_known`, `badname`, `play_disconnect`, `play` (`captures/`) | status/login/configuration/registry/chunk-oracle tests (`110`, `140`, `240`, ...) | those tests skip with a notice |
+| **the author's reference session** (one particular run of the vanilla server: entity id 20, hashed seed `aa7208e3219d34cc`, spawn -6.5 -60 -5.5, game time 2984), **not** reproducible by setup | `130_net_config_play`, `385_batch_replay`, `410_integration_replay` replay that session packet for packet (65 packets byte for byte) | **skipped**, with a notice that says which recording they need; a recording made by `make setup` is a different run (vanilla's entity ids, seed, spawn and hash-ordered sets differ per run) |
+| vanilla entity trajectories (`entity_traj_*.json`, `tools/entity/rcon.py record`, optional) | the vanilla comparison inside `510_entity_physics` | those checks skip |
+
+Setup records its recordings in two phases on purpose: a first throwaway vanilla server (view distance 8) generates and lights the area around the spawn and saves it,
+then the same world is restarted at view distance 2 and recorded, so every chunk is loaded from disk fully lit (on a brand-new world vanilla sends edge chunks before its
+light engine has finished, which would not match the steady state the chunk oracle compares with).  Vanilla also writes a chunk packet's heightmap entries in a
+JVM-run-dependent order; the oracle compares them in type order.  `tools/check_overrides.py`, `tools/check_inlining.sh` and `tools/check_fresh_migration.sh`
 run at the end of the suite: they catch a later SQL file silently undoing an earlier one, which unit tests that re-include single files cannot see.
 
 ## Connecting a real client

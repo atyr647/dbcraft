@@ -48,3 +48,8 @@ stops it for good) and `tools/janitor.sh`, which vacuums and analyses the hot ta
 Docker is not available in the environment this was written in (a client but no daemon), so **the image was not built and the compose file was not run**.  What was run:
 the configuration file was used to start a real PostgreSQL 16 cluster and the benchmark loop ran against it; `docker/initdb.d/10-dbcraft.sh` was run against that
 cluster with the same environment variables the image sets; `bash -n` on the entrypoint scripts.  See the end of docs/TUNING.md for the exact commands.
+
+The setup-time data job (`docker/Dockerfile.data`) runs `tools/bootstrap.sh --data-only --no-apt`.  That exact command was run on the host in an empty directory
+(`DBCRAFT_HOME=...`, about 70 s: jar download and SHA-1 check, generator, recordings; exit 0); the image build and `docker compose up` themselves were **not** run.
+Known limits: the image uses the PL/Python development gateway (the Rust gateway is built on the host), and `ubuntu:24.04` must provide `openjdk-25-jre-headless`
+(it does on the machine this was tested on; the package comes from the `noble-updates` pocket).
