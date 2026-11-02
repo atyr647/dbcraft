@@ -37,6 +37,11 @@ create or replace function mc.import_recount(p_dim text) returns int language sq
         returning 1)
     select count(*)::int from u $$;
 
+-- Block entities: mc.block_entity.nbt is what the CHUNK PACKET carries (a client-visible update tag: empty for a chest).  An imported world also keeps the full
+-- save data (inventory, loot table, spawner settings, ...) so that an export gives it back: network-form NBT without id, x, y, z and keepPacked.  NULL for
+-- block entities that did not come from an import (the exporter then writes only what the packet tag holds).
+alter table mc.block_entity add column if not exists save_nbt bytea;
+
 -- Game rules of an imported world, readable and editable.  (The game module does not read them yet: the table is where an import puts them.)
 create table if not exists mc.game_rule (
     name  text primary key,                 -- minecraft:max_entity_cramming

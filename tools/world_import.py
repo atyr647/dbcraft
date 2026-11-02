@@ -281,7 +281,8 @@ def convert_chunk(cx, cz, c, ctx, stats):
         if x >> 4 != cx or z >> 4 != cz:
             stats["be_outside_chunk"] = stats.get("be_outside_chunk", 0) + 1
             continue
-        rows["be"].append("\t".join([d, str(cx), str(cz), str(x), str(y), str(z), t, bytea(be_packet_nbt(t, be))]))
+        save = {k: v for k, v in be.items() if k not in ("id", "x", "y", "z", "keepPacked")}
+        rows["be"].append("\t".join([d, str(cx), str(cz), str(x), str(y), str(z), t, bytea(be_packet_nbt(t, be)), bytea(A.write_nbt(save, network=True))]))
     return rows
 
 
@@ -512,7 +513,7 @@ def main():
         "chunk": "mc.chunk (dimension, cx, cz, status, version, dirty, hm_dirty, hm_motion_blocking, hm_motion_blocking_no_leaves, hm_world_surface)",
         "section": "mc.chunk_section (dimension, cx, cz, sy, block_count, fluid_count, palette, bits, data, biome_palette, biome_bits, biome_data)",
         "light": "mc.chunk_light (dimension, cx, cz, idx, sky_kind, sky, block_kind, block)",
-        "be": "mc.block_entity (dimension, cx, cz, x, y, z, type, nbt)",
+        "be": "mc.block_entity (dimension, cx, cz, x, y, z, type, nbt, save_nbt)",
     }
     script = ["\\set ON_ERROR_STOP on", "begin;"]
     if a.replace:

@@ -39,6 +39,7 @@ motd=vanilla-import
 max-players=5
 level-name=world
 E
+    [ -n "${LEVEL_SEED:-}" ] && sed -i "s/^level-seed=.*/level-seed=$LEVEL_SEED/" "$D/server.properties"
     cd "$D"
     nohup "$JAVA" -Xmx2G -jar server.jar nogui > server.log 2>&1 &
     for i in $(seq 1 120); do grep -q "Done (" server.log 2>/dev/null && break; sleep 2; done
