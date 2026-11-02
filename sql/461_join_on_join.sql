@@ -20,7 +20,7 @@ begin
           gs.spawn_x, gs.spawn_y, gs.spawn_z, gs.spawn_yaw, floor(gs.spawn_x / 16)::int, floor(gs.spawn_z / 16)::int)
   on conflict (uuid) do update set name = excluded.name
   returning * into p;
-  update mc.player set conn_id = p_conn, entity_id = nextval('mc.entity_id_seq'), vis_dirty = true,
+  update mc.player set conn_id = p_conn, entity_id = nextval('mc.entity_id_seq'), vis_dirty = true, vis_ocx = null, vis_ocz = null,
          chunk_x = floor(x / 16)::int, chunk_z = floor(z / 16)::int,
          sent_qx = mc.quant(x), sent_qy = mc.quant(y), sent_qz = mc.quant(z), sent_yaw = yaw, sent_pitch = pitch,
          awaiting_teleport = null, keepalive_id = null, keepalive_sent_tick = null, inv_state = 1, chat_recv = 0, chat_sent = 0   -- chat_sent: the per-session message index restarts at 0 (vanilla, recorded by tests/e2e/join_probe.py)

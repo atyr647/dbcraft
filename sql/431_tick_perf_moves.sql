@@ -254,6 +254,7 @@ begin
     cross join lateral (select proto.varint(mv.eid) || set_byte('\x00'::bytea, 0, mc.angle_byte(nyaw)) as b) h),
   upd as (
     update mc.player p set x = n.nx, y = n.ny, z = n.nz, yaw = n.nyaw, pitch = n.npitch, on_ground = n.nog, chunk_x = n.ncx, chunk_z = n.ncz, vis_dirty = n.nvd,
+           vis_ocx = case when n.nvd and not n.ovd then n.ocx else p.vis_ocx end, vis_ocz = case when n.nvd and not n.ovd then n.ocz else p.vis_ocz end,   -- the chunk mc.visible was computed from (sql/468)
            sent_qx = case when m.eid is not null then mc.quant(n.nx) else p.sent_qx end,
            sent_qy = case when m.eid is not null then mc.quant(n.ny) else p.sent_qy end,
            sent_qz = case when m.eid is not null then mc.quant(n.nz) else p.sent_qz end,
