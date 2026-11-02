@@ -20,7 +20,7 @@ level-seed=dbcraft-import-7
 level-type=minecraft\:normal
 generate-structures=true
 view-distance=8
-simulation-distance=4
+simulation-distance=3
 enable-rcon=true
 rcon.port=25718
 rcon.password=importtest
@@ -34,6 +34,7 @@ white-list=false
 enforce-whitelist=false
 max-tick-time=-1
 pause-when-empty-seconds=-1
+network-compression-threshold=-1
 motd=vanilla-import
 max-players=5
 level-name=world
@@ -45,6 +46,14 @@ E
     ;;
   cmd)
     python3 "$HERE/tools/entity/rcon.py" cmd "$2"
+    ;;
+  reset)
+    # restore the generated world from the pristine copy and drop the force-load tickets, so a capture sees exactly what is on disk
+    # (force-loaded chunks tick: grass breaks, water flows, ... and a comparison with the files would show vanilla's simulation, not the import)
+    rm -rf "$D/world"
+    cp -r "$D/world.pristine" "$D/world"
+    rm -f "$D/world/dimensions/minecraft/overworld/data/minecraft/chunk_tickets.dat"
+    echo "world restored from $D/world.pristine"
     ;;
   stop)
     python3 "$HERE/tools/entity/rcon.py" cmd "save-all flush" || true
