@@ -30,5 +30,10 @@ check "net.player_info_body reads the cached tab-entry heads"                 "s
 check "net.config_begin serves the cached start of the configuration phase"   "select position('config_begin_cache' in prosrc) > 0 from pg_proc where oid = 'net.config_begin(bigint)'::regprocedure"
 check "net.play_entry_packets plans once (plan_cache_mode = force_generic_plan)"  "select coalesce(proconfig @> array['plan_cache_mode=force_generic_plan'], false) from pg_proc where oid = 'net.play_entry_packets(bigint,net.join_info)'::regprocedure"
 check "net.handle does NOT force generic plans (it would reach mc.on_leave: 100 leaves 14 s -> 24 s)" "select coalesce(not proconfig::text like '%plan_cache_mode%', true) from pg_proc where oid = 'net.handle(bigint,bytea)'::regprocedure"
+# the join budget (sql/790, sql/791): every tick variant's input phase calls the gate, and the chunk delivery has the shared budget
+for f in 'net.process_fast()' 'net.process()' 'mc.ingest_batched()'; do
+  check "$f calls the login gate (net.join_gate)" "select position('net.join_gate()' in prosrc) > 0 from pg_proc where oid = '$f'::regprocedure"
+done
+check "mc.deliver_ready_chunks has the shared chunk budget (sql/791)"          "select position('chunk-budget-per-tick' in prosrc) > 0 from pg_proc where oid = 'mc.deliver_ready_chunks()'::regprocedure"
 psql -X -q -d postgres -c "drop database dbcraft_fresh"
 exit $fail

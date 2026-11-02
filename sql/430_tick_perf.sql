@@ -21,6 +21,7 @@ declare r record; n int; handled int[] := net.handled_play_ids();
         i_ka int := mc.sid('keep_alive'); i_tp int := mc.sid('accept_teleportation');
         both_ids int[] := array[i_ka, i_tp];
 begin
+    perform net.join_gate();                          -- sql/790: admission gate for logins (parks/releases hello packets; a no-op when nothing is queued or the budget is off)
     delete from net.batch;
     with t as (delete from net.inbox returning conn_id, seq, payload),
          c as (select t.conn_id, t.seq, t.payload, net.pid(t.payload) as pid, (n.state = 'play' and not n.closing) as live
