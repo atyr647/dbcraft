@@ -1,0 +1,14 @@
+corpus_format: 1
+id: wrong-direction
+title: Packet in the wrong direction
+description: A clientbound frame with an id that only exists serverbound in HANDSHAKE is rejected.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: clientbound
+  input: 01 00
+  outcome: rejected

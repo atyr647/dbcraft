@@ -1,0 +1,14 @@
+corpus_format: 1
+id: unknown-packet-id
+title: Unknown packet id in STATUS
+description: A well-formed frame with id 0x7F is not valid in STATUS and is rejected.
+category: status
+protocol: 777
+provenance: hand-authored
+initial_state: STATUS
+final_state: STATUS
+
+step:
+  direction: serverbound
+  input: 01 7F
+  outcome: rejected

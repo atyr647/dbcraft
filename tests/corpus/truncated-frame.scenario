@@ -1,0 +1,14 @@
+corpus_format: 1
+id: truncated-frame
+title: Truncated frame
+description: Length prefix declares 16 bytes but only 3 follow; the frame is held incomplete.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: serverbound
+  input: 10 00 89 06
+  outcome: incomplete

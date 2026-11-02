@@ -1,0 +1,14 @@
+corpus_format: 1
+id: negative-length
+title: Negative length prefix
+description: A length prefix encoding -1 as a VarInt is rejected.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: serverbound
+  input: FF FF FF FF 0F 00
+  outcome: rejected

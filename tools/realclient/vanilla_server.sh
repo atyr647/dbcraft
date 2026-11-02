@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Start / stop the REAL vanilla 26.3 server as the reference for the real-client checks (offline mode, flat world, small view distance).
-# usage: tools/realclient/vanilla_server.sh start|stop|log     env: VANILLA_DIR (default /tmp/vanilla-client), VANILLA_PORT (25613), VANILLA_JAR (/tmp/jar-dl/server.jar)
+# usage: tools/realclient/vanilla_server.sh start|stop|log     env: VANILLA_DIR (default /tmp/vanilla-client), VANILLA_PORT (25613), VANILLA_JAR (${DBCRAFT_HOME:-$HOME/.cache/dbcraft}/server-26.3.jar)
 set -euo pipefail
-DIR=${VANILLA_DIR:-/tmp/vanilla-client}; PORT=${VANILLA_PORT:-25613}; JAR=${VANILLA_JAR:-/tmp/jar-dl/server.jar}
+DIR=${VANILLA_DIR:-/tmp/vanilla-client}; PORT=${VANILLA_PORT:-25613}; JAR=${VANILLA_JAR:-${DBCRAFT_HOME:-$HOME/.cache/dbcraft}/server-26.3.jar}
 JAVA=${JAVA25:-/usr/lib/jvm/java-25-openjdk-amd64/bin/java}
 case "${1:-}" in
   start)

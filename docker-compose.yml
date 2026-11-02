@@ -1,22 +1,37 @@
-# dbcraft: PostgreSQL with the dbcraft schema and, optionally, the development gateway on port 25565.  See docker/README.md.
+# dbcraft: PostgreSQL with the dbcraft schema and the development gateway on port 25565.  One command:
 #
-#   export DBCRAFT_REPORTS_DIR=/path/to/generator/reports          # required: blocks.json registries.json packets.json ... (your own output of the data generator)
-#   export DBCRAFT_CAPTURES_DIR=/path/to/tests/fixtures/captured   # for logins: play_nocomp.jsonl from tools/capture_vanilla.py
+#   export DBCRAFT_PASSWORD=choose-one
 #   docker compose up --build
+#
+# The first run downloads the pinned vanilla server jar from Mojang, runs the official data generator and records a capture (about two minutes, needs Internet
+# access and accepts Mojang's EULA by running their server), into the volume `dbcraft-mojang`.  Mojang data is never in an image or in git.  See docker/README.md.
+# (Not testable where this was written: Docker was not available there.  The steps inside the images are the same scripts that tools/bootstrap.sh runs on a host.)
 services:
+  mojang-data:                          # one-shot: jar + generator reports + captures into the volume (idempotent: a finished volume is left alone)
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.data
+    image: dbcraft-data:latest
+    restart: "no"
+    volumes:
+      - dbcraft-mojang:/data
+
   dbcraft:
     build:
       context: .
       dockerfile: docker/Dockerfile
     image: dbcraft:latest
     restart: unless-stopped
+    depends_on:
+      mojang-data:
+        condition: service_completed_successfully
     environment:
       POSTGRES_USER: dbcraft
       POSTGRES_PASSWORD: ${DBCRAFT_PASSWORD:?set DBCRAFT_PASSWORD}
       POSTGRES_DB: dbcraft
       DBCRAFT_DEV_GATEWAY: "1"          # run the PL/Python development gateway inside this container (offline mode, no compression)
       DBCRAFT_GATEWAY_PORT: "25565"
-      DBCRAFT_GAMEMODE: survival
+      DBCRAFT_GAMEMODE: creative
       DBCRAFT_MOTD: dbcraft
     ports:
       - "25565:25565"                   # Minecraft clients
@@ -26,8 +41,7 @@ services:
     shm_size: 256mb                     # shared_buffers is 128MB (docker/postgresql.conf)
     volumes:
       - dbcraft-data:/var/lib/postgresql/data
-      - ${DBCRAFT_REPORTS_DIR:?set DBCRAFT_REPORTS_DIR}:/data/reports:ro
-      - ${DBCRAFT_CAPTURES_DIR:-./tests/fixtures/captured}:/data/captures:ro
+      - dbcraft-mojang:/data:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dbcraft -d dbcraft"]
       interval: 10s
@@ -36,3 +50,4 @@ services:
     stop_grace_period: 60s              # a clean shutdown checkpoints; the world is durable, the per-tick queues are not
 volumes:
   dbcraft-data:
+  dbcraft-mojang:

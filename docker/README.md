@@ -3,23 +3,29 @@
 PostgreSQL 16 with PL/Python, the dbcraft schema, the recommended server configuration (`docker/postgresql.conf`, explained in [docs/TUNING.md](../docs/TUNING.md)) and,
 optionally, the **development gateway** (the PL/Python procedure `net.run`, offline mode, no compression) listening on port 25565.
 
-The production gateway (online mode, encryption, deflate) is not built; this container is for development and for trying the server with a real client.
+The container uses the PL/Python development gateway (offline mode only).  The Rust gateway (online mode, encryption, deflate) is built on the host with `make gateway`
+and is not part of this image (the Debian base image's `rustc` is too old to rely on; building it in a container is a follow-up).
 
 ```
 export DBCRAFT_PASSWORD=choose-one
-export DBCRAFT_REPORTS_DIR=/path/to/generator/reports            # your own output of the Minecraft data generator (blocks.json, registries.json, packets.json ...)
-export DBCRAFT_CAPTURES_DIR=/path/to/tests/fixtures/captured     # play_nocomp.jsonl from tools/capture_vanilla.py (registries, tags, opaque packets)
 docker compose up --build
 ```
 
+That is all: the first run starts a one-shot job (`mojang-data`, `docker/Dockerfile.data`) that runs `tools/bootstrap.sh --data-only` into the volume `dbcraft-mojang`.
+It downloads the pinned vanilla server jar from Mojang (SHA-1 verified), runs the official data generator from it and records a capture of a throwaway vanilla server
+(about two minutes, needs Internet access; by running Mojang's server it accepts Mojang's EULA for you, <https://aka.ms/MinecraftEULA>).  `dbcraft` starts after it
+has finished, mounts the volume read-only at `/data` and initialises the database from it.  Later runs find the finished volume and skip the job.
+
 ## Mojang data
 
-None of it is in the image or in git.  Two read-only mounts supply it:
+None of it is in an image or in git.  It lives in the volume `dbcraft-mojang`, which the job fills on your machine:
 
-| Mount | Needed for | Without it |
-|---|---|---|
-| `/data/reports` (`DBCRAFT_REPORTS_DIR`) | block states, items, packet ids (`ref.*`) | the server cannot run; the init script says so |
-| `/data/captures` (`DBCRAFT_CAPTURES_DIR`), file `play_nocomp.jsonl` | datapack registries, tags, a few opaque packets, world reference data | logins stop in the configuration phase |
+| Path in the volume | Made by | Needed for | Without it |
+|---|---|---|---|
+| `/data/reports` | the official data generator, run from the downloaded jar | block states, items, packet ids (`ref.*`) | the server cannot run; the init script says so |
+| `/data/captures/play_nocomp.jsonl` (+ a few more) | `tools/capture_vanilla.py` against a throwaway vanilla server | datapack registries, tags, a few opaque packets, world reference data | logins stop in the configuration phase |
+
+You can still mount your own reports and captures instead (replace the volume by bind mounts of `/data/reports` and `/data/captures`).
 
 ## What happens on first start
 

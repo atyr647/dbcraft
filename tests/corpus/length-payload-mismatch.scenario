@@ -1,0 +1,14 @@
+corpus_format: 1
+id: length-payload-mismatch
+title: Length prefix disagrees with payload length
+description: The prefix declares 2 bytes but the input carries more; the input is not exactly one frame.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: serverbound
+  input: 02 00 00 00
+  outcome: rejected

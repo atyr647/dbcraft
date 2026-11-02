@@ -24,7 +24,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("scenario"); ap.add_argument("--host", default="127.0.0.1"); ap.add_argument("--port", type=int, default=25598)
 ap.add_argument("--out", default="/tmp/game-scratch/cap")
 args = ap.parse_args()
-reports = os.environ.get("DBCRAFT_REPORTS", "/home/user/atyr647/adacraft/generated/26.3/reports")
+reports = os.environ.get("DBCRAFT_REPORTS", os.path.join(os.environ.get("DBCRAFT_HOME", os.path.expanduser("~/.cache/dbcraft")), "reports"))
 packets = json.load(open(os.path.join(reports, "packets.json")))
 registries = json.load(open(os.path.join(reports, "registries.json")))
 ID, NAME = {}, {}

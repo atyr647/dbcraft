@@ -2,7 +2,19 @@
 Captures contain Mojang data and stay outside git; these helpers only read them."""
 import json, os, struct
 
-DEFAULT_REPORTS = "/home/user/atyr647/adacraft/generated/26.3/reports"
+DEFAULT_REPORTS = os.path.join(os.environ.get("DBCRAFT_HOME", os.path.expanduser("~/.cache/dbcraft")), "reports")
+
+
+def capture_dirs():
+    """Where recordings are looked for, in order: $DBCRAFT_CAPTURES, $DBCRAFT_HOME/captures (what tools/bootstrap.sh fills), tests/fixtures/captured in the repository."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    home = os.environ.get("DBCRAFT_HOME", os.path.expanduser("~/.cache/dbcraft"))
+    return [d for d in (os.environ.get("DBCRAFT_CAPTURES", ""), os.path.join(home, "captures"), os.path.join(here, "tests/fixtures/captured")) if d]
+
+
+def find_capture(name):
+    """Path of the recording NAME.jsonl in the first directory that has it, or None."""
+    return next((os.path.join(d, name + ".jsonl") for d in capture_dirs() if os.path.exists(os.path.join(d, name + ".jsonl"))), None)
 
 
 def vi(b, o):

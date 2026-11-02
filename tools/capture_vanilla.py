@@ -18,7 +18,7 @@ ap.add_argument("--known-core", action="store_true", help="answer select_known_p
 ap.add_argument("--status", action="store_true", help="capture a status ping instead of a login")
 a = ap.parse_args()
 
-reports = os.environ.get("DBCRAFT_REPORTS", "/home/user/atyr647/adacraft/generated/26.3/reports")
+reports = os.environ.get("DBCRAFT_REPORTS", os.path.join(os.environ.get("DBCRAFT_HOME", os.path.expanduser("~/.cache/dbcraft")), "reports"))
 packets = json.load(open(os.path.join(reports, "packets.json")))
 ID, NAME = {}, {}
 for st, dirs in packets.items():

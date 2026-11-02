@@ -1,0 +1,16 @@
+# Template: copy to <id>.scenario. Files starting with "_" are ignored by the loader.
+corpus_format: 1
+id: replace-with-unique-id
+title: Short title
+description: One sentence describing what this case checks.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: serverbound
+  input: 01 00
+  outcome: rejected
+  rejection_category: replace-or-remove

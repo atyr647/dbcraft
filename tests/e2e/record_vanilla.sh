@@ -3,14 +3,14 @@
 # chunk borders, and shares the world with another player.  Starts its own server (fresh flat world, offline mode, view distance 2, no compression,
 # peaceful, no mobs) in /tmp/vanilla-int on port 25611 unless one is already listening there.
 #
-# usage: tests/e2e/record_vanilla.sh                  environment: DBCRAFT_E2E_DIR (default /tmp/dbcraft-e2e), DBCRAFT_SERVER_JAR (default /tmp/jar-dl/server.jar),
+# usage: tests/e2e/record_vanilla.sh                  environment: DBCRAFT_E2E_DIR (default /tmp/dbcraft-e2e), DBCRAFT_SERVER_JAR (default ${DBCRAFT_HOME:-$HOME/.cache/dbcraft}/server-26.3.jar),
 #                                                       JAVA (default the Java 25 under /usr/lib/jvm), DBCRAFT_REPORTS
 # needs: the official 26.3 server jar (SHA-1 33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c, pinned in adacraft) and Java 25.  The recordings contain Mojang data
 #        (registries, chunks) and stay out of git.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 E2E=${DBCRAFT_E2E_DIR:-/tmp/dbcraft-e2e}; PORT=25611; DIR=/tmp/vanilla-int
-JAR=${DBCRAFT_SERVER_JAR:-/tmp/jar-dl/server.jar}; JAVA=${JAVA:-/usr/lib/jvm/java-25-openjdk-amd64/bin/java}
+JAR=${DBCRAFT_SERVER_JAR:-${DBCRAFT_HOME:-$HOME/.cache/dbcraft}/server-26.3.jar}; JAVA=${JAVA:-/usr/lib/jvm/java-25-openjdk-amd64/bin/java}
 mkdir -p "$E2E"
 listening() { python3 - "$PORT" <<'PY'
 import socket, sys

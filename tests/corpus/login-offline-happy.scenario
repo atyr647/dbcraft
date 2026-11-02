@@ -1,0 +1,30 @@
+corpus_format: 1
+id: login-offline-happy
+title: Offline login happy path to configuration
+description: Valid Login Start yields byte-exact Login Success then Ack moves to CONFIGURATION.
+category: login
+protocol: 777
+provenance: hand-authored
+initial_state: LOGIN
+final_state: CONFIGURATION
+
+step:
+  direction: serverbound
+  input: 17 00 05 4E 6F 74 63 68 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10
+  outcome: accepted
+  packet_id: 0x00
+  state_after: LOGIN_AWAITING_ACK
+
+step:
+  direction: clientbound
+  input: 18 02 B5 0A D3 85 82 9D 31 41 A2 16 7E 7D 75 39 BA 7F 05 4E 6F 74 63 68 00
+  outcome: accepted
+  packet_id: 0x02
+  state_after: LOGIN_AWAITING_ACK
+
+step:
+  direction: serverbound
+  input: 01 03
+  outcome: accepted
+  packet_id: 0x03
+  state_after: CONFIGURATION

@@ -10,7 +10,7 @@ output: one JSON line (also human readable on stderr): joined/failed/dropped cou
 import argparse, asyncio, hashlib, json, math, os, struct, sys, time
 from multiprocessing import Process, Queue
 
-REPORTS = os.environ.get("DBCRAFT_REPORTS", "/home/user/atyr647/adacraft/generated/26.3/reports")
+REPORTS = os.environ.get("DBCRAFT_REPORTS", os.path.join(os.environ.get("DBCRAFT_HOME", os.path.expanduser("~/.cache/dbcraft")), "reports"))
 P = json.load(open(os.path.join(REPORTS, "packets.json")))
 ID = {(st, d, n): e["protocol_id"] for st, dirs in P.items() for d, ps in dirs.items() for n, e in ps.items()}
 NAME = {(st, d, e["protocol_id"]): n for st, dirs in P.items() for d, ps in dirs.items() for n, e in ps.items()}

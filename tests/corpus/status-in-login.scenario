@@ -1,0 +1,14 @@
+corpus_format: 1
+id: status-in-login
+title: Status-range packet in LOGIN
+description: A frame with an id that is not valid in LOGIN is rejected and the state stays LOGIN.
+category: status
+protocol: 777
+provenance: hand-authored
+initial_state: LOGIN
+final_state: LOGIN
+
+step:
+  direction: serverbound
+  input: 01 05
+  outcome: rejected

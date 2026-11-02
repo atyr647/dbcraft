@@ -1,0 +1,14 @@
+corpus_format: 1
+id: overlong-varint-length
+title: Overlong VarInt length prefix
+description: A length prefix longer than five VarInt bytes is rejected.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: serverbound
+  input: 80 80 80 80 80 80 01
+  outcome: rejected

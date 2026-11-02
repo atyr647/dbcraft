@@ -1,0 +1,14 @@
+corpus_format: 1
+id: handshake-to-play
+title: Jump from HANDSHAKE to PLAY
+description: A handshake with intent 6 (not a valid intent) cannot jump to PLAY.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: serverbound
+  input: 10 00 89 06 09 6C 6F 63 61 6C 68 6F 73 74 63 DD 06
+  outcome: rejected

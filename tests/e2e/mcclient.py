@@ -12,7 +12,7 @@ chunk_batch_finished -> chunk_batch_received.
 """
 import hashlib, json, os, socket, struct, threading, time, zlib
 
-REPORTS = os.environ.get("DBCRAFT_REPORTS", "/home/user/atyr647/adacraft/generated/26.3/reports")
+REPORTS = os.environ.get("DBCRAFT_REPORTS", os.path.join(os.environ.get("DBCRAFT_HOME", os.path.expanduser("~/.cache/dbcraft")), "reports"))
 _packets = json.load(open(os.path.join(REPORTS, "packets.json")))
 ID, NAME = {}, {}
 for _st, _dirs in _packets.items():

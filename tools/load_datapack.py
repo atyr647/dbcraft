@@ -20,8 +20,8 @@ psql = os.environ.get("DBCRAFT_PSQL", "psql").split()
 def find_capture():
     if len(sys.argv) > 1: return sys.argv[1]
     if os.environ.get("DBCRAFT_DATAPACK_CAPTURE"): return os.environ["DBCRAFT_DATAPACK_CAPTURE"]
-    c = glob.glob(os.path.join(here, "tests/fixtures/captured/play*.jsonl")) + glob.glob("/home/user/dbcraft/tests/fixtures/captured/play*.jsonl")
-    if not c: sys.exit("no capture found: run tools/capture_vanilla.py first")
+    c = [p for d in __import__("_capture").capture_dirs() for p in glob.glob(os.path.join(d, "play*.jsonl"))]
+    if not c: sys.exit("no capture found: run tools/bootstrap.sh (it records one from the vanilla server) or tools/capture_vanilla.py")
     return max(c, key=os.path.getmtime)
 
 def esc(v):

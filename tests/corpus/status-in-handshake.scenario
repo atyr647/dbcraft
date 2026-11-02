@@ -1,0 +1,14 @@
+corpus_format: 1
+id: status-in-handshake
+title: Status packet in HANDSHAKE
+description: A status ping frame is rejected while the connection is in HANDSHAKE.
+category: status
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: serverbound
+  input: 09 01 00 00 00 00 00 00 00 01
+  outcome: rejected

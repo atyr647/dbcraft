@@ -1,0 +1,14 @@
+corpus_format: 1
+id: handshake-invalid-intent
+title: Handshake with invalid intent
+description: Next-state value 5 is not a valid intent and is rejected.
+category: handshake
+protocol: 777
+provenance: hand-authored
+initial_state: HANDSHAKE
+final_state: HANDSHAKE
+
+step:
+  direction: serverbound
+  input: 10 00 89 06 09 6C 6F 63 61 6C 68 6F 73 74 63 DD 05
+  outcome: rejected

@@ -21,7 +21,7 @@ try:
 except ImportError:
     from cryptography.hazmat.primitives.ciphers.modes import CFB8
 
-REPORTS = os.environ.get("DBCRAFT_REPORTS", "/home/user/atyr647/adacraft/generated/26.3/reports")
+REPORTS = os.environ.get("DBCRAFT_REPORTS", os.path.join(os.environ.get("DBCRAFT_HOME", os.path.expanduser("~/.cache/dbcraft")), "reports"))
 PK = json.load(open(os.path.join(REPORTS, "packets.json")))
 ID = {(st, d, n): e["protocol_id"] for st, dd in PK.items() for d, ps in dd.items() for n, e in ps.items()}
 NAME = {(st, d, e["protocol_id"]): n for st, dd in PK.items() for d, ps in dd.items() for n, e in ps.items()}

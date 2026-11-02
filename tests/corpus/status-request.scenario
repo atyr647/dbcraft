@@ -1,0 +1,17 @@
+corpus_format: 1
+id: status-request
+title: Status request in STATUS
+description: A status request is accepted and keeps the connection in STATUS.
+category: status
+protocol: 777
+provenance: hand-authored
+initial_state: STATUS
+final_state: STATUS
+
+step:
+  direction: serverbound
+  input: 01 00
+  outcome: accepted
+  packet_id: 0x00
+  state_after: STATUS
+  canonical: true

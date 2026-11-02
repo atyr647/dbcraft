@@ -1,0 +1,15 @@
+corpus_format: 1
+id: login-early-ack-disconnect
+title: Early Login Acknowledged disconnect
+description: Login Acknowledged before Login Success closes the connection with no pending output.
+category: login
+protocol: 777
+provenance: hand-authored
+initial_state: LOGIN
+final_state: LOGIN
+
+step:
+  direction: serverbound
+  input: 01 03
+  outcome: rejected
+  rejection_category: login
