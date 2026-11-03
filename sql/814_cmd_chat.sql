@@ -46,7 +46,9 @@ end $$;
 create or replace function mc.world_seed_get() returns bigint language plpgsql as $$
 declare v text := nullif(btrim(coalesce(mc.prop('level-seed'), '')), ''); s bigint;
 begin
-  if v is not null then return case when v ~ '^-?[0-9]{1,18}$' then v::bigint else mc.java_string_hash(v) end; end if;
+  if v is not null then   -- Long.parseLong, else String.hashCode
+    return case when v ~ '^-?[0-9]{1,19}$' and v::numeric between -9223372036854775808 and 9223372036854775807 then v::bigint else mc.java_string_hash(v) end;
+  end if;
   select seed into s from mc.world_seed;
   if s is null then
     s := ('x' || substr(md5(random()::text || clock_timestamp()::text), 1, 16))::bit(64)::bigint;
@@ -116,25 +118,22 @@ begin
 end $$;
 
 ------------------------------------------------------------------------------------------------ /gamerule
--- gamerule <rule> queries, gamerule <rule> <value> sets.  Values were checked against the range in the graph by the parser.  A rule that changes what clients show
--- sends the packet vanilla sends (reduced_debug_info: entity_event 22/23, immediate_respawn: game_event 11, limited_crafting: game_event 12).
+-- gamerule <rule> queries, gamerule <rule> <value> sets.  Values were checked against the range in the graph by the parser.  reduced_debug_info is the one rule that
+-- sends a packet when it changes (entity_event 22 / 23 to everybody; verified: immediate_respawn and limited_crafting send nothing here).
 create or replace function mc.cmd_run_gamerule(me mc.player, lvl int, input text, sig text, args jsonb) returns void language plpgsql as $$
-declare rule text := regexp_replace(split_part(sig, '/', 2), '^minecraft:', ''); r mc.gamerule; v text;
+declare rule text := regexp_replace(split_part(sig, '/', 2), '^minecraft:', ''); d mc.gamerule_default; cur text; v text;
 begin
-  select * into r from mc.gamerule where name = rule;
+  select * into d from mc.gamerule_default where name = rule;
   if not found then perform mc.cmd_fail(me, proto.nbt_str('text', 'the game rule ' || rule || ' is not implemented in dbcraft')); return; end if;
+  cur := mc.gamerule_get(rule);
   if cardinality(string_to_array(sig, '/')) = 2 then
-    perform mc.cmd_success(me, mc.tc_translate_strs('commands.gamerule.query', array[rule, r.value]), false); return;
+    perform mc.cmd_success(me, mc.tc_translate_strs('commands.gamerule.query', array[rule, cur]), false); return;
   end if;
   v := args ->> 'value';
-  if v = r.value then perform mc.cmd_fail(me, mc.tc_translate_strs('commands.gamerule.not_set', array[rule, v])); return; end if;
-  update mc.gamerule set value = v where name = rule;
+  if v = cur then perform mc.cmd_fail(me, mc.tc_translate_strs('commands.gamerule.not_set', array[rule, v])); return; end if;
+  insert into mc.game_rule (name, value) values ('minecraft:' || rule, v) on conflict (name) do update set value = excluded.value;
   if rule = 'reduced_debug_info' then
     insert into mc.play_out (conn_id, data) select conn_id, mc.pkt_entity_event(entity_id, case when v = 'true' then 22 else 23 end) from mc.player where conn_id is not null order by entity_id;
-  elsif rule = 'immediate_respawn' then
-    insert into mc.play_out (conn_id, data) select conn_id, mc.pkt_game_event(11, case when v = 'true' then 1 else 0 end) from mc.player where conn_id is not null order by entity_id;
-  elsif rule = 'limited_crafting' then
-    insert into mc.play_out (conn_id, data) select conn_id, mc.pkt_game_event(12, case when v = 'true' then 1 else 0 end) from mc.player where conn_id is not null order by entity_id;
   end if;
   perform mc.cmd_success(me, mc.tc_translate_strs('commands.gamerule.set', array[rule, v]));       -- (verified; with send_command_feedback off, nothing is said at all)
 end $$;
@@ -143,14 +142,14 @@ end $$;
 -- Removes matching items from the targets' inventories (hotbar, main inventory, armor, off hand - the order of vanilla's compartments), then tells each target's
 -- client: a container_set_slot for every changed slot, and for the crafting-result slot 0 (Inventory slotsChanged: sent even when nothing matched).
 create or replace function mc.cmd_run_clear(me mc.player, lvl int, input text, sig text, args jsonb) returns void language plpgsql as $$
-declare tgts mc.player[]; t mc.player; item text := args ->> 'item'; maxc int := (args ->> 'maxCount')::int; total int := 0; found int; removed int; s record; state int; left_n int;
+declare tgts mc.player[]; t mc.player; v_item text := args ->> 'item'; maxc int := (args ->> 'maxCount')::int; total int := 0; affected int := 0; found int; removed int; s record; state int; left_n int;
 begin
   if args ? 'targets' then tgts := mc.cmd_players(me, args -> 'targets'); if tgts is null then return; end if;
   else tgts := array[mc.cmd_me(me.uuid)]; end if;
   foreach t in array tgts loop
     found := 0; left_n := coalesce(maxc, 2147483647);
     for s in select slot, mc.inventory_slot.item as it, count from mc.inventory_slot
-              where player = t.uuid and (item is null or item = '*' or mc.inventory_slot.item = item)
+              where player = t.uuid and (v_item is null or v_item = '*' or mc.inventory_slot.item = v_item)
               order by case when slot between 36 and 44 then 0 when slot between 9 and 35 then 1 when slot between 5 and 8 then 2 else 3 end,
                        case when slot between 5 and 8 then -slot else slot end loop
       if maxc = 0 then found := found + s.count; continue; end if;       -- maxCount 0: only count
@@ -160,18 +159,20 @@ begin
       update mc.player set inv_state = inv_state + 1 where uuid = t.uuid returning inv_state into state;
       insert into mc.play_out (conn_id, data) values (t.conn_id, mc.pkt_container_set_slot(state, s.slot, s.it, s.count - removed));
     end loop;
-    update mc.player set inv_state = inv_state + 1 where uuid = t.uuid returning inv_state into state;
-    insert into mc.play_out (conn_id, data) values (t.conn_id, mc.pkt_container_set_slot(state, 0, null, 0));
-    total := total + found;
+    if maxc is distinct from 0 then       -- (verified) counting only (maxCount 0) sends nothing to the target
+      update mc.player set inv_state = inv_state + 1 where uuid = t.uuid returning inv_state into state;
+      insert into mc.play_out (conn_id, data) values (t.conn_id, mc.pkt_container_set_slot(state, 0, null, 0));
+    end if;
+    total := total + found; if found > 0 then affected := affected + 1; end if;      -- (verified) "from N players" counts the players that lost something
   end loop;
   if total = 0 then
     perform mc.cmd_fail(me, case when cardinality(tgts) = 1 then mc.tc_translate('clear.failed.single', array[mc.tc_player(tgts[1].uuid, tgts[1].name)])
                                  else mc.tc_translate_json('clear.failed.multiple', jsonb_build_array(cardinality(tgts))) end);
   elsif maxc = 0 then
     perform mc.cmd_success(me, case when cardinality(tgts) = 1 then mc.tc_translate('commands.clear.test.single', array[mc.tc_arg_int(total), mc.tc_player(tgts[1].uuid, tgts[1].name)])
-                                    else mc.tc_translate_json('commands.clear.test.multiple', jsonb_build_array(total, cardinality(tgts))) end);
+                                    else mc.tc_translate_json('commands.clear.test.multiple', jsonb_build_array(total, affected)) end);
   else
     perform mc.cmd_success(me, case when cardinality(tgts) = 1 then mc.tc_translate('commands.clear.success.single', array[mc.tc_arg_int(total), mc.tc_player(tgts[1].uuid, tgts[1].name)])
-                                    else mc.tc_translate_json('commands.clear.success.multiple', jsonb_build_array(total, cardinality(tgts))) end);
+                                    else mc.tc_translate_json('commands.clear.success.multiple', jsonb_build_array(total, affected)) end);
   end if;
 end $$;

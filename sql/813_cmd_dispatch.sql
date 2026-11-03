@@ -13,6 +13,13 @@ begin
   if not found then return; end if;
   lvl := mc.permission_level(me.uuid);
   insert into mc.chat_log (kind, sender, sender_name, message) values ('command', me.uuid, me.name, cmd);
+  -- a command of the player's graph that has no implementation here is said so before anything of its syntax is parsed (its argument types may be unsupported)
+  select coalesce(t.name, n.name) into root from mc.cmd_child c join mc.cmd_node n on n.id = c.child left join mc.cmd_node t on t.id = n.redirect
+   where c.parent = 0 and n.kind = 1 and n.min_level <= lvl and n.name = (regexp_match(cmd, '^[^ ]*'))[1];
+  if root is not null and to_regprocedure('mc.cmd_run_' || replace(root, '-', '_') || '(mc.player,int,text,text,jsonb)') is null then
+    perform mc.cmd_fail(me, proto.nbt_str('text', '/' || root || ' is not implemented in dbcraft'));
+    return;
+  end if;
   res := mc.cmd_parse(lvl, cmd);
   if not res.ok then perform mc.cmd_report_error(me, cmd, res.ex_key, res.ex_args, res.ex_cursor); return; end if;
   select string_agg(coalesce(t.name, n.name), '/' order by u.o) into sig
@@ -66,8 +73,8 @@ create or replace function mc.cmd_run_list(me mc.player, lvl int, input text, si
 declare ps mc.player[]; comps bytea[];
 begin
   select array_agg(p order by p.entity_id) into ps from mc.player p where p.conn_id is not null;
-  select array_agg(case when sig = 'list/uuids' then mc.tc_translate_strs('commands.list.nameAndId', array[p.name, p.uuid::text]) else mc.tc_player(p.uuid, p.name) end order by o)
-    into comps from unnest(ps) with ordinality t(p, o);
+  select array_agg(case when sig = 'list/uuids' then mc.tc_translate_strs('commands.list.nameAndId', array[ps[i].name, ps[i].uuid::text]) else mc.tc_player(ps[i].uuid, ps[i].name) end order by i)
+    into comps from generate_series(1, coalesce(cardinality(ps), 0)) i;
   -- (verified) {with:[count, max, {extra: [name, ", " (gray), name ...], text: ""}], translate: commands.list.players}
   perform mc.cmd_success(me, mc.tc_translate('commands.list.players', array[
       mc.tc_arg_int(coalesce(cardinality(comps), 0)), mc.tc_arg_int(mc.prop_int('max-players')),
@@ -81,7 +88,10 @@ create or replace function mc.cmd_run_time(me mc.player, lvl int, input text, si
 declare v bigint; marker text; day bigint; cur bigint; markers jsonb := '{"minecraft:day":1000,"minecraft:noon":6000,"minecraft:night":13000,"minecraft:midnight":18000}';
 begin
   if sig = 'time/query/gametime' then
-    perform mc.cmd_success(me, proto.cat(array[proto.nbt_list_int('with', array[(select game_time from mc.game_state)::int]), proto.nbt_str('translate', 'commands.time.query.gametime')]), false);
+    perform mc.cmd_success(me, proto.cat(array[proto.nbt_list_long('with', array[(select game_time from mc.game_state)]), proto.nbt_str('translate', 'commands.time.query.gametime')]), false);
+    return;
+  elsif sig = 'time/query/time' then
+    perform mc.cmd_success(me, mc.tc_translate('commands.time.query.absolute', array[mc.tc_arg_str('minecraft:overworld'), mc.tc_arg_long((select day_time from mc.game_state))]), false);   -- (verified: the ticks are a long)
     return;
   elsif sig = 'time/set/timemarker' then
     marker := args ->> 'timemarker';
@@ -102,7 +112,9 @@ begin
   if sig = 'time/set/timemarker' then
     perform mc.cmd_success(me, mc.tc_translate_strs('commands.time.set.time_marker', array['minecraft:overworld', marker]));     -- (verified)
   else
-    perform mc.cmd_success(me, mc.tc_translate('commands.time.set.absolute', array[mc.tc_arg_str('minecraft:overworld'), mc.tc_arg_int((select day_time from mc.game_state)::int)]));   -- (verified)
+    -- (verified) `time set N`: the ticks are an int; `time add N`: a long (the clock total)
+    perform mc.cmd_success(me, mc.tc_translate('commands.time.set.absolute', array[mc.tc_arg_str('minecraft:overworld'),
+      case when sig = 'time/set/time' then mc.tc_arg_int((select day_time from mc.game_state)::int) else mc.tc_arg_long((select day_time from mc.game_state)) end]));
   end if;
 end $$;
 
@@ -162,11 +174,29 @@ begin
   end loop;
 end $$;
 
+------------------------------------------------------------------------------------------------ Mth.sin / Mth.cos and local coordinates
+-- Vanilla's Mth.sin is a table of 65536 floats, indexed by (int)(x * 10430.378F) & 65535, and cos is the same table 16384 entries on; every step here is float arithmetic
+-- (the real type), so the results are the ones the server computes, not the exact sine.
+create or replace function mc.mth_sin(f real) returns real language sql immutable as $$
+  select sin(((trunc((f * 10430.378::real)::float8)::bigint & 65535)::float8) * pi() * 2 / 65536)::real $$;
+create or replace function mc.mth_cos(f real) returns real language sql immutable as $$
+  select sin(((trunc((f * 10430.378::real + 16384::real)::float8)::bigint & 65535)::float8) * pi() * 2 / 65536)::real $$;
+-- LocalCoordinates.getPosition: the offset of ^left ^up ^forwards from the position, for a view with this yaw and pitch
+create or replace function mc.local_offset(p_yaw real, p_pitch real, p_left float8, p_up float8, p_fwd float8, out dx float8, out dy float8, out dz float8) language plpgsql immutable as $$
+declare k real := 3.1415927::real / 180::real; f real := mc.mth_cos((p_yaw + 90::real) * k); f1 real := mc.mth_sin((p_yaw + 90::real) * k); f2 real := mc.mth_cos(-p_pitch * k);
+  f3 real := mc.mth_sin(-p_pitch * k); f4 real := mc.mth_cos((-p_pitch + 90::real) * k); f5 real := mc.mth_sin((-p_pitch + 90::real) * k);
+  v1x float8 := (f * f2)::float8; v1y float8 := f3::float8; v1z float8 := (f1 * f2)::float8; v2x float8 := (f * f4)::float8; v2y float8 := f5::float8; v2z float8 := (f1 * f4)::float8;
+  v3x float8; v3y float8; v3z float8;
+begin
+  v3x := -(v1y * v2z - v1z * v2y); v3y := -(v1z * v2x - v1x * v2z); v3z := -(v1x * v2y - v1y * v2x);        -- v1 x v2, scaled by -1
+  dx := v1x * p_fwd + v2x * p_up + v3x * p_left; dy := v1y * p_fwd + v2y * p_up + v3y * p_left; dz := v1z * p_fwd + v2z * p_up + v3z * p_left;
+end $$;
+
 ------------------------------------------------------------------------------------------------ /teleport (/tp)
 -- Forms: <destination> | <location> | <targets> <destination> | <targets> <location> [<rotation>].  `facing` is not implemented.
 -- Position packets (all seen from the real server): a destination teleports to its position AND rotation (flags 0); absolute coordinates keep the target's
 -- rotation (relative flags 0x18); a rotation argument sets it (flags 0, or 8/16 for a relative component); coordinates with ~ send the offsets as RELATIVE
--- flags (0xff when x y z are all relative) followed by an absolute packet with the next teleport id.  Coordinates with ~ are relative to the EXECUTOR.
+-- flags (X Y Z and their velocity flags), and a relative y is followed by an absolute packet with the next teleport id.  Coordinates with ~ are relative to the EXECUTOR.
 create or replace function mc.cmd_run_teleport(me mc.player, lvl int, input text, sig text, args jsonb) returns void language plpgsql as $$
 declare tgts mc.player[]; t mc.player; dst mc.player; dsts mc.player[]; loc jsonb := args -> 'location'; rot jsonb := args -> 'rotation';
         flags int; rel_x boolean; rel_y boolean; rel_z boolean; tid int; ex mc.player := mc.cmd_me(me.uuid);
@@ -194,12 +224,20 @@ begin
     return;
   end if;
   -- a location, relative to the executor
+  if loc ->> 0 like '^%' then
+    -- local coordinates (LocalCoordinates.getPosition): left up forwards along the executor's view, as offsets from its position
+    select l.dx, l.dy, l.dz into dx, dy, dz from mc.local_offset(ex.yaw, ex.pitch, coalesce(nullif(substr(loc ->> 0, 2), ''), '0')::float8,
+         coalesce(nullif(substr(loc ->> 1, 2), ''), '0')::float8, coalesce(nullif(substr(loc ->> 2, 2), ''), '0')::float8) l;
+    rel_x := true; rel_y := true; rel_z := true;
+  else
   rel_x := loc ->> 0 like '~%'; rel_y := loc ->> 1 like '~%'; rel_z := loc ->> 2 like '~%';
   dx := case when rel_x then coalesce(nullif(substr(loc ->> 0, 2), ''), '0')::float8 else (loc ->> 0)::float8 end;
   dy := case when rel_y then coalesce(nullif(substr(loc ->> 1, 2), ''), '0')::float8 else (loc ->> 1)::float8 end;
   dz := case when rel_z then coalesce(nullif(substr(loc ->> 2, 2), ''), '0')::float8 else (loc ->> 2)::float8 end;
+  end if;
   relative_any := rel_x or rel_y or rel_z;
-  flags := (case when rel_x then 1 else 0 end) | (case when rel_y then 2 else 0 end) | (case when rel_z then 4 else 0 end);
+  -- (verified) the flags: X Y Z relative = 1 2 4, rotation kept (no rotation argument) = 8 + 16, and for every relative coordinate its velocity flag too (0x20 0x40 0x80)
+  flags := (case when rel_x then 1 + 32 else 0 end) | (case when rel_y then 2 + 64 else 0 end) | (case when rel_z then 4 + 128 else 0 end);
   if rot is null then flags := flags | 24; rel_yaw := false; rel_pitch := false; ryaw := 0; rpitch := 0;
   else
     rel_yaw := rot ->> 0 like '~%'; rel_pitch := rot ->> 1 like '~%';
@@ -207,7 +245,6 @@ begin
     rpitch := case when rel_pitch then coalesce(nullif(substr(rot ->> 1, 2), ''), '0')::float8 else (rot ->> 1)::float8 end;
     flags := flags | (case when rel_yaw then 8 else 0 end) | (case when rel_pitch then 16 else 0 end);
   end if;
-  if rel_x and rel_y and rel_z then flags := flags | 224; end if;       -- x y z all relative: the delta flags too (seen: 0xff with a relative rotation)
   ax := case when rel_x then ex.x + dx else dx end; ay := case when rel_y then ex.y + dy else dy end; az := case when rel_z then ex.z + dz else dz end;
   foreach t in array tgts loop
     nyaw := case when rot is null then t.yaw when rel_yaw then ex.yaw + ryaw else ryaw end;
@@ -216,9 +253,9 @@ begin
     update mc.player set x = ax, y = ay, z = az, yaw = nyaw::real, pitch = npitch::real, chunk_x = floor(ax / 16)::int, chunk_z = floor(az / 16)::int, vis_dirty = true,
                          teleport_id = tid, awaiting_teleport = tid where uuid = t.uuid;
     -- (verified) absolute coordinates: rotation kept (flags 0x18); with ~ the offsets and relative flags, then an absolute packet
-    insert into mc.play_out (conn_id, data) values (t.conn_id, mc.pkt_player_position(tid, case when rel_x then dx else ax end, case when rel_y then dy else ay end,
-                                                      case when rel_z then dz else az end, 0, 0, 0, ryaw::real, rpitch::real, flags));
-    if relative_any then
+    insert into mc.play_out (conn_id, data) values (t.conn_id, mc.pkt_player_position(tid, case when rel_x then ax - t.x else ax end, case when rel_y then ay - t.y else ay end,
+                                                      case when rel_z then az - t.z else az end, 0, 0, 0, ryaw::real, rpitch::real, flags));
+    if rel_y then       -- (verified) a relative y is followed by an absolute packet with the next teleport id
       update mc.player set teleport_id = tid + 1, awaiting_teleport = tid + 1 where uuid = t.uuid;
       insert into mc.play_out (conn_id, data) values (t.conn_id, mc.pkt_player_position(tid + 1, ax, ay, az, 0, 0, 0, nyaw::real, npitch::real, 0));
     end if;
@@ -237,21 +274,33 @@ end $$;
 ------------------------------------------------------------------------------------------------ /give
 -- The inventory model stacks everything to 64 (docs/GAME.md), so the vanilla limit of 100 stacks is 6400 items (verified for stone: "Can't give more than 6400").
 create or replace function mc.give_item(p_target mc.player, p_item text, p_count int) returns void language plpgsql as $$
-declare left_n int := p_count; add_n int; sl int; st int; state int;
+declare rem int := p_count; chunk int; sl int; st int; add_n int; state int; changed int[]; c int;
 begin
-  -- slots are filled like vanilla's Inventory.add: merge into an existing stack of the same item (max 64 here; per-item stack limits are not in the data),
-  -- else the first empty hotbar slot, then the main inventory
-  for sl in select s from (select generate_series(36, 44) s union all select generate_series(9, 35)) q order by (s >= 36) desc, s loop
-    exit when left_n <= 0;
-    st := null;
-    select count into st from mc.inventory_slot where player = p_target.uuid and slot = sl and mc.inventory_slot.item = p_item and count < 64;
-    if st is not null then add_n := least(64 - st, left_n);
-    elsif not exists (select 1 from mc.inventory_slot where player = p_target.uuid and slot = sl) then st := 0; add_n := least(64, left_n);
-    else continue; end if;
-    perform mc.set_slot(p_target.uuid, sl, p_item, st + add_n);
-    left_n := left_n - add_n;
-    update mc.player set inv_state = inv_state + 1 where uuid = p_target.uuid returning inv_state into state;
-    insert into mc.play_out (conn_id, data) values (p_target.conn_id, mc.pkt_container_set_slot(state, sl, p_item, st + add_n));   -- (verified: container 0, state id 2, slot 36, stack of 8)
+  -- GiveCommand: the count goes in as stacks of at most 64 (everything stacks to 64 here), each added like vanilla's Inventory.add: into the first slot that holds the
+  -- same item and has room (hotbar first, then the main inventory), else the first empty one, continuing with the rest; after EACH stack the client is told about every
+  -- slot that changed, in menu order (verified: 70 dirt on top of 4 sent slot 36 = 64, slot 37 = 4, then slot 37 = 10)
+  while rem > 0 loop
+    chunk := least(64, rem); rem := rem - chunk; changed := '{}';
+    while chunk > 0 loop
+      sl := null;
+      select q.s into sl from (select generate_series(36, 44) s union all select generate_series(9, 35)) q
+        where exists (select 1 from mc.inventory_slot i where i.player = p_target.uuid and i.slot = q.s and i.item = p_item and i.count < 64)
+        order by (q.s >= 36) desc, q.s limit 1;
+      if sl is not null then select i.count into st from mc.inventory_slot i where i.player = p_target.uuid and i.slot = sl;
+      else
+        select q.s into sl from (select generate_series(36, 44) s union all select generate_series(9, 35)) q
+          where not exists (select 1 from mc.inventory_slot i where i.player = p_target.uuid and i.slot = q.s) order by (q.s >= 36) desc, q.s limit 1;
+        st := 0;
+      end if;
+      exit when sl is null;                       -- a full inventory: vanilla drops the rest as an item (not modelled)
+      add_n := least(64 - st, chunk);
+      perform mc.set_slot(p_target.uuid, sl, p_item, st + add_n);
+      chunk := chunk - add_n; changed := changed || sl;
+    end loop;
+    for c in select distinct x from unnest(changed) x order by x loop
+      update mc.player set inv_state = inv_state + 1 where uuid = p_target.uuid returning inv_state into state;
+      insert into mc.play_out (conn_id, data) values (p_target.conn_id, mc.pkt_container_set_slot(state, c, p_item, (select i.count from mc.inventory_slot i where i.player = p_target.uuid and i.slot = c)));
+    end loop;
   end loop;
 end $$;
 
@@ -348,8 +397,11 @@ begin
     continue when exists (select 1 from mc.ban where kind = 'player' and uuid = t.uuid);
     insert into mc.ban (kind, uuid, name, reason, source) values ('player', t.uuid, t.name, reason, me.name);
     n := n + 1;
-    if t.conn_id is not null then perform mc.kick(t.conn_id, 'multiplayer.disconnect.banned.reason', array[reason]); end if;
-    perform mc.cmd_success(me, mc.tc_translate('commands.ban.success', array[mc.tc_player(t.uuid, t.name), mc.tc_arg_str(reason)]));   -- unverified
+    -- (verified: the disconnect text carries no reason)
+    if t.conn_id is not null then perform mc.kick(t.conn_id, 'multiplayer.disconnect.banned'); end if;
+    -- (verified) a given reason: two plain strings; without one the reason is the translatable default text
+    if nullif(args #>> '{reason,text}', '') is not null then perform mc.cmd_success(me, mc.tc_translate_strs('commands.ban.success', array[t.name, reason]));
+    else perform mc.cmd_success(me, mc.tc_translate('commands.ban.success', array[mc.tc_arg_str(t.name), proto.nbt_str('translate', 'multiplayer.disconnect.banned.reason.default')])); end if;
   end loop;
   if n = 0 then perform mc.cmd_fail(me, mc.tc_translate('commands.ban.failed')); end if;
 end $$;
@@ -362,7 +414,7 @@ begin
     continue when not exists (select 1 from mc.ban where kind = 'player' and uuid = t.uuid);
     delete from mc.ban where kind = 'player' and uuid = t.uuid;
     n := n + 1;
-    perform mc.cmd_success(me, mc.tc_translate_strs('commands.pardon.success', array[t.name]));      -- unverified
+    perform mc.cmd_success(me, mc.tc_translate_strs('commands.pardon.success', array[t.name]));      -- (verified)
   end loop;
   if n = 0 then perform mc.cmd_fail(me, mc.tc_translate('commands.pardon.failed')); end if;
 end $$;

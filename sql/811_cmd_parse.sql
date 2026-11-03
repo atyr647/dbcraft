@@ -6,8 +6,8 @@
 -- (EntitySelectorParser, EntitySelectorOptions, Vec3Argument, TimeArgument, ...).  Messages are translation keys of the 26.3 language file.
 --
 -- A value is parsed to JSON: numbers as numbers, text as text, an entity argument as a selector object (resolved at execution by sql/812).
--- Not covered (and said so in the error text, never silently wrong): item components `item[...]`, local coordinates ^ ^ ^, the selector options
--- advancements dx dy dz nbt predicate scores tag team x_rotation y_rotation, argument types other than those listed in mc.cmd_arg.
+-- Not covered (and said so in the error text, never silently wrong): item components `item[...]`, the selector options
+-- advancements nbt predicate scores x_rotation y_rotation, argument types other than those listed in mc.cmd_arg.
 
 drop type if exists mc.cmd_ap cascade;
 create type mc.cmd_ap as (pos int, val jsonb, ex_key text, ex_args jsonb, ex_cursor int);       -- one argument parse: new cursor + value, or the exception
@@ -93,7 +93,7 @@ begin
   begin
     lo := nullif(a, '')::float8; hi := nullif(b, '')::float8;
   exception when others then return mc.ap_err('argument.range.empty', null, cur); end;
-  if whole and (a ~ '\.' or b ~ '\.') then return mc.ap_err('argument.range.ints', null, cur); end if;
+  if whole and (a ~ '\.' or b ~ '\.') then return mc.ap_err('parsing.int.invalid', jsonb_build_array(case when a ~ '\.' then a else b end), cur); end if;   -- (verified)
   if lo is not null and hi is not null and lo > hi then return mc.ap_err('argument.range.swapped', null, cur); end if;
   return mc.ap_ok(p, jsonb_build_array(lo, hi));
 end $$;
@@ -108,7 +108,7 @@ declare
   name_eq text; name_ne text[] := '{}'; dmin float8; dmax float8; dist_set boolean := false; gm_eq int; gm_ne int[] := '{}'; type_eq text; type_ne text[] := '{}';
   lmin float8; lmax float8; level_set boolean := false; px float8; py float8; pz float8;
   has_name_eq boolean := false; has_name_ne boolean := false; limited boolean := false; sorted boolean := false; has_gm_eq boolean := false; has_gm_ne boolean := false;
-  type_limited boolean := false; type_ne_set boolean := false;
+  type_limited boolean := false; type_ne_set boolean := false; never boolean := false; pdx float8; pdy float8; pdz float8; has_team_eq boolean := false; has_team_ne boolean := false;
   i int; key text; r mc.cmd_ap; neg boolean; start int; v text; e int; rl text; gm int;
 begin
   if substr(s, p + 1, 1) = '@' then
@@ -134,15 +134,16 @@ begin
         r := mc.rd_string(s, p); if r.ex_key is not null then return r; end if;
         key := r.val #>> '{}'; p := r.pos;
         -- is the option known, and applicable here?
-        if key not in ('name', 'distance', 'limit', 'sort', 'gamemode', 'type', 'level', 'x', 'y', 'z') then
-          if key in ('advancements', 'dx', 'dy', 'dz', 'nbt', 'predicate', 'scores', 'tag', 'team', 'x_rotation', 'y_rotation') then
+        if key not in ('name', 'distance', 'limit', 'sort', 'gamemode', 'type', 'level', 'x', 'y', 'z', 'dx', 'dy', 'dz', 'tag', 'team') then
+          if key in ('advancements', 'nbt', 'predicate', 'scores', 'x_rotation', 'y_rotation') then
             return mc.ap_unsupported('the selector option ''' || key || '''', i);
           end if;
           return mc.ap_err('argument.entity.options.unknown', jsonb_build_array(key), i);
         end if;
         if (key = 'name' and has_name_eq) or (key = 'distance' and dist_set) or (key = 'level' and level_set) or (key = 'x' and px is not null)
            or (key = 'y' and py is not null) or (key = 'z' and pz is not null) or (key = 'limit' and (kind = 's' or limited)) or (key = 'sort' and (kind = 's' or sorted))
-           or (key = 'gamemode' and has_gm_eq) or (key = 'type' and type_limited) then
+           or (key = 'gamemode' and has_gm_eq) or (key = 'type' and type_limited) or (key = 'dx' and pdx is not null) or (key = 'dy' and pdy is not null)
+           or (key = 'dz' and pdz is not null) or (key = 'team' and has_team_eq) then
           return mc.ap_err('argument.entity.options.inapplicable', jsonb_build_array(key), i);
         end if;
         p := mc.rd_skip_ws(s, p);
@@ -184,14 +185,38 @@ begin
         elsif key = 'type' then
           start := p; p := mc.rd_skip_ws(s, p); neg := substr(s, p + 1, 1) = '!'; if neg then p := mc.rd_skip_ws(s, p + 1); end if;
           if type_ne_set and not neg then return mc.ap_err('argument.entity.options.inapplicable', jsonb_build_array('type'), start); end if;
-          if substr(s, p + 1, 1) = '#' then return mc.ap_unsupported('entity type tags in selectors', start); end if;
-          e := mc.rd_end(s, p, '[0-9a-z_.:/-]'); v := substr(s, p + 1, e - p);
-          rl := case when v like '%:%' then v else 'minecraft:' || v end;
-          if not exists (select 1 from ref.registry where registry = 'minecraft:entity_type' and name = rl) then
-            return mc.ap_err('argument.entity.options.type.invalid', jsonb_build_array(rl), start);
+          if substr(s, p + 1, 1) = '#' then
+            e := mc.rd_end(s, p + 1, '[0-9a-z_.:/-]'); v := substr(s, p + 2, e - p - 1);
+            rl := case when v like '%:%' then v else 'minecraft:' || v end;
+            if neg then type_ne_set := true;
+              if exists (select 1 from ref.dp_tag_member where registry = 'minecraft:entity_type' and tag = rl and member = 'minecraft:player') then never := true; end if;
+            else type_limited := true;
+              if not exists (select 1 from ref.dp_tag_member where registry = 'minecraft:entity_type' and tag = rl and member = 'minecraft:player') then never := true; end if;
+            end if;
+            p := e;
+          else
+            e := mc.rd_end(s, p, '[0-9a-z_.:/-]'); v := substr(s, p + 1, e - p);
+            rl := case when v like '%:%' then v else 'minecraft:' || v end;
+            if not exists (select 1 from ref.registry where registry = 'minecraft:entity_type' and name = rl) then
+              return mc.ap_err('argument.entity.options.type.invalid', jsonb_build_array(rl), start);
+            end if;
+            if neg then type_ne_set := true; type_ne := type_ne || rl; else type_eq := rl; type_limited := true; if rl = 'minecraft:player' then incl := false; end if; end if;
+            p := e;
           end if;
-          if neg then type_ne_set := true; type_ne := type_ne || rl; else type_eq := rl; type_limited := true; if rl = 'minecraft:player' then incl := false; end if; end if;
-          p := e;
+        elsif key = 'tag' or key = 'team' then
+          -- players here have no tags and no team: tag=x / team=x match nobody, tag=!x / team=!x everybody, tag= / team= (none) everybody, tag=! / team=! nobody
+          start := p; p := mc.rd_skip_ws(s, p); neg := substr(s, p + 1, 1) = '!'; if neg then p := mc.rd_skip_ws(s, p + 1); end if;
+          r := mc.rd_string(s, p); if r.ex_key is not null then return r; end if;
+          v := r.val #>> '{}'; p := r.pos;
+          if key = 'team' then
+            if has_team_ne and not neg then return mc.ap_err('argument.entity.options.inapplicable', jsonb_build_array('team'), start); end if;
+            if neg then has_team_ne := true; else has_team_eq := true; end if;
+          end if;
+          if (not neg and v <> '') or (neg and v = '') then never := true; end if;
+        elsif key in ('dx', 'dy', 'dz') then
+          r := mc.rd_double(s, p); if r.ex_key is not null then return r; end if;
+          if key = 'dx' then pdx := (r.val #>> '{}')::float8; elsif key = 'dy' then pdy := (r.val #>> '{}')::float8; else pdz := (r.val #>> '{}')::float8; end if;
+          p := r.pos;
         else   -- x y z
           r := mc.rd_double(s, p); if r.ex_key is not null then return r; end if;
           if key = 'x' then px := (r.val #>> '{}')::float8; elsif key = 'y' then py := (r.val #>> '{}')::float8; else pz := (r.val #>> '{}')::float8; end if;
@@ -219,7 +244,7 @@ begin
   end if;
   return mc.ap_ok(p, jsonb_strip_nulls(jsonb_build_object('kind', kind, 'limit', lim, 'sort', sort, 'incl', incl, 'name_eq', name_eq, 'name_ne', to_jsonb(name_ne),
       'dist', case when dist_set then jsonb_build_array(dmin, dmax) end, 'gm_eq', gm_eq, 'gm_ne', to_jsonb(gm_ne), 'type_eq', type_eq, 'type_ne', to_jsonb(type_ne),
-      'level', case when level_set then jsonb_build_array(lmin, lmax) end, 'x', px, 'y', py, 'z', pz)));
+      'level', case when level_set then jsonb_build_array(lmin, lmax) end, 'x', px, 'y', py, 'z', pz, 'dx', pdx, 'dy', pdy, 'dz', pdz, 'never', case when never then true end)));
 end $$;
 
 ------------------------------------------------------------------------------------------------ argument types
@@ -281,6 +306,7 @@ begin
   when 'minecraft:message' then
     -- the rest of the line; every selector in it is parsed now (a syntax error in one is the error of the command), unknown selector TYPES are plain text
     p := cur; vals := '[]';
+    if not p_sel_ok then return mc.ap_ok(n, jsonb_build_object('text', substr(s, cur + 1), 'parts', vals)); end if;       -- no selectors below level 2: plain text
     while p < n loop
       if substr(s, p + 1, 1) = '@' then
         r := mc.sel_parse(s, p, p_sel_ok);
@@ -295,13 +321,26 @@ begin
     if substr(s, cur + 1, 1) = '#' then return mc.ap_unsupported('item tags', cur); end if;
     e := mc.rd_end(s, cur, '[0-9a-z_.:/-]'); v := substr(s, cur + 1, e - cur);
     rl := case when v like '%:%' then v else 'minecraft:' || v end;
-    if not exists (select 1 from ref.registry where registry = 'minecraft:item' and name = rl) then return mc.ap_err('argument.item.id.invalid', jsonb_build_array(rl), cur); end if;
+    if not exists (select 1 from ref.registry where registry = 'minecraft:item' and name = rl) then
+      return mc.ap_err('argument.item.id.invalid', jsonb_build_array(rl), case when t = 'minecraft:item_predicate' then e else cur end);   -- (verified: after the id for /clear, before it for /give)
+    end if;
     if substr(s, e + 1, 1) in ('[', '{') then return mc.ap_unsupported('item components or NBT', e); end if;
     return mc.ap_ok(e, to_jsonb(rl));
   when 'minecraft:vec3' then
     -- three coordinates: x z of a plain integer are centred on the block (+0.5), y is not (WorldCoordinates.parseDouble)
     p := cur;
-    if substr(s, p + 1, 1) = '^' then return mc.ap_unsupported('local coordinates (^)', cur); end if;
+    if substr(s, p + 1, 1) = '^' then       -- local coordinates: left up forwards, each written ^ or ^number (LocalCoordinates.parse)
+      for k in 1 .. 3 loop
+        if substr(s, p + 1, 1) <> '^' then return mc.ap_err('argument.pos.mixed', null, p); end if;
+        p := p + 1; q := p;
+        if p < n and substr(s, p + 1, 1) <> ' ' then
+          r := mc.rd_double(s, p); if r.ex_key is not null then return r; end if; p := r.pos;
+        end if;
+        coords := coords || ('^' || substr(s, q + 1, p - q));
+        if k < 3 then if p < n and substr(s, p + 1, 1) = ' ' then p := p + 1; else return mc.ap_err('argument.pos3d.incomplete', null, cur); end if; end if;
+      end loop;
+      return mc.ap_ok(p, to_jsonb(coords));
+    end if;
     for k in 1 .. 3 loop
       if p >= n then
         if k = 1 then return mc.ap_err('argument.pos.missing.double', null, cur); end if;
@@ -346,6 +385,14 @@ begin
     ticks := round((r.val #>> '{}')::float8 * case unit when 'd' then 24000 when 's' then 20 else 1 end);
     if ticks < mn then return mc.ap_err('argument.time.tick_count_too_low', jsonb_build_array(mn, ticks), cur); end if;
     return mc.ap_ok(e, to_jsonb(ticks));
+  when 'minecraft:resource' then
+    e := mc.rd_end(s, cur, '[0-9a-z_.:/-]'); v := substr(s, cur + 1, e - cur);
+    rl := case when v like '%:%' then v else 'minecraft:' || v end;
+    -- the registry key of the argument is in its properties (a VarInt-length string)
+    if not exists (select 1 from ref.dp_entry where registry = convert_from(substring(pr from 2), 'UTF8') and name = rl) then
+      return mc.ap_err('argument.resource.not_found', jsonb_build_array(rl, convert_from(substring(pr from 2), 'UTF8')), e);
+    end if;
+    return mc.ap_ok(e, to_jsonb(rl));
   when 'minecraft:resource_location' then
     e := mc.rd_end(s, cur, '[0-9a-z_.:/-]'); v := substr(s, cur + 1, e - cur);
     return mc.ap_ok(e, to_jsonb(case when v like '%:%' then v else 'minecraft:' || v end));

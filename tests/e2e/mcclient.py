@@ -225,8 +225,14 @@ class Client:
             elif name == "minecraft:player_position":
                 tid, o = parse_varint(body)
                 x, y, z = struct.unpack(">ddd", body[o:o + 24])
-                self.pos = (x, y, z)
-                self.send("minecraft:accept_teleportation", body[:o] + body[o:o + 24] + body[o + 48:o + 56])
+                yaw, pitch = struct.unpack(">ff", body[o + 48:o + 56])
+                flags = struct.unpack(">i", body[o + 56:o + 60])[0]
+                # a real client resolves the relative parts (flags: 1 2 4 = x y z, 8 16 = yaw pitch) against what it had before it answers
+                px, py, pz = self.pos or (0.0, 0.0, 0.0); pyaw, ppitch = getattr(self, "rot", (0.0, 0.0))
+                x, y, z = (px + x if flags & 1 else x), (py + y if flags & 2 else y), (pz + z if flags & 4 else z)
+                yaw, pitch = (pyaw + yaw if flags & 8 else yaw), (ppitch + pitch if flags & 16 else pitch)
+                self.pos = (x, y, z); self.rot = (yaw, pitch)
+                self.send("minecraft:accept_teleportation", varint(tid) + struct.pack(">dddff", x, y, z, yaw, pitch))
                 if not self._loaded_sent:
                     self.send("minecraft:player_loaded")
                     self._loaded_sent = True

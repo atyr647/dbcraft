@@ -2,11 +2,12 @@
 -- game rules, message components.
 
 ------------------------------------------------------------------------------------------------ game rules
--- The server's game rules.  Names, types and defaults are those of the real 26.3 server (every one was read back with `/gamerule <rule>` from a vanilla server
--- and compared with this table in tests/e2e/compare_commands.py).  Their ranges come from the command graph (the argument's min/max).  Only the commands
--- read and write them here; a module that gives a rule a meaning (keep_inventory, pvp, ...) reads mc.gamerule_get / mc.gamerule_bool.
-create table if not exists mc.gamerule (name text primary key, vtype text not null check (vtype in ('bool', 'int')), default_value text not null, value text not null);
-insert into mc.gamerule (name, vtype, default_value, value) select n, t, d, d from (values
+-- The server's game rules.  VALUES live in mc.game_rule (sql/700: vanilla's names, "minecraft:keep_inventory", one row per rule that was ever set; a world import fills
+-- it too) and the default of a rule without a row is vanilla's.  mc.gamerule_default holds name, type and default of every rule of the real 26.3 server: all of them
+-- were read back with `/gamerule <rule>` from a vanilla server and are compared with this table in tests/e2e/compare_commands.py.  The range of a rule comes from the
+-- command graph (the value argument's min/max).  Modules that give a rule a meaning read mc.gamerule_get / mc.gamerule_bool (or mc.game_rule directly).
+create table if not exists mc.gamerule_default (name text primary key, vtype text not null check (vtype in ('bool', 'int')), default_value text not null);
+insert into mc.gamerule_default (name, vtype, default_value) values
   ('advance_time', 'bool', 'true'),
   ('advance_weather', 'bool', 'true'),
   ('allow_entering_nether_using_portals', 'bool', 'true'),
@@ -65,14 +66,20 @@ insert into mc.gamerule (name, vtype, default_value, value) select n, t, d, d fr
   ('tnt_explosion_drop_decay', 'bool', 'false'),
   ('universal_anger', 'bool', 'false'),
   ('water_source_conversion', 'bool', 'true')
-) v(n, t, d) on conflict do nothing;
-create or replace function mc.gamerule_get(p_name text) returns text language sql stable as $$ select value from mc.gamerule where name = p_name $$;
-create or replace function mc.gamerule_bool(p_name text) returns boolean language sql stable as $$ select coalesce((select value = 'true' from mc.gamerule where name = p_name), true) $$;
+on conflict do nothing;
+create or replace function mc.gamerule_get(p_name text) returns text language sql stable as $$
+  select coalesce((select value from mc.game_rule where name = 'minecraft:' || p_name), (select default_value from mc.gamerule_default where name = p_name)) $$;
+create or replace function mc.gamerule_bool(p_name text) returns boolean language sql stable as $$ select coalesce(mc.gamerule_get(p_name) = 'true', true) $$;
 
 ------------------------------------------------------------------------------------------------ small component helpers
 create or replace function proto.nbt_list_int(p_name text, p_items int[]) returns bytea language sql immutable parallel safe as $$
   select '\x09'::bytea || proto.nbt_text(p_name) || '\x03'::bytea || proto.i32(coalesce(array_length(p_items, 1), 0))
          || coalesce((select string_agg(proto.i32(x), '\x'::bytea order by o) from unnest(p_items) with ordinality t(x, o)), '\x'::bytea) $$;
+
+create or replace function proto.nbt_list_long(p_name text, p_items bigint[]) returns bytea language sql immutable parallel safe as $$
+  select '\x09'::bytea || proto.nbt_text(p_name) || '\x04'::bytea || proto.i32(coalesce(array_length(p_items, 1), 0))
+         || coalesce((select string_agg(proto.i64(x), '\x'::bytea order by o) from unnest(p_items) with ordinality t(x, o)), '\x'::bytea) $$;
+create or replace function mc.tc_arg_long(v bigint) returns bytea language sql immutable parallel safe as $$ select proto.nbt_long('', v) $$;
 
 -- {with:[...], translate:key} from a JSON argument list: all strings = list<string>, all numbers = list<int> (vanilla's compact forms), none = no list
 create or replace function mc.tc_translate_json(p_key text, p_args jsonb) returns bytea language sql immutable as $$
@@ -143,15 +150,23 @@ create or replace function mc.cmd_success_text(p_me mc.player, p_text text) retu
 create or replace function mc.sel_players(p_sel jsonb, p_me mc.player) returns setof mc.player language plpgsql stable as $$
 declare kind text := p_sel ->> 'kind'; lim int := (p_sel ->> 'limit')::int; srt text := coalesce(p_sel ->> 'sort', 'arbitrary');
   ox float8 := coalesce((p_sel ->> 'x')::float8, p_me.x); oy float8 := coalesce((p_sel ->> 'y')::float8, p_me.y); oz float8 := coalesce((p_sel ->> 'z')::float8, p_me.z);
+        has_box boolean := p_sel ? 'dx' or p_sel ? 'dy' or p_sel ? 'dz';
+        ddx float8 := coalesce((p_sel ->> 'dx')::float8, 0); ddy float8 := coalesce((p_sel ->> 'dy')::float8, 0); ddz float8 := coalesce((p_sel ->> 'dz')::float8, 0);
+        bx0 float8; bx1 float8; by0 float8; by1 float8; bz0 float8; bz1 float8;
 begin
+  if p_sel ? 'never' then return; end if;                   -- e.g. tag=x: nobody here has a tag
+  -- dx dy dz: the box [0, d + 1] (or [d, 1] for a negative d) from the origin, against a standing player's 0.6 x 1.8 x 0.6 box (AABB.intersects: strict)
+  bx0 := ox + case when ddx < 0 then ddx else 0 end; bx1 := ox + case when ddx < 0 then 0 else ddx end + 1;
+  by0 := oy + case when ddy < 0 then ddy else 0 end; by1 := oy + case when ddy < 0 then 0 else ddy end + 1;
+  bz0 := oz + case when ddz < 0 then ddz else 0 end; bz1 := oz + case when ddz < 0 then 0 else ddz end + 1;
   if kind = 'name' then
     return query select p.* from mc.player p where p.conn_id is not null and lower(p.name) = lower(p_sel ->> 'name') limit 1; return;
   elsif kind = 'uuid' then
     return query select p.* from mc.player p where p.conn_id is not null and p.uuid = (p_sel ->> 'uuid')::uuid limit 1; return;
   end if;
   return query
-    select p.* from (
-      select p.*, row_number() over (order by case srt when 'nearest' then (p.x - ox) ^ 2 + (p.y - oy) ^ 2 + (p.z - oz) ^ 2
+    select pp.* from mc.player pp join (
+      select p.uuid, row_number() over (order by case srt when 'nearest' then (p.x - ox) ^ 2 + (p.y - oy) ^ 2 + (p.z - oz) ^ 2
                                                        when 'furthest' then -((p.x - ox) ^ 2 + (p.y - oy) ^ 2 + (p.z - oz) ^ 2) end,
                                       case srt when 'random' then random() end, p.entity_id) as rn
         from mc.player p
@@ -162,6 +177,7 @@ begin
          and (p_sel -> 'dist' is null
               or (((p_sel -> 'dist' ->> 0) is null or (p.x - ox) ^ 2 + (p.y - oy) ^ 2 + (p.z - oz) ^ 2 >= ((p_sel -> 'dist' ->> 0)::float8) ^ 2)
               and ((p_sel -> 'dist' ->> 1) is null or (p.x - ox) ^ 2 + (p.y - oy) ^ 2 + (p.z - oz) ^ 2 <= ((p_sel -> 'dist' ->> 1)::float8) ^ 2)))
+         and (not has_box or (bx0 < p.x + 0.3 and bx1 > p.x - 0.3 and by0 < p.y + 1.8 and by1 > p.y and bz0 < p.z + 0.3 and bz1 > p.z - 0.3))
          and (p_sel ->> 'gm_eq' is null or p.gamemode = (p_sel ->> 'gm_eq')::int)
          and not (p.gamemode = any (array(select jsonb_array_elements_text(coalesce(p_sel -> 'gm_ne', '[]'))::int)))
          and (p_sel ->> 'type_eq' is null or p_sel ->> 'type_eq' = 'minecraft:player')
@@ -169,7 +185,7 @@ begin
          and (p_sel -> 'level' is null
               or (((p_sel -> 'level' ->> 0) is null or p.xp_level >= ((p_sel -> 'level' ->> 0)::float8))
               and ((p_sel -> 'level' ->> 1) is null or p.xp_level <= ((p_sel -> 'level' ->> 1)::float8))))
-    ) p where lim is null or p.rn <= lim order by p.rn;
+    ) k on k.uuid = pp.uuid where lim is null or k.rn <= lim order by k.rn;
 end $$;
 
 -- findSingleEntity-style helpers: the players a selector argument names, in order; `not found` is the caller's error
@@ -186,18 +202,25 @@ create or replace function mc.sel_names_fields(p_players mc.player[]) returns by
            select 2 * i - 1 as o, mc.tc_player(p_players[i].uuid, p_players[i].name) as e from generate_series(1, cardinality(p_players)) i
            union all select 2 * i, mc.tc_text(', ', 'gray') from generate_series(1, cardinality(p_players) - 1) i) q)), proto.nbt_str('text', '')]) end $$;
 
--- the root component of a message argument: plain text is a bare string; with selectors an empty parent holding the text pieces and the resolved names
+-- The root component of a message argument (MessageArgument.resolveComponent): plain text is a bare string; with selectors the root is a literal holding the text before
+-- the first selector, followed by (as `extra`) each selector's names and the text after it.  An empty selection is an empty string.  Like vanilla's serializer, a list of
+-- plain strings is written as a list of strings, anything else as a list of compounds in which a plain string is {"": text}.
 create or replace function mc.msg_component_root(p_me mc.player, p_msg jsonb) returns bytea language plpgsql stable as $$
-declare txt text := p_msg ->> 'text'; part jsonb; items bytea[] := '{}'; last_end int := 0;
+declare txt text := p_msg ->> 'text'; part jsonb; items bytea[] := '{}'; plain text[] := '{}'; all_plain boolean := true; last_end int := 0; first_start int; names bytea; ps mc.player[];
 begin
   if jsonb_array_length(coalesce(p_msg -> 'parts', '[]')) = 0 then return mc.nbt_root_text(txt); end if;
+  first_start := (p_msg #>> '{parts,0,start}')::int;
   for part in select * from jsonb_array_elements(p_msg -> 'parts') loop
-    if (part ->> 'start')::int > last_end then items := items || proto.nbt_str('', substr(txt, last_end + 1, (part ->> 'start')::int - last_end)); end if;
-    items := items || mc.sel_names_fields(mc.sel_array(part -> 'sel', p_me));
+    if (part ->> 'start')::int > last_end and last_end > 0 then
+      items := items || proto.nbt_str('', substr(txt, last_end + 1, (part ->> 'start')::int - last_end)); plain := plain || substr(txt, last_end + 1, (part ->> 'start')::int - last_end);
+    end if;
+    ps := mc.sel_array(part -> 'sel', p_me);
+    if cardinality(ps) = 0 then items := items || proto.nbt_str('', ''); plain := plain || ''::text;
+    else all_plain := false; items := items || mc.sel_names_fields(ps); plain := plain || ''::text; end if;
     last_end := (part ->> 'end')::int;
   end loop;
-  if last_end < length(txt) then items := items || proto.nbt_str('', substr(txt, last_end + 1)); end if;
-  return proto.nbt_root(proto.nbt_list_comp('extra', items), proto.nbt_str('text', ''));
+  if last_end < length(txt) then items := items || proto.nbt_str('', substr(txt, last_end + 1)); plain := plain || substr(txt, last_end + 1); end if;
+  return proto.nbt_root(case when all_plain then proto.nbt_list_str('extra', plain) else proto.nbt_list_comp('extra', items) end, proto.nbt_str('text', substr(txt, 1, first_start)));
 end $$;
 
 -- disguised_chat with the message as a ready NBT root and an optional target name (the "You whisper to" form of /msg)

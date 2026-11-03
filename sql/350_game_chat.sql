@@ -14,7 +14,9 @@ create table if not exists mc.chat_log (
     id bigint generated always as identity primary key, at timestamptz not null default now(),
     kind text not null check (kind in ('chat', 'command', 'say')), sender uuid, sender_name text, message text not null);
 
--- (The commands and the permission level that unlocks each of them are the rows of mc.cmd_node, sql/810: the command graph vanilla sends to clients.)
+-- The commands and the permission level that unlocks each of them are the rows of mc.cmd_node (sql/810): the command graph vanilla sends to clients.  This table is
+-- NOT consulted any more; it stays (empty) so that module files written against the old dispatcher, which register a command here, still load.
+create table if not exists mc.command (name text primary key, level int not null check (level between 0 and 4), usage text);
 
 ------------------------------------------------------------------------------------------------ component helpers
 -- A list<compound> must hold only compounds, so vanilla wraps plain arguments as {"": value} (seen in /tp and /give feedback).

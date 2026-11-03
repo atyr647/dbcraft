@@ -31,6 +31,9 @@ Recordings and captures contain Mojang data and are never committed.
 | `compare_block.py` | block_update / level_event / block_changed_ack for the actor and an observer |
 | `compare_move.py` | set_chunk_cache_center, forget_level_chunk and new chunks while walking |
 | `compare_social.py` | join message, tab list, entity, chat, leave message, for two players |
+| `record_commands.sh` `cmd_probe.py` `cmd_steps.py` | records a command session on a REAL vanilla server (fresh flat world, operators Op1 .. Op4 of levels 1 to 4, six players, about 390 steps) and drives the same steps against dbcraft |
+| `compare_commands.py` | per player and per step: every system_chat, disguised_chat, `commands` packet, game mode event, permission-level event and slot update must be byte-identical (`cmdtree.py` canonicalises the command graph: vanilla orders the children of /gamerule by hash, differently on every run) |
+| `cmd_ops.py` `cmd_seed.py` | the same operators for dbcraft; the world seed the real server printed (random per world), given to dbcraft so `/seed` can be compared |
 
 ## What the comparisons allow to differ (and why)
 

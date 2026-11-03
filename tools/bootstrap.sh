@@ -84,7 +84,7 @@ fi
 
 # ------------------------------------------------------------------------------------------------------------------------------ 4. captures
 say "4/6 recorded capture of a real vanilla server (configuration data the database replays)"
-have_caps() { [ -s "$DBCRAFT_CAPTURES/play_nocomp.jsonl" ]; }
+have_caps() { [ -s "$DBCRAFT_CAPTURES/play_nocomp.jsonl" ] && [ -s "$DBCRAFT_CAPTURES/play_op4.jsonl" ]; }
 if have_caps && [ "$RECAPTURE" = 0 ]; then ok "captures in $DBCRAFT_CAPTURES"; elif [ "$CHECK" = 1 ]; then todo "captures ($DBCRAFT_CAPTURES)"; else
   have_reports || { echo "the reports are needed to record captures"; exit 1; }
   VPORT=${DBCRAFT_VANILLA_PORT:-25619}; VDIR="$DBCRAFT_HOME/vanilla"
@@ -120,8 +120,17 @@ EOF
     for _ in $(seq 1 60); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.5; done
     kill -9 "$pid" 2>/dev/null || true       # only for a hung shutdown
   }
+  vops() {   # operators of level 1 to 4 (Op1 .. Op4): their join records the command graph of each permission level (tools/load_command_tree.py, tests/sql/810)
+    python3 - "$VDIR/ops.json" <<'PY'
+import hashlib, json, sys, uuid
+def offline(n):
+    h = bytearray(hashlib.md5(("OfflinePlayer:" + n).encode()).digest()); h[6] = (h[6] & 15) | 0x30; h[8] = (h[8] & 0x3F) | 0x80
+    return str(uuid.UUID(bytes=bytes(h)))
+json.dump([{"uuid": offline(f"Op{i}"), "name": f"Op{i}", "level": i, "bypassesPlayerLimit": False} for i in (1, 2, 3, 4)], open(sys.argv[1], "w"))
+PY
+  }
   vstart() {   # $1 = view distance
-    vprops "$1"; : > "$VDIR/server.log"
+    vprops "$1"; vops; : > "$VDIR/server.log"
     # (cd; then the background command: `cd && cmd &` would background the whole list and $! would be the subshell, not Java)
     ( cd "$VDIR"; nohup "$JAVA" -Xmx1G -jar "$DBCRAFT_SERVER_JAR" nogui >server.log 2>&1 & echo $! > "$VDIR/server.pid" )
     for _ in $(seq 1 120); do grep -q "Done (" "$VDIR/server.log" 2>/dev/null && break; sleep 1; done
@@ -150,6 +159,7 @@ EOF
   rec badname --name "has space"
   rec play_known --known-core --seconds 4
   rec play_disconnect --bad-teleport --seconds 4
+  for i in 1 2 3 4; do rec play_op$i --name Op$i --seconds 4; done      # the command graph per permission level (play_nocomp is level 0)
   cleanup_vanilla; trap - EXIT; sleep 2
   ok "captures written to $DBCRAFT_CAPTURES"
 fi

@@ -24,6 +24,14 @@ os.makedirs(os.path.dirname(a.out), exist_ok=True)
 def chat(text):
     return m.string(text) + struct.pack(">q", int(time.time() * 1000)) + struct.pack(">q", 0) + b"\x00" + m.varint(0) + b"\x00\x00\x00" + b"\x00"
 
+def settle_all(quiet, timeout):
+    """wait until no client has received anything for `quiet` seconds, at most `timeout` seconds in all (a vanilla server never goes quiet: it ticks entities)"""
+    end = time.time() + timeout; last = [c.count() for c in clients.values()]; t = time.time()
+    while time.time() < end:
+        time.sleep(0.05); now = [c.count() for c in clients.values()]
+        if now != last: last, t = now, time.time()
+        elif time.time() - t >= quiet: return
+
 clients = {}
 for name in S.PLAYERS:
     clients[name] = m.Client(a.host, a.port, name)
@@ -46,7 +54,7 @@ for step in S.STEPS:
     elif cmd == "!send": clients[who].send(step[2], step[3])
     else: clients[who].send("minecraft:chat_command", m.string(cmd))
     time.sleep(a.wait)
-    for c in clients.values(): c.settle(0.25, 1.2)
+    settle_all(0.25, 1.0)
 for name, c in clients.items():
     c.dump(f"{a.out}_{name}.jsonl")
     c.close()
