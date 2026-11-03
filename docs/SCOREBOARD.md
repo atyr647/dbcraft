@@ -85,7 +85,8 @@ and it loses (or fails) on idle cost, login-storm stalls, long runs with 200 mov
    a migrated database: the same SQL statements and the same `\timing` method as `run2.scenario_blocks`, **not the full harness**.  **Vanilla was not re-run** (201 ms and 9.98 ms are
    the earlier run's), and the machine was busier now than then: the OLD code, run the same way in the same hour, measured 7.2 ms and 691 ms, not 11.77 and 535.  So the ratio to vanilla
    (0.21 for 100,000 blocks) mixes two sessions: read it as "clearly faster than vanilla's RCON `fill`", not as a precise factor.  The fill also does less than vanilla's: no light
-   update, no neighbour updates, heightmaps recomputed later (docs/WORLD.md says what that moves to the next chunk send).
+   update, no neighbour updates, heightmaps recomputed later (docs/WORLD.md says what that moves to the next chunk send).  **With a player in range** the tick that follows the fill
+   spends another 243 to 309 ms encoding the 48 section packets (docs/WORLD.md "Large fills"); this scenario has no player, on either server.
 6. **Disk**: a 10,000-chunk flat world is 33% bigger (82.5 against 62.1 MiB): the wire-format sections plus caches against compressed region files.
 7. **Mobs**: about 150 microseconds per awake mob against vanilla's 22 (`docs/ENTITY.md`; the worker that later optimised it reports a lower figure in its own doc).
 

@@ -80,7 +80,7 @@ How dbcraft produces the same bytes:
   that changes nothing queues nothing.  Boxes of 48 blocks or fewer in a section go through `mc.edit_section` (per-block events), larger ones through `mc.fill_section`.
 * **Broadcast.**  Per tick the events are grouped by section.  Sections with one changed position get a `block_update` (the old code path); a section with two or more positions, or
   any fill, is encoded once as `section_blocks_update` (or `block_update` when the set has a single element): the positions in insertion order (events in id order, a fill's cells
-  in `/fill` order) go through `mc.shortset_order`, their states are read from the section as it is *now* (`mc.section_state_ids`), exactly as vanilla reads `LevelChunkSection`.  Only
+  in `/fill` order) go through `mc.shortset_order`, their states are read from the section as it is *now* (`mc.section_state_ids`), exactly as vanilla reads `LevelChunkSection` (a section whose only event this tick is one fill takes the fill's block instead: the same result without the read).  Only
   sections some connection can see are encoded; one packet per section is fanned out to every connection in range.  A whole-section fill uses a constant order stored in
   `mc.sbu_const`.  Events of the old `kind = 'section'` (nothing writes them any more) still re-send the chunk.
 * Changed from before: a position that changes and changes back is now announced (vanilla's set keeps it); the net-change logic remains for the break effect (`level_event` 2001
@@ -289,6 +289,15 @@ Where the 100,000 blocks went and what became of it (the 535 ms of the scoreboar
 * **heightmaps**: no longer maintained per block; the chunk is flagged `hm_dirty` and recomputed in full (4 to 5 ms flat, 44 to 49 ms real terrain per chunk) when something needs its
   packet.  Pieces of at most 48 blocks keep the incremental path.  This moves cost rather than removing it for a fill into real terrain that is then re-sent: the 16 chunks of the
   scoreboard fill would cost 16 x 45 ms at the next join into that area.  (Chunks in view are NOT re-sent any more: the broadcast sends section packets, not chunks.)
+* **the broadcast is where a fill with a viewer costs**: the tick's `mc.broadcast_block_events` encodes every visible section: the positions of the bit map in `/fill` order, the iteration order of
+  vanilla's set (`mc.shortset_order`, about 2 µs a position: a plpgsql simulation of fastutil's table), the states (for a section with one fill event they are that block, no section read) and
+  the VarInts.  Measured with one connection in range (`select mc.fill(...)` then `select mc.broadcast_block_events()` in one session, 4 runs): the scoreboard's 100,000-block fill queues in
+  41 to 75 ms and its broadcast takes **243 to 309 ms** (48 packets, 196 kB), going back to air 281 to 290 ms; 4 whole sections broadcast in 11 ms (their order is a constant);
+  with **no connection in range** the same fill's broadcast takes 2 ms (sections nobody sees are not encoded).  A first version took 495 ms: `proto.varint` costs 14 µs for the 4-byte
+  values of `state << 12 | position` (57 ms per whole section), replaced by `mc.varint_u28` (1 µs, equal to `proto.varint` over the whole range, tests/sql/851).  So **with a player
+  watching, a 100,000-block fill stalls one tick for about a quarter of a second** (five ticks); the scoreboard measured vanilla's `fill` of the same blocks at 201 ms
+  (an RCON round trip, no player online, so no broadcast in that number either).  The scoreboard's fill scenario runs without players on both servers.  Not done: caching the order per bit map (identical box shapes repeat across the
+  interior sections of a big fill and across repeated fills) and encoding runs of equal states in bulk.
 * what is left per section (about 0.7 ms): reading and rewriting the 2 KB row, the words array (256 `proto.i64_read`), the row loop, the counting.  The rows of a section are 4 KB
   of WAL each (full-page images aside).  I did not specialise the 4-bit case further.
 

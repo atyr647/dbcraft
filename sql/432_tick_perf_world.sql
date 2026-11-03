@@ -200,7 +200,7 @@ declare r int := mc.prop_int('view-distance') + 1; i_bu int := mc.pid('block_upd
         a_dim text[]; a_x int[]; a_y int[]; a_z int[]; a_old int[]; a_new int[];          -- the net changes of the per-block events: dimension, position, old and new state id
         u_dim text[]; u_x int[]; u_y int[]; u_z int[]; u_id int[];                          -- sections with one changed position: that position and its state
         kd text[]; kx int[]; kz int[];                                        -- the chunks whose sections were replaced whole
-        s record; ord int[]; ids int[]; full_ord int[]; seen boolean;
+        s record; ord int[]; ids int[]; full_ord int[]; full_ins int[]; ins int[]; full_cells bytea; k int;
         m_cx int[] := '{}'; m_cz int[] := '{}'; m_pkt bytea[] := '{}'; mn int := 0;     -- the packets of multi-position sections: chunk, bytes
 begin
     -- (idle early return: no recorded block change, section change or pending acknowledgement)
@@ -236,27 +236,38 @@ begin
           from (select dimension, x >> 4 as cx, z >> 4 as cz, min(id) as first_id from unnest(e_id, e_kind, e_dim, e_x, e_z) u(id, kind, dimension, x, z) where kind = 'section'
                  group by dimension, x >> 4, z >> 4) t;
 
-        -- sections with two or more changed positions, or a fill: the positions in the order they entered vanilla's set (per-block events in order, a fill in its x, y, z order)
-        select c.ord into full_ord from mc.sbu_const c where c.id = 1;
+        -- sections with two or more changed positions, or a fill: the events of each, in order.  A fill's cells are expanded only for the sections some connection can see.
+        select c.ord, c.ins into full_ord, full_ins from mc.sbu_const c where c.id = 1;
+        full_cells := mc.block_event_full_cells();
         for s in
-            with ev as (select * from unnest(e_id, e_kind, e_dim, e_x, e_y, e_z, e_cells) u(id, kind, dimension, x, y, z, cells) where kind <> 'section'),
-                 p as (select dimension, x >> 4 as cx, y >> 4 as sy, z >> 4 as cz, id, 0 as sub, ((x & 15) << 8) | ((z & 15) << 4) | (y & 15) as pos, kind
-                         from ev where kind = 'block'
-                       union all
-                       select ev.dimension, ev.x >> 4, ev.y >> 4, ev.z >> 4, ev.id, c.o, c.pos, ev.kind
-                         from ev, lateral unnest(mc.cells_positions(ev.cells)) with ordinality c(pos, o) where ev.kind = 'cells')
-            select dimension, cx, sy, cz, array_agg(pos order by id, sub) as ins, count(distinct id) as nev, bool_or(kind = 'cells') as has_cells
-              from p group by dimension, cx, sy, cz
-             having bool_or(kind = 'cells') or count(distinct pos) >= 2
+            with ev as (select * from unnest(e_id, e_kind, e_dim, e_x, e_y, e_z, e_new, e_cells) u(id, kind, dimension, x, y, z, new_state, cells) where kind <> 'section')
+            select dimension, x >> 4 as cx, y >> 4 as sy, z >> 4 as cz, count(*) as nev, bool_or(kind = 'cells') as has_cells,
+                   array_agg(kind order by id) as kinds,
+                   array_agg(((x & 15) << 8) | ((z & 15) << 4) | (y & 15) order by id) as bpos,        -- (only meaningful for per-block events)
+                   array_agg(cells order by id) as cellss, array_agg(new_state order by id) as news
+              from ev group by dimension, x >> 4, y >> 4, z >> 4
+             having bool_or(kind = 'cells') or count(distinct (x, y, z)) >= 2
              order by dimension, cx, cz, sy
         loop
             -- only sections some connection can see are encoded
             if not exists (select 1 from net.conn c where c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - s.cx) <= r and abs(c.view_cz - s.cz) <= r) then
                 continue;
             end if;
-            if s.nev = 1 and cardinality(s.ins) = 4096 then ord := full_ord;                       -- one fill of the whole section: the order is a constant
-            else ord := mc.shortset_order(s.ins); end if;
-            ids := mc.section_state_ids(s.dimension, s.cx, s.sy, s.cz, ord);
+            if s.nev = 1 and s.has_cells and s.cellss[1] = full_cells then ord := full_ord;           -- one fill of the whole section: the order is a constant
+            else
+                if not s.has_cells then ins := s.bpos;
+                else
+                    ins := '{}';
+                    for k in 1 .. s.nev loop
+                        if s.kinds[k] = 'block' then ins := ins || s.bpos[k];
+                        elsif s.cellss[k] = full_cells then ins := ins || full_ins;
+                        else ins := ins || mc.cells_positions(s.cellss[k]); end if;
+                    end loop;
+                end if;
+                ord := mc.shortset_order(ins);
+            end if;
+            if s.nev = 1 and s.has_cells then ids := array_fill(mc.block_state_id(s.news[1]), array[cardinality(ord)]);     -- the only change of the section this tick: every position holds that block
+            else ids := mc.section_state_ids(s.dimension, s.cx, s.sy, s.cz, ord); end if;
             mn := mn + 1;
             m_cx[mn] := s.cx; m_cz[mn] := s.cz; m_pkt[mn] := mc.section_update_packet(s.cx, s.sy, s.cz, ord, ids);
             n := n + cardinality(ord);

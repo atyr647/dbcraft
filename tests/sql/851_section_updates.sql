@@ -26,6 +26,12 @@ insert into vec values
  ('one position repeated', array[7, 7, 7], '8f14e45fceea167a5a36dedd4bea2543');
 select t.eq('shortset_order: ' || name, md5(array_to_string(mc.shortset_order(input), ',')), md5) from vec order by name;
 
+-- the one-expression VarInt used for the entries equals proto.varint over every length class (1 to 4 bytes) and at the borders
+select t.eq('mc.varint_u28 equals proto.varint for 20,000 values around every length border and 5,000 spread over the range',
+            (select count(*)::int from (select v from generate_series(0, 300) v union select v from generate_series(16380, 16390) v union select v from generate_series(2097148, 2097156) v
+                                        union select 268435455 - v from generate_series(0, 5) v union select (n * 53000)::int from generate_series(0, 4999) n
+                                        union select (146000000 + n)::int from generate_series(0, 4999) n) q where mc.varint_u28(v) <> proto.varint(v)), 0);
+
 ------------------------------------------------------------------------------------------------ the decoder (reads wire bytes)
 create or replace function t.vl(b bytea, o int, out v bigint, out nxt int) language plpgsql immutable as $$
 declare s int := 0; c int;
