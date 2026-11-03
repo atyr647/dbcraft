@@ -44,6 +44,7 @@ select mc.fill('minecraft:overworld', -5, -60, -5, 5, -58, 5, 'minecraft:stone')
 update mc.blocks set block = 'minecraft:diamond_block'
  where dimension = 'minecraft:overworld' and x = 1 and y = -61 and z = 2;          -- the readable one-block-per-row view over the packed sections
 select * from mc.chat_log limit 10;
+update mc.server_property set value = 'dbcraft:noise' where key = 'dbcraft.generator';   -- chunks generated from now on are seeded terrain (mc.world.seed), not flat; set it back to minecraft:flat for the flat world
 select key, value from mc.server_property;                                        -- vanilla's server.properties, as rows
 ```
 
@@ -57,7 +58,7 @@ The world is stored in Minecraft's own wire format (palette + packed longs per 1
 * The traffic matches the real vanilla server **byte for byte** where the bytes are deterministic: status, login, all 32 registry packets and the tags, the play
   entry burst, 49 of 49 recorded flat-world chunk packets and 49 of 49 real-terrain chunks re-encoded from rows, block updates, chat, tab list, teleports.
   Scripts compare dbcraft against recordings of a real server: `tests/sql/` (1,600+ checks) and `tests/e2e/`.
-* Chunks and blocks in SQL (flat world generator, asynchronous generation queue, cached packets, `set_block`, the readable `mc.blocks` view), ops, whitelist, bans,
+* Chunks and blocks in SQL (flat world generator, an optional seeded terrain generator that is **not** vanilla's, asynchronous generation queue, cached packets, `set_block`, `fill`, the readable `mc.blocks` view, `section_blocks_update` for multi-block changes byte-identical to vanilla's), ops, whitelist, bans,
   inventories, movement validation, commands (`/tp /gamemode /give /time /weather /difficulty /op /deop /whitelist /list`), a set-based 20 Hz tick, an optional batched tick.
 * A Rust gateway with **zero crates.io dependencies** (std + libpq/libcrypto/libcurl through hand-written FFI): epoll loop, AES-128-CFB8, RSA, the Mojang session
   check, inflate, per-IP limits ([docs/GATEWAY.md](docs/GATEWAY.md)).
@@ -65,7 +66,7 @@ The world is stored in Minecraft's own wire format (palette + packed longs per 1
   without compression).  A real client in online mode has **not** been tested (it needs a Mojang account).
 * An entity prototype (items and simple mobs as rows, physics checked against recorded vanilla trajectories with zero deviation): [docs/ENTITY.md](docs/ENTITY.md).
 
-**What is missing:** survival gameplay (damage, death, hunger rules, crafting), terrain generation beyond flat worlds, importing/exporting vanilla worlds,
+**What is missing:** survival gameplay (damage, death, hunger rules, crafting), vanilla's terrain (`dbcraft.generator = dbcraft:noise` makes believable seeded terrain with 16 real biomes, bedrock and sea level 63, but not vanilla's seeds, caves, ores, trees or structures; see [docs/WORLD.md](docs/WORLD.md)), importing/exporting vanilla worlds beyond what [docs/WORLD-IMPORT.md](docs/WORLD-IMPORT.md) lists,
 vanilla mob AI and pathfinding, redstone, fluids, a full light engine (sky light matches vanilla on about 76% of recorded layers), advancements and recipes
 (replayed from a capture, not generated), the first-time-player join sequence, a real-client test of online mode.
 

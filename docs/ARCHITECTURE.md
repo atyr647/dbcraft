@@ -95,7 +95,8 @@ chat message index surviving across sessions.
   (`net.static_packet`), correct for a creative player in a flat world, not generated from rows.
 * **Online mode** (RSA, session check, AES-CFB8) and **deflate**: none in SQL; the production gateway has to do them. Without deflate, no packet can be compressed, so
   the dev server runs uncompressed (a join is about 3.3 MB at view distance 9).
-* **World**: flat only. Light is the straight-down model (exact for flat worlds; 76% of sky layers on real terrain). No block light, no terrain generator, no biomes API, no
+* **World**: flat by default; `dbcraft.generator = dbcraft:noise` selects a seeded terrain generator that is not vanilla's (docs/WORLD.md "Terrain generator": no caves, ores, trees or structures).
+  Light is the straight-down model (exact for flat worlds; 76% of sky layers on real terrain). No block light, no biomes API, no
   structures, block entity data is raw bytes.
 * **Gameplay**: no mobs or other entities beyond players, no damage/death/hunger, no redstone or block ticks (grass does not spread), placement uses default states only, no
   containers other than the player inventory, no sounds, no entity metadata/waypoint packets, no chat signing or rate limits, no `/seed`, `/kill`, selectors.

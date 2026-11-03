@@ -106,6 +106,83 @@ default (`hollow`, `outline`, `keep`, `destroy`, `replace <filter>`: they have n
 with different view distances.  Entities in deep sleep wake only near a fill's section corner (the trigger on `mc.block_event` looks at the event's x, y, z), the same limit the old
 whole-section event had.
 
+## Terrain generator (`dbcraft:noise`): believable, seeded, **not vanilla's**
+
+`update mc.server_property set value = 'dbcraft:noise' where key = 'dbcraft.generator'` (default `minecraft:flat`) makes the overworld generate seeded terrain instead of the flat world,
+for chunks generated from then on (existing chunks are not touched; `mc.generate_flat('minecraft:overworld', cx, cz, true)` regenerates one).  A trigger sets the overworld's
+`mc.dimension.generator`, moves the world spawn onto dry land and puts it in `mc.game_state` (the join sends it); switching back restores the flat spawn (0, -60, 0).  The seed is
+`mc.world.seed` (`update mc.world set seed = 12345 where name = 'world'`); the same seed always makes the same chunks, byte for byte, whatever the batch or the order.  Flat stays the
+default and its output is unchanged (`tests/sql/855` generates a flat chunk through the dispatching path and compares it with the reference generator, sections and packet).
+Every caller of `mc.generate_flat` (join, chunk streaming, the generation queue, the dev world reset) follows the setting, because `mc.generate_flat_batch` hands a dimension whose
+generator is not the flat one to the registered function (`mc.generator`, sql/245); the dispatch costs one primary-key lookup, 2.8 µs.  **This is not vanilla's terrain and does not try
+to be**: matching vanilla's seeds would mean porting its density functions, noise parameters, surface rules, carvers and features, which is a separate project.
+
+What a chunk contains (sql/855; the file header has the details):
+
+* **Height**: value noise at four scales (continents 512 blocks, hill amplitude 256, hills 96, detail 32), evaluated on the global 4-block lattice (a 5 x 5 grid of samples per chunk,
+  so neighbouring chunks agree on their border) and interpolated to the 256 columns with a smoothstep, as vanilla interpolates its noise cells.  Sea level 63 (water up to y 62).
+* **Biomes**: temperature and humidity noise (420 and 300 blocks) and the height choose one of **16 real biome ids** per 4 x 4 cell: deep ocean, ocean, cold, frozen, lukewarm and warm
+  ocean, beach, desert, savanna, snowy plains, taiga, forest, plains, windswept hills, snowy slopes, jagged peaks.  The biome is constant over the height of a cell (vanilla's vary with y
+  in caves and mountains).  Palette containers of 0, 1, 2 or 3 bits as the chunk needs (more than 8 biomes in one chunk, which does not happen with these noises, would collapse the rarest).
+* **Blocks**: grass over three dirt (plains, forest, taiga, snowy plains, savanna), sand over sandstone (desert, beach), bare stone (windswept hills), snow block over stone (peaks), sand or
+  gravel floors under water; stone below; **deepslate below y 0** (a sharp boundary, vanilla's is a gradient from 0 to -8); **bedrock** on y -64 and up to five layers per column (a hash,
+  probabilities 1, .8, .6, .4, .2 as vanilla's, but one run per column rather than independent layers).  Stone and deepslate sections are single-value rows (no data bytes).
+* **Not there**: caves, ravines, ores, aquifers, lava, trees, grass and flowers, snow layers, structures, villages, fluid flow, a gradient between biomes' surface blocks.  Rivers are not
+  carved (low ground simply floods to sea level).
+* **Heightmaps** are written with the chunk: WORLD_SURFACE = MOTION_BLOCKING = MOTION_BLOCKING_NO_LEAVES = the higher of the surface and the water (water has a fluid, so it counts for MOTION_BLOCKING),
+  checked against `mc.compute_heightmaps` from the blocks (36 chunks per run, all three kinds, equal).  **Light** stays the straight-down model (the generator computes it right away with
+  `mc.ensure_chunk_current`, together with the packet, in its own transaction, so the tick only reads the cache).
+
+How it is built (why it is fast enough): value noise is PL/pgSQL with the integer hash inline (written as nested SQL functions the planner inlined every use of every intermediate value
+into 8 copies: 0.5 ms per noise value instead of 8 µs); the 256 columns, the 16 cells and the 25 lattice samples are small loops; a section is text: every column is one character
+(`chr(256 + height * 8 + type)`), the 256 entries of one y are one `translate` of that string, and the hex of 16 planes **is** the packed data, because the wire format's nibble order is the reverse of
+the x order inside a row (the 4-bit case: 16 entries a long, entry 0 in the least significant nibble, longs big-endian).  Block and fluid counts are the lengths of the string with the
+air or water digits removed.  Chunks are written in groups of 32 (rows as `mc.chunk` / `mc.chunk_section` composite arrays).
+
+Cost, `tests/bench/world/bench_terrain.sql` (CPU time of the backend per chunk, 1,600 chunks per round, 5 rounds, median and min - max, other jobs on the machine):
+
+| per chunk | CPU time |
+|---|---|
+| flat generator (rows, light and packet copied from the template) | **134 µs** (132 - 591) |
+| `dbcraft:noise`, everything the generator call does | **5.15 ms** (4.47 - 20.9; the maximum is the first round, which plans the statements) |
+|   of which the rows: heights, biomes, section text, inserts | 2.79 ms (2.48 - 18.9) |
+|   of which light (`mc.ensure_chunk_current`) | 0.89 ms (0.72 - 0.96) |
+|   of which the packet (`mc.chunk_packet`, cached afterwards) | 1.35 ms (1.27 - 1.46) |
+
+That is 38 times the flat generator and, against the 1.8 ms the scoreboard measured for vanilla generating a FLAT chunk (`docs/SCOREBOARD.md`, 10,000 chunks in 17.8 s), 2.9 times.  I did **not**
+measure vanilla generating real terrain here; its pipeline (noise, carvers, surface, features, lighting) costs far more per chunk than its flat one, and I would not quote a ratio without
+running it.  Within the rows the 25 lattice samples are about 0.5 ms (6 noise values each), the bedrock hash 0.5 ms, the surface sections 0.7 ms.
+
+For the async queue (`dbcraft.chunk-generation = async`, `call mc.run_generator()`, as many loops as cores): about 190 (1 / 5.15 ms of CPU, computed, not measured with several loops) chunks per second per loop.  **Run noise worlds in async mode**:
+in the default inline mode a join at view distance 10 generates its 441 chunks inside the join, about 2.3 (441 x 5.15 ms, computed from the per-chunk cost, not a measured join) s for terrain against 70 ms for flat.
+
+What was checked (tests/sql/855_terrain_noise.sql, 53 checks) and what was not:
+
+| Check | Result |
+|---|---|
+| flat stays the default; its chunks and packets equal the reference generator's through the dispatching path; unknown generator names are refused; switching moves and restores the spawn | pass |
+| determinism: same seed, same bytes in another dimension and when regenerated; another seed differs; one chunk generated alone equals the same chunk from a 144-chunk batch | pass |
+| the stored heightmaps of 600 columns equal the surface function; neighbouring columns never differ by more than 3 blocks in the 12 x 12 region (bound asserted: 6), also across chunk borders | pass |
+| the stored heightmaps of 36 chunks equal `mc.compute_heightmaps` from the blocks, all three kinds | pass |
+| layering of 576 sampled columns: bedrock on -64 (1 to 5 layers, all five values occur), deepslate, stone, a surface block from the allowed set with air above, water at exactly y 62 over a sand or gravel floor | pass |
+| `block_count` / `fluid_count` of 30 sections equal a count of their blocks; the wire bytes of 6 sections decode (by a decoder written for the test) to the stored blocks | pass |
+| biome containers: 640 cells of 40 chunks decode (by a decoder written for the test) to the biome the noise functions give; container byte lengths; one container per chunk | pass |
+| the generation queue produces the chunks with packets cached and clean | pass |
+| mutations of the bedrock mapping, the plane boundary and the heightmap value are each caught | yes |
+| **a real vanilla 26.3 server reads the exported terrain like the database** (`tests/world_import/terrain_vanilla.sh`: 800 sampled positions over 289 chunks, `execute if block`) | **pass: 800 sampled positions inside 17 x 17 chunks, 0 differ** (see below the table) |
+
+
+The vanilla comparison needs a word: the first run sampled all 289 exported chunks and **4 of 800 positions differed** (the database said stone, vanilla answered `Test failed`).  All four were in the
+outermost ring of chunks, at heights 21 to 50.  My explanation is that vanilla generates the missing neighbours of an exported area and its ore features spill into chunks that are already complete;
+the run with two more rings exported than sampled (`terrain_vanilla.sh` does that now) had **0 of 800** differ, which fits but is not proof: I did not look at what vanilla had at those four
+positions.  Only 10 distinct block states occur in the sample (stone, air, water, grass, dirt, sand, gravel, deepslate, bedrock, sandstone), which is what this terrain holds.  A scripted 26.3 client
+(tests/e2e) also joined a dev gateway that served the noise world and received its 121 chunk packets (9 to 17 KB each) at view distance 4 with the spawn on dry land; no real client was run.
+
+**Not verified:** a real client rendering it (no display here; `tools/realclient/` exists but was not run), that it "looks like Minecraft" beyond height and biome statistics (sea 20 to 60%, land
+above 66 20 to 70%, hills above 100 present over 4,225 points 200 blocks apart; slopes at most 3 per block), the sizes of biomes against vanilla's, grass and foliage tints of the biome ids on
+this terrain, long-term behaviour of several generator loops on one queue (the queue's own tests cover exactly-once), the light of overhangs (there are none), behaviour at coordinates beyond
+about 100,000 blocks (the hash arithmetic is bounded, the tests stop at 4,000 blocks).
+
 ## Schema
 
 | Table | Holds |
@@ -247,7 +324,7 @@ performance bugs in the view itself were fixed on the way (the palette air flags
 * **Compression.**  `mc.chunk_cache` holds the uncompressed framed packet.  `docs/COMPRESSION.md` describes the plan (per-section deflate fragments, an RLE-style encoder
   in SQL or a tiny native function); nothing of it is built here.
 * **Block entity NBT** is stored as the raw network bytes, not as a readable representation.  Editing or inspecting a chest means decoding bytes.
-* **No biome editing API** (sections carry biomes; nothing sets them after generation), no terrain generator other than flat, no structures.
+* **No biome editing API** (sections carry biomes; nothing sets them after generation), no vanilla terrain generator (flat, and the seeded `dbcraft:noise` above, which is not vanilla's: no caves, ores, trees), no structures.
 * **Light** is the straight-down model above; no horizontal sky spread, no block light, no cross-chunk updates.
 * **Cache invalidation of neighbours.**  Light does not depend on neighbours in this model, so editing a chunk invalidates only that chunk's packet.
 * **Per-section encoded bytes are not cached**, which is the main cost of re-sending an edited terrain chunk (see Performance).
@@ -269,6 +346,17 @@ tests/sql/run.sh world            # runs 200_*, 210_*, 240_*, 250_* (set DBCRAFT
 
 The oracle tests skip with a clear notice when a capture is missing; the rest of the suite does not need them.  Tools: `tools/load_world_ref.py` (biomes and dimension
 types), `tools/import_chunk_capture.py` and `tools/extract_chunk_fixture.py` (feed captured chunks to the tests), `tools/_capture.py` (shared parsing).
+
+## Scripts for the block-packet and terrain evidence
+
+```
+tests/e2e/record_vanilla.sh ; tests/e2e/run_all.sh        # records vanilla's fill packets (RCON), compares dbcraft's (compare_fill.py)
+tests/bench/world/set_order.sh DB                         # mc.shortset_order against the real fastutil class (Java + SQL)
+psql -X -d DB -v rounds=9 -f tests/bench/world/ab_fill.sql        # old fill against the box fill, interleaved
+python3 tools/scoreboard/fill_dbcraft.py --db DB           # the scoreboard's fill statements against any database
+psql -X -d DB -v rounds=5 -f tests/bench/world/bench_terrain.sql  # flat against noise generation, split into rows / light / packet
+tests/world_import/terrain_vanilla.sh 8                    # vanilla loads an exported noise world; sampled positions compared
+```
 
 ## Chunk rebuild and batched edits (details and numbers: PERF-EDIT.md)
 
