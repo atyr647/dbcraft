@@ -118,8 +118,11 @@ column come from the net effect on each position.  Lessons, in the order they co
 10,000 edits in 40 ms is 4 us per edit **including** the 1.5-2 us the event insert costs (an unlogged table with an identity primary key; `docs/PERF-CHUNKS.md` measured about 0.6 us for the index alone),
 the 3-4 us of the core loop, and the heightmap work.  The remaining levers I did not pull because they change behaviour or need other modules:
 
-* queue one `kind = 'section'` event instead of one event per block when a batch changes more than a few dozen blocks of a section (vanilla sends a section update packet there anyway): removes the
-  event insert from large batches (about 20 of the 52 ms of B1) but changes what the tick receives, so the net layer's handling has to be adapted and byte-compared first;
+* queue one event per section instead of one per block when a batch changes more than a few dozen blocks of a section (vanilla sends a section update packet there anyway): removes the
+  event insert from large batches (about 20 of the 52 ms of B1) but changes what the tick receives, so the net layer's handling has to be adapted and byte-compared first.
+  **Done for `mc.fill`, not for `mc.set_blocks`** (docs/WORLD.md "Block change packets" and "Large fills": a fill queues one `cells` event per section, the broadcast sends
+  `section_blocks_update` byte-identical to vanilla's, 100,000 blocks went from 470-490 ms to 37-39 ms).  `mc.set_blocks` still queues one row per block;
+  the broadcast already turns those into section packets, so queueing a bit map from the batch would be the same change here;
 * a native helper for the per-word bit surgery (excluded by the project rules for this task);
 * batch the chunk-row and section-row updates of all sections in one `UPDATE ... FROM unnest(...)` after the loop (saves the per-section write statement, about 80 us each: B3 would gain about 80 ms).
 

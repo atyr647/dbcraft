@@ -146,17 +146,31 @@ create table if not exists mc.block_entity (
 create index if not exists block_entity_chunk_idx on mc.block_entity (dimension, cx, cz, seq);
 
 -- Block changes for the tick to broadcast.  Transient, hence unlogged.
+-- kind 'block': one position changed (x, y, z; old and new state).  kind 'cells': a fill changed many positions of ONE section: x, y, z = the section's lowest corner,
+-- cells = 512 bytes, bit (y << 8 | z << 4 | x) of the section set for every position that changed (bit i is bit i % 8 of byte i / 8), new_state = the block placed,
+-- old_state = '*'.  The broadcast turns the positions of one section and tick into block_update (one position) or section_blocks_update (two or more), as vanilla does
+-- (docs/WORLD.md "Block change packets").  kind 'section' (a whole section replaced, the chunk is re-sent) is no longer written by the server; the broadcast still understands it.
 create unlogged table if not exists mc.block_event (
     id        bigint generated always as identity primary key,
-    kind      text not null default 'block' check (kind in ('block', 'section')),   -- 'section': a whole section was replaced; x, y, z = its lowest corner
+    kind      text not null default 'block' check (kind in ('block', 'section', 'cells')),
     dimension text not null,
     x         int  not null,
     y         int  not null,
     z         int  not null,
-    old_state text not null,                 -- '*' for a section event
+    old_state text not null,                 -- '*' for a section or cells event
     new_state text not null,
-    at        timestamptz not null default now()
+    at        timestamptz not null default now(),
+    cells     bytea
 );
+do $$
+begin
+    -- a database created before 'cells' existed: add the column and widen the check (the table is transient, so this is cheap)
+    if not exists (select 1 from information_schema.columns where table_schema = 'mc' and table_name = 'block_event' and column_name = 'cells') then
+        alter table mc.block_event add column cells bytea;
+        alter table mc.block_event drop constraint if exists block_event_kind_check;
+        alter table mc.block_event add constraint block_event_kind_check check (kind in ('block', 'section', 'cells'));
+    end if;
+end $$;
 
 -- Layers of the default flat preset (vanilla: bedrock, 2 dirt, grass_block from the bottom of the world).
 create table if not exists mc.flat_layer (

@@ -7,7 +7,7 @@ Everything that produced the numbers is in `tools/scoreboard/`; the full generat
 `docs/scoreboard-results.jsonl.txt`.
 
 **Short answer: dbcraft does not beat vanilla across the board.**  It wins most of the scenarios here, but several of those wins come from doing less work,
-and it loses (or fails) on idle cost, login-storm stalls, long runs with 200 moving players, large fills and chat latency at low load.  Details below.
+and it loses (or fails) on idle cost, login-storm stalls, long runs with 200 moving players and chat latency at low load (large fills were a loss until the box fill, item 5 below).  Details below.
 
 ## How to read the numbers
 
@@ -50,8 +50,8 @@ and it loses (or fails) on idle cost, login-storm stalls, long runs with 200 mov
 | one joiner, unexplored world | all chunks (s) | 5.2 | 0.68 | 0.13 | dbcraft |
 | one joiner, explored world | all chunks (s) | 1.78 | 0.25 | 0.14 | dbcraft |
 | single block edit (admin path) | latency p50 (ms) / edits per s | 1.01 / 749 | 0.11 / 6,852 | 0.11 | dbcraft (RCON against SQL) |
-| fill 1,000 blocks | p50 (ms) | 9.98 | 11.77 | 1.2 | tie |
-| fill 100,000 blocks | p50 (ms) | 201 | **535** | 2.7 | **vanilla** |
+| fill 1,000 blocks | p50 (ms) | 9.98 | 1.43 (was 11.77) | 0.14 | dbcraft (re-measured, item 5 below) |
+| fill 100,000 blocks | p50 (ms) | 201 | 42.8 (was 535) | 0.21 | dbcraft (re-measured, item 5 below) |
 | 10,000-chunk flat world | generate (s) | 17.8 | 1.15 | 0.06 | dbcraft |
 | 10,000-chunk flat world | size after save (MiB) | 62.1 | **82.5** | 1.33 | **vanilla** |
 | 10,000-chunk flat world | save stall: `save-all flush` / `checkpoint` (s) | 13.65 | 0.07 | 0.005 | dbcraft |
@@ -79,7 +79,13 @@ and it loses (or fails) on idle cost, login-storm stalls, long runs with 200 mov
    run every tick even with nothing to do (the batched tick already cut it from 16.6 ms to 2.6 ms with no players in `docs/PERF-BATCH.md`).
 4. **Chat latency at low load and in the tail**: +18 ms at p50 with 50 idle players, p99 406 ms against 113 ms with 200 idle players.  The message waits for the
    next tick and then goes through the Python loop.  Partly a tuning gap, partly the 20 Hz quantisation.
-5. **Large fills**: 100,000 blocks take 535 ms against 201 ms (5.3 against 2.0 microseconds per block).  Every block change goes through section rewrites and WAL.
+5. **Large fills (fixed afterwards, see below)**: 100,000 blocks took 535 ms against 201 ms (5.3 against 2.0 microseconds per block) because every block was rewritten and queued as
+   its own event row.  After the box fill (`mc.fill_section`, docs/WORLD.md "Large fills") the same statements take **42.8 ms** (median of five repetitions; each repetition's p50 was
+   41.3 to 56.0 ms, single calls 39.5 to 79.7 ms) and 1,000 blocks take 1.43 ms (was 11.77).  Measured with `tools/scoreboard/fill_dbcraft.py` on the shared dev cluster against
+   a migrated database: the same SQL statements and the same `\timing` method as `run2.scenario_blocks`, **not the full harness**.  **Vanilla was not re-run** (201 ms and 9.98 ms are
+   the earlier run's), and the machine was busier now than then: the OLD code, run the same way in the same hour, measured 7.2 ms and 691 ms, not 11.77 and 535.  So the ratio to vanilla
+   (0.21 for 100,000 blocks) mixes two sessions: read it as "clearly faster than vanilla's RCON `fill`", not as a precise factor.  The fill also does less than vanilla's: no light
+   update, no neighbour updates, heightmaps recomputed later (docs/WORLD.md says what that moves to the next chunk send).
 6. **Disk**: a 10,000-chunk flat world is 33% bigger (82.5 against 62.1 MiB): the wire-format sections plus caches against compressed region files.
 7. **Mobs**: about 150 microseconds per awake mob against vanilla's 22 (`docs/ENTITY.md`; the worker that later optimised it reports a lower figure in its own doc).
 

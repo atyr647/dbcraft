@@ -88,8 +88,7 @@ chat message index surviving across sessions.
 
 ## Not verified, not built
 
-* **Not compared with vanilla**: block updates when a whole section changes (`mc.fill`: the chunk is re-sent; vanilla sends `section_blocks_update`, whose layout was read
-  from the class but not compared and is unused), survival break timing (the client's word is trusted), `teleport_entity`, several command feedback keys
+* **Not compared with vanilla**: the follow-up packets of block changes (`block_entity_data` for a block with a block entity, `light_update`), survival break timing (the client's word is trusted), `teleport_entity`, several command feedback keys
   (`docs/GAME.md`), keep-alive timing, two real clients' chunk batching, behaviour with a real vanilla client (the test client is a scripted one that answers like a real one).
 * **A first-time player** gets a different burst from a returning one in vanilla (a `recipe_book_add` instead of `update_attributes`); dbcraft sends the returning burst to everyone.
 * **Opaque rows**: recipes, the command tree (`commands`), advancements and the player's own entity data and attributes are stored as captured bytes

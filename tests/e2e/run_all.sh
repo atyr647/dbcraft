@@ -41,6 +41,15 @@ reset_world
 python3 tests/e2e/join_probe.py --port $PORT --out "$E2E/ours_social" --first Opa --second Bobb > /dev/null 2>&1
 python3 tests/e2e/compare_social.py "$E2E/vanilla_social" "$E2E/ours_social" || rc=1
 
+step "multi-block changes: /fill and batches of block changes as section_blocks_update"
+if [ -f "$E2E/vanilla_fill.json" ]; then
+  reset_world
+  python3 tests/e2e/fill_probe.py --mode dbcraft --port $PORT --psql "psql -X -At -h /tmp -p $DBCRAFT_PGPORT -U postgres dbcraft" --out "$E2E/ours_fill.json" > /dev/null 2>&1
+  python3 tests/e2e/compare_fill.py "$E2E/vanilla_fill.json" "$E2E/ours_fill.json" || rc=1
+else
+  echo "skipped: no $E2E/vanilla_fill.json (tests/e2e/record_vanilla.sh records it; the vanilla server needs RCON)"
+fi
+
 step "gateway status"
 tests/e2e/gateway.sh status
 tests/e2e/gateway.sh stop

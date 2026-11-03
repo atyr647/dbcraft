@@ -4,7 +4,7 @@
 mc.adler32/1 | 441_deflate_native.sql | dispatches to the native accelerator when installed, SQL version stays as mc.adler32_sql
 mc.deflate_zlib/1 | 441_deflate_native.sql | same dispatch; SQL version stays as mc.deflate_zlib_sql
 mc.apply_block_actions/1 | 432_tick_perf_world.sql | tick-performance rewrite (arrays, no temp tables); byte-identical output proven in tests/sql/432
-mc.broadcast_block_events/0 | 432_tick_perf_world.sql | tick-performance rewrite
+mc.broadcast_block_events/0 | 432_tick_perf_world.sql | tick-performance rewrite; also the section_blocks_update rule of sql/850 (a section with two or more changed positions, or a fill, is one packet; one position is a block_update), edited in place
 mc.apply_player_moves/1 | 431_tick_perf_moves.sql | tick-performance rewrite
 mc.refresh_visibility/0 | 468_crowd_visibility.sql | 468: only the pairs whose in-range status changed are recomputed (the chunk before the move is recorded in mc.player.vis_ocx/vis_ocz), the exact sql/465 code stays as mc.refresh_visibility_full and runs when any dirty player's old chunk is unknown; (432: tick-performance rewrite) 465: new pairs are recorded with ON CONFLICT DO NOTHING; the NOT EXISTS anti-join against the table being inserted into could become a quadratic nested loop (349 s for 500 joiners) when mc.visible was recorded as empty
 mc.entity_type_id/1 | 433_tick_perf_ids.sql | constant-folded reference ids (restart the gateway after reloading ref.*)

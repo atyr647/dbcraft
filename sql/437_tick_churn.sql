@@ -40,6 +40,8 @@ begin
     return n;
 end $$;
 
+-- (The behaviour before sql/850: one block_update per net-changed position, whole sections re-send the chunk.  mc.broadcast_block_events now sends a section_blocks_update for a
+-- section with two or more changed positions and announces positions that changed back; tests/sql/437 compares the two only on scenarios where they coincide.)
 create or replace function mc.broadcast_block_events_general() returns int language plpgsql as $$
 declare r int := mc.prop_int('view-distance') + 1; i_bu int := mc.pid('block_update'); i_le int := mc.pid('level_event'); n int;
 begin

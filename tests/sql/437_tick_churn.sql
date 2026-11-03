@@ -60,7 +60,7 @@ update mc.server_property set value = 'inline' where key = 'dbcraft.chunk-genera
 create or replace function t.fid(p_data bytea) returns int language sql immutable as $$ select (proto.varint_read(p_data, (proto.varint_read(p_data, 0)).nxt)).val $$;
 create or replace function t.bb_build(p_seed float8, p_n int, p_secs boolean, p_acks boolean) returns void language plpgsql as $$
 declare blocks text[] := array['minecraft:stone', 'minecraft:air', 'minecraft:gold_block', 'minecraft:dirt', 'minecraft:air'];
-        i int; x int; y int; z int;
+        i int; x int; y int; z int; orig text;
 begin
   perform setseed(p_seed);
   truncate net.conn, mc.play_out, mc.block_event, mc.pending_ack, mc.block_actor, net.outbox;
@@ -69,17 +69,24 @@ begin
   -- the edits of earlier scenarios wear the world away: put the ground back (stone below y -60, air above) and forget the events of doing so
   perform mc.fill('minecraft:overworld', 0, -64, 0, 79, -61, 79, 'minecraft:stone');
   truncate mc.block_event, mc.block_actor, mc.pending_ack;
+  -- sql/850: a section with two or more changed positions is ONE section_blocks_update and a position that changed back is still announced, which the original copy
+  -- (mc.broadcast_block_events_general, vanilla's old per-block behaviour) does not do.  This comparison is about the rewrite from temp tables to arrays, so every edit
+  -- goes to a section of its own and ends with a block different from the one it started with; the section packets have their own tests (tests/sql/851).
   for i in 1 .. p_n loop
-    x := (random() * 70)::int; y := -64 + (random() * 4)::int; z := (random() * 70)::int;       -- bedrock, dirt, grass and the air above the flat world: real breaks and places
+    x := ((i - 1) % 5) * 16 + (random() * 15)::int; z := (((i - 1) / 5) % 5) * 16 + (random() * 15)::int;           -- 25 sections of the ground layer (y -64 .. -49)
+    y := -64 + (random() * 4)::int;                                         -- bedrock-level stone, dirt and grass positions: real breaks and places
+    if i > 25 then y := -48 + ((i - 1) / 25) * 16 + (random() * 4)::int; end if;                    -- further sections above (air: places only)
+    orig := mc.get_block('minecraft:overworld', x, y, z);
     perform mc.set_block('minecraft:overworld', x, y, z, blocks[1 + (random() * 4)::int]);
-    if random() < 0.35 then perform mc.set_block('minecraft:overworld', x, y, z, blocks[1 + (random() * 4)::int]); end if;       -- several edits of one position (some net zero)
+    if random() < 0.35 then perform mc.set_block('minecraft:overworld', x, y, z, blocks[1 + (random() * 4)::int]); end if;       -- several edits of one position
     if random() < 0.15 then perform mc.set_block('minecraft:overworld', x, y, z, 'minecraft:air'); end if;
+    if mc.get_block('minecraft:overworld', x, y, z) = orig then perform mc.set_block('minecraft:overworld', x, y, z, 'minecraft:emerald_block'); end if;       -- not net zero
     if random() < 0.5 then insert into mc.block_actor values ('minecraft:overworld', x, y, z, 1 + (random() * 11)::int); end if;
   end loop;
-  if p_secs then            -- blocks in sections that did not exist: a section event, the chunk is sent again
+  if p_secs then            -- whole sections replaced: events of the old 'section' kind (nothing writes them since sql/850, the broadcast still sends the chunk again)
     for i in 1 .. 3 loop
       x := (random() * 4)::int * 16; z := (random() * 4)::int * 16;
-      perform mc.fill('minecraft:overworld', x, 96 + i * 16, z, x + 15, 96 + i * 16 + 15, z + 15, 'minecraft:glass');          -- a whole section: a section event
+      insert into mc.block_event (kind, dimension, x, y, z, old_state, new_state) values ('section', 'minecraft:overworld', x, 96 + i * 16, z, '*', 'minecraft:glass');
     end loop;
   end if;
   if p_acks then insert into mc.pending_ack (conn_id, sequence) select 1 + (random() * 11)::int, (random() * 1000)::int from generate_series(1, 14); end if;
