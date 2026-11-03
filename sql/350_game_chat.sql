@@ -275,6 +275,9 @@ begin
     select * into tgt from mc.player where lower(name) = lower(tok[2]) limit 1;
     delete from mc.ban where kind = 'player' and uuid = tgt.uuid;
     perform mc.feedback(p_conn, mc.tc_translate_strs('commands.pardon.success', array[coalesce(tgt.name, tok[2])]));      -- unverified
+
+  elsif verb = 'kill' then
+    perform mc.cmd_kill(p_conn, tok);      -- sql/836 (survival)
   else
     perform mc.unknown_command(p_conn, cmd);
   end if;

@@ -118,7 +118,7 @@ begin
         (220, 'minecraft:container_set_content',
               proto.varint(0) || proto.varint(1) || proto.varint(j.inventory_slots) || decode(repeat('00', j.inventory_slots), 'hex') || '\x00'::bytea),   -- every slot empty, nothing carried
         (260, 'minecraft:set_health', proto.f32(j.health) || proto.varint(j.food) || proto.f32(j.saturation)),
-        (270, 'minecraft:set_experience', proto.f32(j.xp_progress) || proto.varint(j.xp_total) || proto.varint(j.xp_level))
+        (270, 'minecraft:set_experience', proto.f32(j.xp_progress) || proto.varint(j.xp_level) || proto.varint(j.xp_total))     -- level BEFORE total (found with /experience on the real server, docs/SURVIVAL.md; all zero in the recorded burst, so it was invisible)
     ) v(ord, packet, body)
     union all
     select s.ord, s.packet, case when s.entity_prefixed then proto.varint(j.entity_id) || s.body else s.body end from net.static_packet s

@@ -98,7 +98,7 @@ chat message index surviving across sessions.
 * **World**: flat by default; `dbcraft.generator = dbcraft:noise` selects a seeded terrain generator that is not vanilla's (docs/WORLD.md "Terrain generator": no caves, ores, trees or structures).
   Light is the straight-down model (exact for flat worlds; 76% of sky layers on real terrain). No block light, no biomes API, no
   structures, block entity data is raw bytes.
-* **Gameplay**: no mobs or other entities beyond players, no damage/death/hunger, no redstone or block ticks (grass does not spread), placement uses default states only, no
+* **Gameplay**: no mobs or other entities beyond players (the player-side survival core -- health, hunger, falls, the void, death, respawn, eating, experience -- is in [SURVIVAL.md](SURVIVAL.md)), no redstone or block ticks (grass does not spread), placement uses default states only, no
   containers other than the player inventory, no sounds, no entity metadata/waypoint packets, no chat signing or rate limits, no `/seed`, `/kill`, selectors.
 * **Operations**: idle-socket timeouts in the dev gateway, a write-buffer limit, autosave policy (the world is persisted by the database; the queues are unlogged), per-client view distance
   (the server's is used for everybody), several dimensions, chunk generation off the tick (below).

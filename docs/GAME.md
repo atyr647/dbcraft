@@ -60,6 +60,7 @@ Compression is off: frames are `[length][id][body]`.  `mc.login_check` returns t
 | `340_game_input.sql` | movement, held slot, creative slot, keep-alive |
 | `350_game_chat.sql` | chat types, commands and their feedback |
 | `360_game_tick.sql` | chat intake, `mc.tick()`, `mc.tick_log` |
+| `830`-`837_survival_*.sql` | the survival core ([SURVIVAL.md](SURVIVAL.md)): health/food/experience state, damage, fall, void, death, respawn, eating, `mc.tick_core` with the survival steps |
 
 Tools: `tools/pkt_layout.py` (reads a packet class's wire layout from the jar with `javap`, never runs it), `tools/nbt_dump.py` (decodes recorded NBT),
 `tools/game_probe.py` (scenarios: `social`, `kick`, plus the experiments `movetest`, `moveseq*`, `dist`), `tools/cap_view.py`.
@@ -78,10 +79,10 @@ To regenerate the recordings: start a vanilla 26.3 server (offline, whitelist of
 
 ## Not implemented
 
-Damage, death, respawn, `/kill`; `/seed`, `/msg`, `/me`, `/help` and most of vanilla's ~90 commands; target selectors (`@a`, `@p`); other operators' feedback broadcast; chat rate limits and
+Anything that hurts a player other than falls, the void, starvation and `/kill` (see [SURVIVAL.md](SURVIVAL.md): the survival core, its recorded comparisons and its limits); `/experience`, `/damage`, `/effect`; `/seed`, `/msg`, `/me`, `/help` and most of vanilla's ~90 commands; target selectors (`@a`, `@p`); other operators' feedback broadcast; chat rate limits and
 message signing (offline mode only); the `commands` packet (command tree sent at join: **not built**, a recorded 26-node level-0 and 2,399-node operator graph exist for a future
 byte-exact attempt); entity metadata, attributes and the waypoint packets other players receive when someone joins (`set_entity_data`, `update_attributes`, `waypoint`); latency
-broadcasts to the tab list; hunger, health and experience; ender chests and any container beyond the player inventory; `entity-broadcast-range-percentage`.
+broadcasts to the tab list; ender chests and any container beyond the player inventory; `entity-broadcast-range-percentage`.
 Visibility is a simplification: two players see each other when their chunk coordinates differ by at most `view-distance` (capped at 32) in both axes.
 
 ## Performance (single machine: 4 cores, one tick connection, PostgreSQL 16, `jit=off`, `fsync=off`)
@@ -97,6 +98,8 @@ Visibility is a simplification: two players see each other when their chunk coor
 | 2,000 players, 20% moving, sparse | 21 | 70.7 ms | 91 | 102 | 105 | 44.7 / 22.8 |
 | 2,000 players, all moving, sparse | 21 | 139.1 ms | 183 | 205 | 215 | 99.5 / 35.8 |
 | 2,000 players, all moving, denser (100x100 chunks) | 78 | 306.1 ms | 374 | 383 | 385 | 213.8 / 87.5 |
+
+(Measured before the survival core; the core adds about 2 ms per tick at 500 players, [SURVIVAL.md](SURVIVAL.md#cost-per-tick).)
 
 Reading it: a 50 ms tick is met at 500 players (averages 24 to 40 ms; the all-moving case has p99 above 50 ms).  It is **not** met at 2,000 players, and crowding multiplies
 the cost because the movement fan-out grows with viewers: that is `string_agg` building one `play_out` row per viewer.  Parallel ticking by region was not attempted, and

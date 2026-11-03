@@ -139,6 +139,7 @@ begin
                     perform mc.set_block(dim, pos.x, pos.y, pos.z, 'minecraft:air');
                     insert into mc.block_actor values (dim, pos.x, pos.y, pos.z, r.conn_id);
                     breaks := breaks + 1;
+                    if r.gamemode = 0 then update mc.player set exhaustion = least(exhaustion + 0.005::real, 40::real) where conn_id = r.conn_id; end if;      -- (survival, sql/830) Block.playerDestroy: causeFoodExhaustion(0.005)
                 end if;
             else
                 continue when length(r.body) < 19;

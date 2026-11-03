@@ -72,7 +72,8 @@ begin
                                   jsonb_build_object('id', 0, 'ticks', gs.day_time, 'partial', 0, 'rate', 1.0));
     j.spawn_x := floor(gs.spawn_x)::int; j.spawn_y := floor(gs.spawn_y)::int; j.spawn_z := floor(gs.spawn_z)::int; j.spawn_yaw := gs.spawn_yaw;
     j.chunk_x := p.chunk_x; j.chunk_z := p.chunk_z;
-    j.health := p.health; j.food := p.food; j.saturation := p.saturation; j.xp_level := p.xp_level;
+    j.health := p.health; j.food := p.food; j.saturation := p.saturation; j.xp_level := p.xp_level; j.xp_progress := p.xp_progress; j.xp_total := p.xp_total;      -- survival (sql/830): experience in full
+    j.show_death_screen := not coalesce((select value::boolean from mc.game_rule where name = 'minecraft:immediate_respawn'), false);
 
     -- a returning player's inventory: the burst's container_set_content is empty, so send each stack as a slot update right after it
     st := 1;
