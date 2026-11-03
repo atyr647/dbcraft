@@ -21,6 +21,7 @@ ap.add_argument("--host", default="127.0.0.1"); ap.add_argument("--port", type=i
 ap.add_argument("--out", default="/tmp/dbcraft-e2e/vanilla_surv")
 ap.add_argument("--height", type=int, default=12)
 ap.add_argument("--drain", action="store_true", help="eat: lower the food level first (vanilla only: uses the Hunger effect)")
+ap.add_argument("--set-food", default=None, help="eat (dbcraft): 'FOOD,SATURATION' to set through psql before eating (the state the vanilla run printed)")
 ap.add_argument("--name", default="Surv"); ap.add_argument("--observer", default="Obs")
 a = ap.parse_args()
 os.makedirs(os.path.dirname(a.out), exist_ok=True)
@@ -52,6 +53,14 @@ def join():
         h = health(c)
         if h and h[0] == 0.0:
             c.send("minecraft:client_command", m.varint(0)); c.settle(1.0, 5.0)
+    # a known starting state for every scenario: both players die and respawn (20 health, 20 food, 5 saturation, no exhaustion, empty inventory, spawn)
+    for nm in (a.name, a.observer):        # no experience left over from an earlier scenario (a death would drop it as orbs the other player collects; dbcraft has no /experience: "unknown command" is harmless here)
+        cmd(s, "experience set %s 0 levels" % nm); cmd(s, "experience set %s 0 points" % nm)
+    s.settle(0.5, 3.0)
+    for c, nm in ((s, a.name), (o, a.observer)):
+        cmd(s, "kill " + nm); c.settle(0.5, 3.0); time.sleep(0.5)
+        c.send("minecraft:client_command", m.varint(0)); c.settle(1.0, 6.0)
+    s.settle(1.0, 6.0); o.settle(1.0, 6.0)
     return s, o
 
 def both(s, o, label):
@@ -85,8 +94,11 @@ if a.scenario == "fall":
     both(s, o, "fall")
     fall(s, 0.5, -60.0 + a.height, 0.5)
     both(s, o, "landed")
-    for _ in range(80): stand(s)           # four seconds on the ground: natural regeneration
-    both(s, o, "end")
+    k = s.count()                          # natural regeneration until the saturation has drained (10 set_health packets), at most 20 s
+    for _ in range(400):
+        stand(s)
+        if len(s.since(k, {"minecraft:set_health"})) >= 10: break
+    stand(s, 6); settle_all(s, o, 0.5); both(s, o, "end")
 elif a.scenario == "kill":
     stand(s, 4); both(s, o, "kill")
     cmd(s, "kill"); settle_all(s, o, 0.4)
@@ -98,8 +110,11 @@ elif a.scenario == "void":
     cmd(s, "tp %s 0.5 -60 0.5" % a.name); settle_all(s, o, 1.0); stand(s, 4)
     both(s, o, "void")
     cmd(s, "tp %s 0.5 -140 0.5" % a.name); settle_all(s, o, 0.4)
-    for _ in range(40): tick(s)            # (no position packets: the server's idea of the position is the teleport target)
-    settle_all(s, o, 0.5); both(s, o, "end")
+    k = s.count()                          # (no position packets: the server's idea of the position is the teleport target)
+    for _ in range(600):
+        tick(s)
+        if s.since(k, {"minecraft:player_combat_kill"}): break
+    tick(s, 30); settle_all(s, o, 0.5); both(s, o, "end")
 elif a.scenario == "eat":
     cmd(s, "give %s minecraft:apple 3" % a.name); settle_all(s, o, 1.0); stand(s, 2)
     if a.drain:                            # vanilla only (dbcraft has no effects): the Hunger effect empties the food bar quickly; the harness copies the state
@@ -109,10 +124,18 @@ elif a.scenario == "eat":
             if health(s)[1] < 20: break
         cmd(s, "effect clear %s" % a.name); stand(s, 10); settle_all(s, o, 0.5)
         print("food state before eating:", health(s))
+    if a.set_food:                         # dbcraft: put the player in the state the vanilla run reached (PG* environment variables name the database)
+        import subprocess
+        fo, sa = a.set_food.split(",")
+        subprocess.run(["psql", "-X", "-q", "-c", f"update mc.player set food = {fo}, saturation = {sa}, exhaustion = 0 where name = '{a.name}'"], check=True)
+        time.sleep(0.3); stand(s, 4)
     both(s, o, "use apple")
     s.send("minecraft:use_item", m.varint(0) + m.varint(1) + struct.pack(">ff", 0.0, 0.0))
-    for _ in range(50): stand(s)
-    settle_all(s, o, 0.5); both(s, o, "end")
+    k = s.count()
+    for _ in range(200):
+        stand(s)
+        if s.since(k, {"minecraft:set_health"}) and s.since(k, {"minecraft:container_set_slot"}): break
+    stand(s, 10); settle_all(s, o, 0.5); both(s, o, "end")
 elif a.scenario == "xp":
     for step in ("experience add %s 7 points", "experience add %s 5 levels", "experience set %s 0 levels", "experience add %s 100 points", "experience set %s 30 levels", "experience add %s 1 levels"):
         both(s, o, step % a.name); cmd(s, step % a.name); settle_all(s, o, 0.4)

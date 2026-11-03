@@ -9,10 +9,11 @@
 --   set_entity_data (health), update_attributes, set_health, set_experience, then the chunks around the spawn.
 -- The spawn is the world spawn (mc.game_state; vanilla spreads respawns over spawn_radius, 0 in the recorded run); beds and respawn anchors are not modelled.
 
-create or replace function mc.survival_deaths(p_cur bigint) returns void language plpgsql as $$
+drop function if exists mc.survival_deaths(bigint);
+create or replace function mc.survival_deaths(p_cur bigint, p_ids int[] default null) returns void language plpgsql as $$
 declare e int[];
 begin
-  select coalesce(array_agg(entity_id order by entity_id), '{}') into e from mc.player where dead and death_tick is not null and p_cur - death_tick >= 19 and conn_id is not null;
+  select coalesce(array_agg(entity_id order by entity_id), '{}') into e from mc.player where dead and death_tick is not null and p_cur - death_tick >= 19 and conn_id is not null and (p_ids is null or entity_id = any (p_ids));
   if cardinality(e) = 0 then return; end if;
   update mc.player set death_tick = null where entity_id = any (e);
   perform mc.send_players_and_viewers(e, array(select mc.pkt_entity_event(x, 60) from unnest(e) x));

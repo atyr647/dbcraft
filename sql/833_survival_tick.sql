@@ -12,24 +12,23 @@
 -- Every step finds its players with one cheap scan or comparison, so a server where nobody is hurt, hungry or falling pays almost nothing.
 
 ------------------------------------------------------------------------------------------------ pre: sprinting + snapshot
-do $$ begin
-    if not exists (select 1 from pg_type where typname = 'surv_snap' and typnamespace = 'mc'::regnamespace) then
-        create type mc.surv_snap as (eid int[], x float8[], y float8[], z float8[], og boolean[]);
-    end if;
-end $$;
+drop type if exists mc.surv_snap cascade;
+create type mc.surv_snap as (eid int[], x float8[], y float8[], z float8[], og boolean[], kinds int[]);      -- kinds: the packet ids of ours present in this tick's input (player_command, client_command, use_item, player_action)
 
 create or replace function mc.survival_pre() returns mc.surv_snap language plpgsql as $$
-declare i_cmd int := mc.sid('player_command'); s mc.surv_snap;
+declare i_cmd int := mc.sid('player_command'); i_cc int := mc.sid('client_command'); i_use int := mc.sid('use_item'); i_act int := mc.sid('player_action'); s mc.surv_snap;
 begin
+  -- one look at the tick's input for everything below (the queue is scanned once, not once per question)
+  select coalesce(array_agg(distinct packet_id) filter (where packet_id in (i_cmd, i_cc, i_use, i_act)), '{}') into s.kinds from mc.play_in_work;
   -- player_command: VarInt entity id | VarInt action (1 start sprinting, 2 stop sprinting) | VarInt data.  The last one of the tick wins.
-  if exists (select 1 from mc.play_in_work where packet_id = i_cmd) then
+  if i_cmd = any (s.kinds) then
     update mc.player p set sprinting = (c.act = 1)
       from (select distinct on (m.conn_id) m.conn_id, proto.varint_safe(m.body, (select nxt from proto.varint_read(m.body, 0))) as act
               from mc.play_in_work m where m.packet_id = i_cmd and length(m.body) >= 2 order by m.conn_id, m.seq desc) c
      where p.conn_id = c.conn_id and c.act in (1, 2) and p.sprinting <> (c.act = 1);
     delete from mc.play_in_work where packet_id = i_cmd;
   end if;
-  select array_agg(entity_id), array_agg(x), array_agg(y), array_agg(z), array_agg(on_ground) into s
+  select array_agg(entity_id), array_agg(x), array_agg(y), array_agg(z), array_agg(on_ground) into s.eid, s.x, s.y, s.z, s.og
     from mc.player where conn_id is not null and gamemode in (0, 2) and not dead;
   return s;
 end $$;
@@ -40,7 +39,8 @@ end $$;
 -- spectator (may fly) take no fall damage.  The landing puff of particles (LivingEntity.checkFallDamage) is computed from the distance BEFORE this move's dy.
 -- Jumping (on the ground, leaving it, going up) costs 0.05 exhaustion (0.2 sprinting); sprinting on the ground costs 0.1 per metre (rounded to centimetres).
 -- NOT modelled: water (a fall into water is not recognised), climbables, elytra, slow falling / jump boost effects.
-create or replace function mc.survival_moves(p_cur bigint, s mc.surv_snap) returns void language plpgsql as $$
+create or replace function mc.survival_moves(p_cur bigint, s mc.surv_snap) returns void language plpgsql
+set enable_nestloop = off as $$        -- (a hash join of the 500-row snapshot with the table: 0.5 ms instead of 0.8 ms of index probes, measured)
 declare fe int[]; fa real[]; pe int[]; pf float8[];
 begin
   if s.eid is null and not exists (select 1 from mc.player where conn_id is not null and not dead and (fall_distance <> 0 or fall_tp <> teleport_id)) then return; end if;
@@ -107,17 +107,22 @@ begin
 end $$;
 
 ------------------------------------------------------------------------------------------------ the void
-create or replace function mc.survival_void(p_cur bigint) returns void language plpgsql as $$
+drop function if exists mc.survival_void(bigint); drop function if exists mc.survival_tracker(bigint); drop function if exists mc.survival_food(bigint); drop function if exists mc.survival_sync(bigint);
+create or replace function mc.survival_void(p_cur bigint, p_ids int[] default null) returns void language plpgsql as $$
 declare e int[];
 begin
-  select coalesce(array_agg(entity_id), '{}') into e from mc.player where conn_id is not null and not dead and y < -128;       -- Level.getMinY() - 64 (the overworld's min_y is -64)
+  select coalesce(array_agg(entity_id), '{}') into e from mc.player where conn_id is not null and not dead and y < -128 and (p_ids is null or entity_id = any (p_ids));       -- Level.getMinY() - 64 (the overworld's min_y is -64)
   if cardinality(e) > 0 then perform mc.hurt(e, array_fill(4::real, array[cardinality(e)]), 'out_of_world', p_cur); end if;
 end $$;
 
 ------------------------------------------------------------------------------------------------ tracker: entity data
-create or replace function mc.survival_tracker(p_cur bigint) returns void language plpgsql as $$
+create or replace function mc.survival_tracker(p_cur bigint, p_ids int[] default null) returns void language plpgsql as $$
 declare e int[]; d bytea[];
 begin
+  -- a player row that went online without the join trigger (inserted with a connection id by a test or a tool) has nothing "sent" yet: its current values count as sent
+  update mc.player set sent_health = health, sent_food = food, sent_sat_zero = (saturation = 0), sent_eh = health, sent_xp_total = xp_total, sent_score = xp_score, sent_using = false,
+         join_tick = coalesce(join_tick, p_cur)
+   where conn_id is not null and sent_health is null and (p_ids is null or entity_id = any (p_ids));
   -- one set_entity_data per player with everything that changed, entries in index order: 8 living flags, 9 health, 18 score
   select array_agg(q.eid order by q.eid), array_agg(q.pkt order by q.eid) into e, d
     from (select p.entity_id as eid,
@@ -127,7 +132,8 @@ begin
                    || case when p.sent_score is distinct from p.xp_score then '\x1201'::bytea || proto.varint(p.xp_score) else '\x'::bytea end
                    || '\xff'::bytea) as pkt
             from mc.player p
-           where p.conn_id is not null and (p.sent_eh is distinct from p.health or p.sent_using is distinct from (p.use_slot is not null) or p.sent_score is distinct from p.xp_score)) q;
+           where p.conn_id is not null and (p_ids is null or p.entity_id = any (p_ids))
+             and (p.sent_eh is distinct from p.health or p.sent_using is distinct from (p.use_slot is not null) or p.sent_score is distinct from p.xp_score)) q;
   if e is null then return; end if;
   perform mc.send_players_and_viewers(e, d);
   update mc.player p set sent_eh = p.health, sent_using = (p.use_slot is not null), sent_score = p.xp_score where p.entity_id = any (e);
@@ -140,7 +146,7 @@ begin
 end $$;
 
 ------------------------------------------------------------------------------------------------ food: FoodData.tick and peaceful regeneration
-create or replace function mc.survival_food(p_cur bigint) returns void language plpgsql as $$
+create or replace function mc.survival_food(p_cur bigint, p_ids int[] default null) returns void language plpgsql as $$
 declare diff int := mc.difficulty(); regen boolean := mc.rule_bool('natural_health_regeneration', true); se int[];
 begin
   -- candidates: exhaustion to drain, a player who is hurt (health in (0, 20)), a starving player, or a running timer; everybody else has nothing to do this tick
@@ -148,7 +154,7 @@ begin
     select p.entity_id as eid, p.health, p.food, p.saturation, p.exhaustion, p.food_timer,
            (p.health > 0 and p.health < 20) as hurt
       from mc.player p
-     where p.conn_id is not null and (p.exhaustion > 4 or (p.health > 0 and p.health < 20) or p.food <= 0 or p.food_timer <> 0)),     -- (a dead player's FoodData still ticks: the exhaustion drains, as the recorded death shows)
+     where p.conn_id is not null and (p_ids is null or p.entity_id = any (p_ids)) and (p.exhaustion > 4 or (p.health > 0 and p.health < 20) or p.food <= 0 or p.food_timer <> 0)),     -- (a dead player's FoodData still ticks: the exhaustion drains, as the recorded death shows)
   -- 1. exhaustion above 4 drains saturation first, then food (never on peaceful)
   d as (
     select c.*, (c.exhaustion > 4) as drain,
@@ -185,7 +191,7 @@ begin
     update mc.player p set health = case when (p_cur - p.join_tick) % 20 = 0 and p.health < 20 then least(p.health + 1::real, 20::real) else p.health end,
                            saturation = case when (p_cur - p.join_tick) % 20 = 0 and p.saturation < 20 then p.saturation + 1::real else p.saturation end,
                            food = case when (p_cur - p.join_tick) % 10 = 0 and p.food < 20 then p.food + 1 else p.food end
-     where p.conn_id is not null and not p.dead and p.join_tick is not null and ((p_cur - p.join_tick) % 10 = 0)
+     where p.conn_id is not null and (p_ids is null or p.entity_id = any (p_ids)) and not p.dead and p.join_tick is not null and ((p_cur - p.join_tick) % 10 = 0)
        and (((p_cur - p.join_tick) % 20 = 0 and (p.health < 20 or p.saturation < 20)) or p.food < 20);
   end if;
 end $$;
@@ -193,16 +199,16 @@ end $$;
 ------------------------------------------------------------------------------------------------ sync: set_health, set_experience
 -- ServerPlayer.doTick: set_health when the health, the food level or "saturation is zero" differ from what the client was last told (a saturation change alone sends
 -- nothing); set_experience when the total changed (every xp function sets sent_xp_total = -1 to force it).
-create or replace function mc.survival_sync(p_cur bigint) returns void language plpgsql as $$
+create or replace function mc.survival_sync(p_cur bigint, p_ids int[] default null) returns void language plpgsql as $$
 begin
   with u as (
     update mc.player p set sent_health = p.health, sent_food = p.food, sent_sat_zero = (p.saturation = 0)
-     where p.conn_id is not null and (p.sent_health is distinct from p.health or p.sent_food is distinct from p.food or p.sent_sat_zero is distinct from (p.saturation = 0))
+     where p.conn_id is not null and (p_ids is null or p.entity_id = any (p_ids)) and (p.sent_health is distinct from p.health or p.sent_food is distinct from p.food or p.sent_sat_zero is distinct from (p.saturation = 0))
     returning p.conn_id, p.entity_id, p.health, p.food, p.saturation)
   insert into mc.play_out (conn_id, data) select conn_id, mc.pkt_set_health(health, food, saturation) from u order by entity_id;
   with u as (
     update mc.player p set sent_xp_total = p.xp_total
-     where p.conn_id is not null and p.sent_xp_total is distinct from p.xp_total
+     where p.conn_id is not null and (p_ids is null or p.entity_id = any (p_ids)) and p.sent_xp_total is distinct from p.xp_total
     returning p.conn_id, p.entity_id, p.xp_progress, p.xp_level, p.xp_total)
   insert into mc.play_out (conn_id, data) select conn_id, mc.pkt_set_experience(xp_progress, xp_level, xp_total) from u order by entity_id;
 end $$;

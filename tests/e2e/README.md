@@ -31,6 +31,7 @@ Recordings and captures contain Mojang data and are never committed.
 | `compare_block.py` | block_update / level_event / block_changed_ack for the actor and an observer |
 | `compare_move.py` | set_chunk_cache_center, forget_level_chunk and new chunks while walking |
 | `compare_social.py` | join message, tab list, entity, chat, leave message, for two players |
+| `survival_probe.py`, `compare_survival.py`, `survival.sh` | survival (fall, /kill and respawn, the void, eating): two scripted clients against vanilla and dbcraft, the packets the survival rules produce compared in order (docs/SURVIVAL.md); `survival.sh record PORT` records vanilla, `survival.sh compare PORT` replays against dbcraft |
 
 ## What the comparisons allow to differ (and why)
 

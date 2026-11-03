@@ -1,6 +1,10 @@
 -- Survival core (sql/830-837): damage, fall, void, death, respawn, hunger, regeneration, eating, experience.
 -- Expected bytes marked (vanilla) are packets recorded from the REAL vanilla 26.3 server by tests/e2e/survival_probe.py (same scenarios, replayed here through
 -- the tick); the rules themselves are checked against numbers read from the bytecode (docs/SURVIVAL.md).
+-- needs the datapack registries (damage types and their tags) and the recorded static packets (tools/load_datapack.py, tools/load_static_packets.py: the template of
+-- tests/sql/prun.sh has them); without them the whole file is skipped with a notice
+select (select count(*) from ref.dp_entry where registry = 'minecraft:damage_type') > 0 and (select count(*) from net.static_packet) >= 6 as have_data \gset
+\if :have_data
 create or replace function t.out(conn int) returns bytea language sql as $$ select coalesce(string_agg(data, '\x'::bytea order by seq), '\x'::bytea) from mc.play_out where conn_id = conn $$;
 create or replace function t.reset() returns void language sql as $$ truncate mc.play_out, mc.play_in, mc.play_in_work, mc.kick, mc.pending_ack $$;
 create or replace function t.send(conn int, pname text, body bytea) returns void language sql as $$ insert into mc.play_in_work (conn_id, packet_id, body) values (conn, mc.sid(pname), body) $$;
@@ -385,8 +389,8 @@ select t.eq('eating: tick 33: the flag is cleared and the stack re-sent (vanilla
 select t.eq('eating: the flag reset', encode(t.frame((select s_out from eat_log order by tick offset 33 limit 1), 1), 'hex'), '0665' || lpad(to_hex((select entity_id from mc.player where conn_id = 1)), 2, '0') || '080000ff');
 select t.eq('eating: the slot update (window 0, state 8, slot 36, 2 apples)', encode(t.frame((select s_out from eat_log order by tick offset 33 limit 1), 2), 'hex'),
   encode(mc.pkt_container_set_slot(8, 36, 'minecraft:apple', 2), 'hex'));
-select t.eq('eating: the observer sees the flag, the finish event and the flag reset', array[t.names((select o_out from eat_log order by tick limit 1)), t.names((select o_out from eat_log order by tick offset 32 limit 1)), t.names((select o_out from eat_log order by tick offset 33 limit 1))],
-  array[array['set_entity_data'], array['entity_event'], array['set_entity_data']]);
+select t.eq('eating: the observer sees the flag and its reset, but not the finish event (recorded: the observer got 2 set_entity_data)', array[array_to_string(t.names((select o_out from eat_log order by tick limit 1)), ','), array_to_string(t.names((select o_out from eat_log order by tick offset 32 limit 1)), ','), array_to_string(t.names((select o_out from eat_log order by tick offset 33 limit 1)), ',')],
+  array['set_entity_data', '', 'set_entity_data']);
 select t.eq('eating: food 20, saturation 2.4, one apple less', array[t.p('food'), t.p('saturation'), (select count::text from mc.inventory_slot where player = (select uuid from mc.player where conn_id = 1) and slot = 36)], array['20', '2.4', '2']);
 -- not hungry: nothing happens (apples cannot be eaten at 20 food), but golden apples can
 select t.food(0, 5, 20, 20, 0); select t.send(1, 'use_item', '\x00'::bytea || '\x01'::bytea || '\x0000000000000000'::bytea); select mc.survival_input((select game_time from mc.game_state));
@@ -490,3 +494,6 @@ begin
   perform t.eq('the join burst writes the experience as progress, level, total (found with /experience on the real server)',
     (select encode(body, 'hex') from net.play_entry_packets(1, j) where packet = 'minecraft:set_experience'), '3f0000000314');
 end $$;
+\else
+\echo NOTICE: tests/sql/830_survival.sql skipped: the datapack and the static packets are not loaded (make test loads them)
+\endif

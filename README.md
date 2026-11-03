@@ -63,9 +63,11 @@ The world is stored in Minecraft's own wire format (palette + packed longs per 1
   check, inflate, per-IP limits ([docs/GATEWAY.md](docs/GATEWAY.md)).
 * **Online mode**: the design and the login flow are verified end to end against a stub of Mojang's session server with an encrypting client (27 checks, with and
   without compression).  A real client in online mode has **not** been tested (it needs a Mojang account).
+* A **survival core for players** (health, hunger, fall and void damage, death and respawn, natural regeneration, eating, experience) as set-based SQL; the damage, death, respawn,
+  fall, void and eating packet sequences were recorded from the real server and are reproduced (`tests/e2e/survival_probe.py`, [docs/SURVIVAL.md](docs/SURVIVAL.md)).
 * An entity prototype (items and simple mobs as rows, physics checked against recorded vanilla trajectories with zero deviation): [docs/ENTITY.md](docs/ENTITY.md).
 
-**What is missing:** survival gameplay (damage, death, hunger rules, crafting), terrain generation beyond flat worlds, importing/exporting vanilla worlds,
+**What is missing:** most of survival gameplay (crafting, mobs and anything that attacks a player, armor, potion effects, fire, drowning, fluids, beds and respawn anchors; the player-side core -- health, hunger, fall and void damage, death, respawn, regeneration, eating, experience -- exists, see [docs/SURVIVAL.md](docs/SURVIVAL.md) for what was compared with the real server and what was not), terrain generation beyond flat worlds, importing/exporting vanilla worlds,
 vanilla mob AI and pathfinding, redstone, fluids, a full light engine (sky light matches vanilla on about 76% of recorded layers), advancements and recipes
 (replayed from a capture, not generated), the first-time-player join sequence, a real-client test of online mode.
 
