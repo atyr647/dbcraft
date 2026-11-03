@@ -99,6 +99,8 @@ Visibility is a simplification: two players see each other when their chunk coor
 | 2,000 players, all moving, sparse | 21 | 139.1 ms | 183 | 205 | 215 | 99.5 / 35.8 |
 | 2,000 players, all moving, denser (100x100 chunks) | 78 | 306.1 ms | 374 | 383 | 385 | 213.8 / 87.5 |
 
+(Measured before the survival core; the core adds about 2 ms per tick at 500 players, [SURVIVAL.md](SURVIVAL.md#cost-per-tick).)
+
 Reading it: a 50 ms tick is met at 500 players (averages 24 to 40 ms; the all-moving case has p99 above 50 ms).  It is **not** met at 2,000 players, and crowding multiplies
 the cost because the movement fan-out grows with viewers: that is `string_agg` building one `play_out` row per viewer.  Parallel ticking by region was not attempted, and
 `docs/DATABASE-COMPARISON.md` found parallel write scaling disappointing on this machine, so it is unproven.  The load generator ran on the same 4 cores; load average stayed under 1.1 during these runs.

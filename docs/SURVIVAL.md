@@ -80,4 +80,21 @@ order is progress, **level**, total; `net.play_entry_packets` wrote total first 
 
 ## Cost per tick
 
-COST_TABLE
+`tests/bench/game/run.sh`-style load (500 players, 100 x 100 chunk area, all moving, `mc.tick()`, 80 measured ticks per run, `mc.play_in_work` truncated once a second like
+`mc.server_tick` does: without it the dead pages of that queue make every scan slower round after round and the numbers drift), the baseline `mc.tick_core` of `sql/430` and
+the survival one alternated three times on a shared 4-core machine (load average 0.5 to 0.9):
+
+| Round | Tick average without survival | with survival | Difference | Survival steps alone (measured inside the tick) |
+|---|---|---|---|---|
+| 1 | 35.1 ms | 39.6 ms | +4.5 ms | 2.4 ms (p95 3.9) |
+| 2 | 35.5 ms | 37.6 ms | +2.1 ms | 2.3 ms (p95 3.9) |
+| 3 | 32.6 ms | 34.9 ms | +2.3 ms | 2.0 ms (p95 2.3) |
+
+So the survival core costs about **2 ms per tick, 6 to 7 % of the sparse 500-moving-player tick** (the table in `GAME.md` says about 40 ms for that load; this run's baseline is
+33 to 36 ms).  That is a measurable rise, not none.  Where it goes with nobody hurt, hungry or falling: the snapshot of the survival players' positions before the movement
+(0.4 ms), the comparison with the positions after it (0.5 ms: a hash join of the 500-row snapshot; index probes were 0.8 ms), one scan of the online players that finds
+everybody with something to do in the entity phase (0.3 ms; the steps then run on that list or not at all), the rest is function-call overhead.  What was tried and
+kept: one look at the tick's input instead of one per question (each `EXISTS` on a bloated queue cost 1.2 ms in the first measurement, 6 ms in all), the id-list entity phase
+(the six steps cost 2.0 ms when each scanned the table), `enable_nestloop = off` for the move comparison.  A subscript-indexed snapshot (no join) measured 0.2 ms instead of
+0.5 ms but needs dense entity ids; not done.  Players who are hurt, hungry, falling or using an item cost more, per player and tick, and only while it lasts (a regenerating
+player is one row update per tick).  The batched tick is unaffected because it does not run the survival steps.
