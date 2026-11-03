@@ -28,7 +28,8 @@ vanilla by `tests/sql/240`) builds ONE chunk in a scratch dimension, whose rows 
 is then one set-based `INSERT ... SELECT` that copies the template's section and light rows, and the cached packet is the template packet with the 8 bytes of
 coordinates replaced.  `mc.generate_flat(dim, cx, cz)` now takes the fast path; `mc.generate_flat_batch` takes lists.
 * The template is invalidated by triggers (layers, dimension shape, biome registry) and by a cheap stamp (generator version, block state count, packet id).
-* `mc.generator` registry + `mc.generate_batch` dispatcher: a heavier terrain generator plugs in by inserting a row (a function `(dimension, cxs[], czs[])`).
+* `mc.generator` registry + `mc.generate_batch` dispatcher: a heavier terrain generator plugs in by inserting a row (a function `(dimension, cxs[], czs[])`).  The first one is
+  `dbcraft:noise` (sql/855, docs/WORLD.md "Terrain generator"); `mc.generate_flat_batch` hands a dimension whose generator is not the flat one to it, so every caller of `mc.generate_flat` follows the setting.
 * Proof (`tests/sql/260`, 38 checks): rows and packets identical to the reference, also at coordinates around +-2,000,000, with edits, replace, template
   invalidation, concurrent-safe `ON CONFLICT DO NOTHING`, and no scratch dimension left behind.
 

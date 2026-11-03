@@ -119,7 +119,8 @@ select t.eq('block_at has no row for an unloaded chunk', (select count(*) from m
 -- ---------------------------------------------------------------- events
 select t.eq('events record old and new state', (select (old_state, new_state) from mc.block_event where dimension = 'dbcraft:a' and x = 41 and y = 5 and z = 40 order by id desc limit 1),
             ('minecraft:emerald_block'::text, 'minecraft:air'::text));
-select t.eq('a section fill queues one section event', (select count(*) from mc.block_event where kind = 'section' and dimension = 'dbcraft:a' and new_state = 'minecraft:stone')::int, 1);
+select t.eq('a section fill queues one cells event (all 4,096 positions)', (select count(*) from mc.block_event where kind = 'cells' and dimension = 'dbcraft:a' and new_state = 'minecraft:stone' and (x, y, z) = (64, 0, 64) and cells = mc.block_event_full_cells())::int, 1);
+select t.eq('...and no event of the old whole-section kind', (select count(*) from mc.block_event where kind = 'section')::int, 0);
 create temp table ev_before as select count(*) as c from mc.block_event;
 select mc.set_block('dbcraft:a', 41, 5, 40, 'minecraft:air');
 select t.eq('a no-op edit queues nothing', (select count(*) from mc.block_event)::int, (select c from ev_before)::int);

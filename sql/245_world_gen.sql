@@ -128,8 +128,13 @@ declare
     n    int;
     comp boolean := mc.compression_enabled();
     pid  bytea := proto.varint(mc.chunk_packet_id());
+    gen  text;
 begin
     if p_cxs is null or cardinality(p_cxs) = 0 then return 0; end if;
+    -- a dimension whose generator is not the flat one (mc.dimension.generator, set by the dbcraft.generator setting, sql/855): every caller of mc.generate_flat
+    -- (the join, chunk streaming, the dev world reset) gets that generator's chunks; the flat path below is unchanged
+    select d.generator into gen from mc.dimension d where d.name = p_dim;
+    if gen is not null and gen <> 'minecraft:flat' then return mc.generate_with(gen, p_dim, p_cxs, p_czs, p_replace); end if;
     t := mc.ensure_flat_template(p_dim);
     if p_replace then
         delete from mc.chunk c using unnest(p_cxs, p_czs) u(cx, cz) where c.dimension = p_dim and c.cx = u.cx and c.cz = u.cz;
@@ -181,6 +186,16 @@ values ('minecraft:flat', 'mc.generate_flat_batch(text, int[], int[], boolean)':
 on conflict (name) do nothing;
 
 alter table mc.dimension add column if not exists generator text not null default 'minecraft:flat' references mc.generator(name);
+
+-- Call a registered generator by name: every generator takes (dimension, cxs, czs) and may take a fourth, defaulted p_replace (the flat one and dbcraft:noise do).
+create or replace function mc.generate_with(p_gen text, p_dim text, p_cxs int[], p_czs int[], p_replace boolean default false) returns int language plpgsql volatile as $$
+declare fn regprocedure; n int;
+begin
+    select g.batch_fn into fn from mc.generator g where g.name = p_gen;
+    if not found then raise exception 'unknown generator %', p_gen; end if;
+    execute format('select %s($1, $2, $3, $4)', fn::regproc) into n using p_dim, p_cxs, p_czs, p_replace;
+    return n;
+end $$;
 
 -- Generate the chunks of a list in one dimension with that dimension's generator.  Returns how many chunks it created.
 create or replace function mc.generate_batch(p_dim text, p_cxs int[], p_czs int[]) returns int language plpgsql volatile as $$

@@ -26,11 +26,12 @@ Recordings and captures contain Mojang data and are never committed.
 | `setup.sh` | cluster on port 54399, migrate with `--dev-gateway`, load reference data, `mc.configure_dev_server()`; view distance 2 |
 | `gateway.sh start|stop|status|log` | `call net.run(25621)` in the background; `net.gateway_control` holds the stop flag and tick statistics |
 | `mcclient.py` | a small 26.3 client: offline login, configuration, play, with the replies a real client sends (keep-alive, teleport confirm, chunk batch) |
-| `block_probe.py` `move_probe.py` `join_probe.py` | the scripted scenarios; they work against either server |
+| `block_probe.py` `move_probe.py` `join_probe.py` `fill_probe.py` | the scripted scenarios; they work against either server (`fill_probe.py` runs `/fill` and `/setblock` batches over RCON on vanilla and SQL on dbcraft) |
 | `compare_join.py` | login, configuration, the 27-packet entry burst, the 49 chunks |
 | `compare_block.py` | block_update / level_event / block_changed_ack for the actor and an observer |
 | `compare_move.py` | set_chunk_cache_center, forget_level_chunk and new chunks while walking |
 | `compare_social.py` | join message, tab list, entity, chat, leave message, for two players |
+| `compare_fill.py` | `block_update` / `section_blocks_update` for 32 steps: sizes 24 .. 4096 around every rehash threshold of vanilla's position set, overlapping fills, no-op fills, batches in one tick; every `section_blocks_update` compared byte for byte (see docs/WORLD.md "Block change packets") |
 
 ## What the comparisons allow to differ (and why)
 
@@ -41,6 +42,6 @@ Recordings and captures contain Mojang data and are never committed.
 * **Chunk batches**: vanilla splits a join into several batches and orders equally distant chunks differently each time; dbcraft sends one batch, nearest
   first.  The chunks' bytes are compared (after putting the heightmap entries in one order, which vanilla also varies).
 * **What vanilla sends and dbcraft does not**: waypoints, sounds, entity metadata and attributes, swing animations, other entities' movement, random-tick
-  block changes.  Listed by the comparisons, not failures.
+  block changes, `light_update` after block changes (no light engine; `compare_fill.py` lists it).  Listed by the comparisons, not failures.
 * **A first-time player** gets a different burst from a returning one (a `recipe_book_add` instead of `update_attributes`); dbcraft emulates the returning
   player and the comparison uses a returning baseline.

@@ -9,7 +9,7 @@
 #        (registries, chunks) and stay out of git.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-E2E=${DBCRAFT_E2E_DIR:-/tmp/dbcraft-e2e}; PORT=25611; DIR=/tmp/vanilla-int
+E2E=${DBCRAFT_E2E_DIR:-/tmp/dbcraft-e2e}; PORT=25611; DIR=/tmp/vanilla-int; RCON=25615
 JAR=${DBCRAFT_SERVER_JAR:-${DBCRAFT_HOME:-$HOME/.cache/dbcraft}/server-26.3.jar}; JAVA=${JAVA:-/usr/lib/jvm/java-25-openjdk-amd64/bin/java}
 mkdir -p "$E2E"
 listening() { python3 - "$PORT" <<'PY'
@@ -24,7 +24,7 @@ if ! listening; then
   mkdir -p "$DIR"; cp -n "$JAR" "$DIR/server.jar" 2>/dev/null || true
   echo "eula=true" > "$DIR/eula.txt"
   printf '%s\n' online-mode=false server-port=$PORT 'level-type=minecraft\:flat' view-distance=2 simulation-distance=2 network-compression-threshold=-1 \
-    spawn-protection=0 enable-rcon=false enable-query=false motd=vanilla-int max-players=10 gamemode=creative difficulty=peaceful spawn-monsters=false \
+    spawn-protection=0 enable-rcon=true rcon.port=$RCON rcon.password=dbcraft-e2e enable-query=false motd=vanilla-int max-players=10 gamemode=creative difficulty=peaceful spawn-monsters=false \
     spawn-animals=false spawn-npcs=false generate-structures=false level-name=world white-list=false enforce-whitelist=false > "$DIR/server.properties"
   (cd "$DIR" && nohup "$JAVA" -Xmx1G -jar server.jar nogui > server.log 2>&1 &)
   for i in $(seq 1 90); do grep -q "Done (" "$DIR/server.log" 2>/dev/null && break; sleep 1; done
@@ -34,4 +34,10 @@ python3 tools/capture_vanilla.py --port $PORT --seconds 3 --name Probe --out "$E
 python3 tests/e2e/block_probe.py --port $PORT --out "$E2E/vanilla_block" --actor Acta --observer Bert > /dev/null
 python3 tests/e2e/move_probe.py --port $PORT --name Walker --steps 6 --out "$E2E/vanilla_move6" > /dev/null
 python3 tests/e2e/join_probe.py --port $PORT --out "$E2E/vanilla_social" --first Opa --second Bobb > /dev/null
+# multi-block changes (/fill, batches of /setblock in one tick): needs RCON, which a server started by an older version of this script does not have
+if python3 -c "import socket; socket.create_connection(('127.0.0.1', $RCON), 1)" 2>/dev/null; then
+  python3 tests/e2e/fill_probe.py --mode vanilla --port $PORT --rcon $RCON --rcon-pw dbcraft-e2e --world "$DIR/world" --out "$E2E/vanilla_fill.json" > /dev/null
+else
+  echo "no RCON on port $RCON: the multi-block baseline (vanilla_fill.json) was NOT recorded; stop the server in $DIR and run this script again"
+fi
 echo "recorded the vanilla baselines in $E2E"

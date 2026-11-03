@@ -189,49 +189,120 @@ begin
     return next;
 end $$;
 
+-- Block changes of the tick, as vanilla's ChunkHolder.broadcastChanges sends them (sql/850 explains the rule): per section, ONE changed position is a block_update with the state
+-- it has now, two or more are one section_blocks_update (the positions in the iteration order of fastutil's ShortOpenHashSet, see mc.shortset_order).  A position that changed and
+-- changed back still counts, as in vanilla's set.  The break effect (level_event 2001, everyone but the player who did it) goes to the net changes to air of the per-block events.
+-- Events of kind 'section' (a whole section replaced; nothing writes them any more) still re-send the chunk.  Only sections some connection can see are encoded.  Returns the
+-- number of positions announced.
 create or replace function mc.broadcast_block_events() returns int language plpgsql as $$
-declare r int := mc.prop_int('view-distance') + 1; i_bu int := mc.pid('block_update'); i_le int := mc.pid('level_event'); i_ack int := mc.pid('block_changed_ack'); n int;
-        a_dim text[]; a_x int[]; a_y int[]; a_z int[]; a_old int[]; a_new int[];          -- the net block changes: dimension, position, old and new state id
-        kd text[]; kx int[]; kz int[];                                        -- the chunks whose sections changed
+declare r int := mc.prop_int('view-distance') + 1; i_bu int := mc.pid('block_update'); i_le int := mc.pid('level_event'); i_ack int := mc.pid('block_changed_ack'); n int := 0;
+        e_id bigint[]; e_kind text[]; e_dim text[]; e_x int[]; e_y int[]; e_z int[]; e_old text[]; e_new text[]; e_cells bytea[];      -- every event of the tick
+        a_dim text[]; a_x int[]; a_y int[]; a_z int[]; a_old int[]; a_new int[];          -- the net changes of the per-block events: dimension, position, old and new state id
+        u_dim text[]; u_x int[]; u_y int[]; u_z int[]; u_id int[];                          -- sections with one changed position: that position and its state
+        kd text[]; kx int[]; kz int[];                                        -- the chunks whose sections were replaced whole
+        s record; ord int[]; ids int[]; full_ord int[]; full_ins int[]; ins int[]; full_cells bytea; k int;
+        m_cx int[] := '{}'; m_cz int[] := '{}'; m_pkt bytea[] := '{}'; mn int := 0;     -- the packets of multi-position sections: chunk, bytes
 begin
     -- (idle early return: no recorded block change, section change or pending acknowledgement)
     if not exists (select 1 from mc.block_event) and not exists (select 1 from mc.pending_ack) then return 0; end if;
-    -- The per-tick sets live in arrays, not in temp tables (sql/437: a temp table that is emptied at commit is recreated by every transaction that touches it, and its
-    -- truncate invalidates the cached plans), and the queues are consumed with DELETE ... RETURNING instead of TRUNCATE.
-    with ev as (delete from mc.block_event where kind = 'block' returning id, dimension, x, y, z, old_state, new_state),
-         g as (select dimension, x, y, z, (array_agg(old_state order by id))[1] as old_state, (array_agg(new_state order by id desc))[1] as new_state
-                 from ev group by dimension, x, y, z
-                having (array_agg(old_state order by id))[1] <> (array_agg(new_state order by id desc))[1])
-    select array_agg(dimension), array_agg(x), array_agg(y), array_agg(z), array_agg(mc.block_state_id(old_state)), array_agg(mc.block_state_id(new_state))
-      into a_dim, a_x, a_y, a_z, a_old, a_new from g;
-    n := coalesce(cardinality(a_x), 0);
+    -- The per-tick sets live in arrays, not in temp tables (sql/437), and the queue is consumed with DELETE ... RETURNING instead of TRUNCATE.
+    with ev as (delete from mc.block_event returning id, kind, dimension, x, y, z, old_state, new_state, cells)
+    select array_agg(id), array_agg(kind), array_agg(dimension), array_agg(x), array_agg(y), array_agg(z), array_agg(old_state), array_agg(new_state), array_agg(cells)
+      into e_id, e_kind, e_dim, e_x, e_y, e_z, e_old, e_new, e_cells from ev;
 
-    -- (the chunks in the order their first change was recorded: the temp-table version left the order to the planner)
-    with ev as (delete from mc.block_event where kind = 'section' returning id, dimension, x, z)
-    select array_agg(t.dimension order by t.first_id), array_agg(t.cx order by t.first_id), array_agg(t.cz order by t.first_id) into kd, kx, kz
-      from (select dimension, x >> 4 as cx, z >> 4 as cz, min(id) as first_id from ev group by dimension, x >> 4, z >> 4) t;
+    if e_id is not null then
+        -- net change per position of the per-block events (the break effect): the first old state against the last new one
+        with g as (select dimension, x, y, z, (array_agg(old_state order by id))[1] as old_state, (array_agg(new_state order by id desc))[1] as new_state
+                     from unnest(e_id, e_kind, e_dim, e_x, e_y, e_z, e_old, e_new) u(id, kind, dimension, x, y, z, old_state, new_state)
+                    where kind = 'block' group by dimension, x, y, z
+                   having (array_agg(old_state order by id))[1] <> (array_agg(new_state order by id desc))[1])
+        select array_agg(dimension), array_agg(x), array_agg(y), array_agg(z), array_agg(mc.block_state_id(old_state)), array_agg(mc.block_state_id(new_state))
+          into a_dim, a_x, a_y, a_z, a_old, a_new from g;
 
-    if n > 0 then
-        -- the break effect for everybody except the player who did it
-        insert into mc.play_out (conn_id, data)
-        select c.conn_id, proto.frame(i_le, proto.i32(2001) || proto.position(b.x, b.y, b.z) || proto.i32(b.old_id) || '\x00'::bytea)
-        from unnest(a_dim, a_x, a_y, a_z, a_old, a_new) as b(dimension, x, y, z, old_id, new_id)
-        join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= r and abs(c.view_cz - (b.z >> 4)) <= r
-        where b.new_id = 0 and b.old_id <> 0
-          and not exists (select 1 from mc.block_actor a where a.dimension = b.dimension and a.x = b.x and a.y = b.y and a.z = b.z and a.conn_id = c.conn_id)
-        order by b.x, b.y, b.z;
-        insert into mc.play_out (conn_id, data)
-        select c.conn_id, proto.frame(i_bu, proto.position(b.x, b.y, b.z) || proto.varint(b.new_id))
-        from unnest(a_dim, a_x, a_y, a_z, a_old, a_new) as b(dimension, x, y, z, old_id, new_id)
-        join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= r and abs(c.view_cz - (b.z >> 4)) <= r
-        order by b.x, b.y, b.z;
-    end if;
+        -- sections of per-block events with exactly one changed position: block_update with the state the position has now
+        with ev as (select * from unnest(e_id, e_kind, e_dim, e_x, e_y, e_z, e_new, e_cells) u(id, kind, dimension, x, y, z, new_state, cells) where kind <> 'section'),
+             sec as (select dimension, x >> 4 as cx, y >> 4 as sy, z >> 4 as cz from ev group by 1, 2, 3, 4
+                     having not bool_or(kind = 'cells') and count(distinct (x, y, z)) = 1),
+             one as (select distinct on (ev.dimension, ev.x, ev.y, ev.z) ev.dimension, ev.x, ev.y, ev.z, ev.new_state
+                       from ev join sec on sec.dimension = ev.dimension and sec.cx = ev.x >> 4 and sec.sy = ev.y >> 4 and sec.cz = ev.z >> 4
+                      order by ev.dimension, ev.x, ev.y, ev.z, ev.id desc)
+        select array_agg(dimension order by x, y, z), array_agg(x order by x, y, z), array_agg(y order by x, y, z), array_agg(z order by x, y, z),
+               array_agg(mc.block_state_id(new_state) order by x, y, z)
+          into u_dim, u_x, u_y, u_z, u_id from one;
+        n := coalesce(cardinality(u_x), 0);
 
-    if kx is not null then
-        insert into mc.play_out (conn_id, data)
-        select c.conn_id, mc.chunk_packet(k.dimension, k.cx, k.cz)
-        from unnest(kd, kx, kz) with ordinality as k(dimension, cx, cz, ord) join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= r and abs(c.view_cz - k.cz) <= r
-        order by k.ord, c.conn_id;
+        -- (the chunks in the order their first change was recorded)
+        select array_agg(t.dimension order by t.first_id), array_agg(t.cx order by t.first_id), array_agg(t.cz order by t.first_id) into kd, kx, kz
+          from (select dimension, x >> 4 as cx, z >> 4 as cz, min(id) as first_id from unnest(e_id, e_kind, e_dim, e_x, e_z) u(id, kind, dimension, x, z) where kind = 'section'
+                 group by dimension, x >> 4, z >> 4) t;
+
+        -- sections with two or more changed positions, or a fill: the events of each, in order.  A fill's cells are expanded only for the sections some connection can see.
+        select c.ord, c.ins into full_ord, full_ins from mc.sbu_const c where c.id = 1;
+        full_cells := mc.block_event_full_cells();
+        for s in
+            with ev as (select * from unnest(e_id, e_kind, e_dim, e_x, e_y, e_z, e_new, e_cells) u(id, kind, dimension, x, y, z, new_state, cells) where kind <> 'section')
+            select dimension, x >> 4 as cx, y >> 4 as sy, z >> 4 as cz, count(*) as nev, bool_or(kind = 'cells') as has_cells,
+                   array_agg(kind order by id) as kinds,
+                   array_agg(((x & 15) << 8) | ((z & 15) << 4) | (y & 15) order by id) as bpos,        -- (only meaningful for per-block events)
+                   array_agg(cells order by id) as cellss, array_agg(new_state order by id) as news
+              from ev group by dimension, x >> 4, y >> 4, z >> 4
+             having bool_or(kind = 'cells') or count(distinct (x, y, z)) >= 2
+             order by dimension, cx, cz, sy
+        loop
+            -- only sections some connection can see are encoded
+            if not exists (select 1 from net.conn c where c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - s.cx) <= r and abs(c.view_cz - s.cz) <= r) then
+                continue;
+            end if;
+            if s.nev = 1 and s.has_cells and s.cellss[1] = full_cells then ord := full_ord;           -- one fill of the whole section: the order is a constant
+            else
+                if not s.has_cells then ins := s.bpos;
+                else
+                    ins := '{}';
+                    for k in 1 .. s.nev loop
+                        if s.kinds[k] = 'block' then ins := ins || s.bpos[k];
+                        elsif s.cellss[k] = full_cells then ins := ins || full_ins;
+                        else ins := ins || mc.cells_positions(s.cellss[k]); end if;
+                    end loop;
+                end if;
+                ord := mc.shortset_order(ins);
+            end if;
+            if s.nev = 1 and s.has_cells then ids := array_fill(mc.block_state_id(s.news[1]), array[cardinality(ord)]);     -- the only change of the section this tick: every position holds that block
+            else ids := mc.section_state_ids(s.dimension, s.cx, s.sy, s.cz, ord); end if;
+            mn := mn + 1;
+            m_cx[mn] := s.cx; m_cz[mn] := s.cz; m_pkt[mn] := mc.section_update_packet(s.cx, s.sy, s.cz, ord, ids);
+            n := n + cardinality(ord);
+        end loop;
+
+        if cardinality(a_x) > 0 then
+            -- the break effect for everybody except the player who did it
+            insert into mc.play_out (conn_id, data)
+            select c.conn_id, proto.frame(i_le, proto.i32(2001) || proto.position(b.x, b.y, b.z) || proto.i32(b.old_id) || '\x00'::bytea)
+            from unnest(a_dim, a_x, a_y, a_z, a_old, a_new) as b(dimension, x, y, z, old_id, new_id)
+            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= r and abs(c.view_cz - (b.z >> 4)) <= r
+            where b.new_id = 0 and b.old_id <> 0
+              and not exists (select 1 from mc.block_actor a where a.dimension = b.dimension and a.x = b.x and a.y = b.y and a.z = b.z and a.conn_id = c.conn_id)
+            order by b.x, b.y, b.z;
+        end if;
+        if cardinality(u_x) > 0 then
+            insert into mc.play_out (conn_id, data)
+            select c.conn_id, proto.frame(i_bu, proto.position(b.x, b.y, b.z) || proto.varint(b.new_id))
+            from unnest(u_dim, u_x, u_y, u_z, u_id) as b(dimension, x, y, z, new_id)
+            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= r and abs(c.view_cz - (b.z >> 4)) <= r
+            order by b.x, b.y, b.z;
+        end if;
+        if mn > 0 then
+            insert into mc.play_out (conn_id, data)
+            select c.conn_id, k.pkt
+            from unnest(m_cx, m_cz, m_pkt) with ordinality as k(cx, cz, pkt, ord)
+            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= r and abs(c.view_cz - k.cz) <= r
+            order by k.ord, c.conn_id;
+        end if;
+        if kx is not null then
+            insert into mc.play_out (conn_id, data)
+            select c.conn_id, mc.chunk_packet(k.dimension, k.cx, k.cz)
+            from unnest(kd, kx, kz) with ordinality as k(dimension, cx, cz, ord) join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= r and abs(c.view_cz - k.cz) <= r
+            order by k.ord, c.conn_id;
+        end if;
     end if;
 
     -- the acknowledgement: only the latest sequence of each connection this tick, after its block updates
