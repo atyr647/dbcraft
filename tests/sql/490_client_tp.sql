@@ -65,11 +65,11 @@ select t.eq('/tp B 1 2 3 still works', (select (x, y, z) from mc.player where na
 select t.reset();
 select t.send(1, 'chat_command', proto.string('tp Nobody'));
 select mc.apply_chat(6);
-select t.eq('/tp Nobody: "No player was found"', t.out(1), mc.pkt_system_chat(proto.nbt_root(mc.tc_failure(mc.tc_translate('argument.entity.notfound.player')))));
+select t.eq('/tp Nobody: "No entity was found" (what the real server says: /tp takes entities; sql/812 compares it byte for byte)', t.out(1), mc.pkt_system_chat(proto.nbt_root(mc.tc_failure(mc.tc_translate('argument.entity.notfound.entity')))));
 select t.reset();
 select t.send(1, 'chat_command', proto.string('tp A Nobody'));
 select mc.apply_chat(7);
-select t.eq('/tp A Nobody: the same', t.out(1), mc.pkt_system_chat(proto.nbt_root(mc.tc_failure(mc.tc_translate('argument.entity.notfound.player')))));
+select t.eq('/tp A Nobody: the same', t.out(1), mc.pkt_system_chat(proto.nbt_root(mc.tc_failure(mc.tc_translate('argument.entity.notfound.entity')))));
 select t.reset();
 select t.send(2, 'chat_command', proto.string('tp A'));
 select mc.apply_chat(8);

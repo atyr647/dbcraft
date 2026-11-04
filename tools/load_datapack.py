@@ -20,7 +20,7 @@ psql = os.environ.get("DBCRAFT_PSQL", "psql").split()
 def find_capture():
     if len(sys.argv) > 1: return sys.argv[1]
     if os.environ.get("DBCRAFT_DATAPACK_CAPTURE"): return os.environ["DBCRAFT_DATAPACK_CAPTURE"]
-    c = [p for d in __import__("_capture").capture_dirs() for p in glob.glob(os.path.join(d, "play*.jsonl"))]
+    c = [p for d in __import__("_capture").capture_dirs() for p in glob.glob(os.path.join(d, "play*.jsonl")) if not os.path.basename(p).startswith("play_op")]
     if not c: sys.exit("no capture found: run tools/bootstrap.sh (it records one from the vanilla server) or tools/capture_vanilla.py")
     return max(c, key=os.path.getmtime)
 

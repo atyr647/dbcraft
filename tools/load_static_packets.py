@@ -25,7 +25,7 @@ def vi(b, o):
 
 if len(sys.argv) > 1: cap = sys.argv[1]
 else:
-    c = [p for d in __import__("_capture").capture_dirs() for p in glob.glob(os.path.join(d, "play*.jsonl"))]
+    c = [p for d in __import__("_capture").capture_dirs() for p in glob.glob(os.path.join(d, "play*.jsonl")) if not os.path.basename(p).startswith("play_op")]
     if not c: sys.exit("no capture found: run tools/bootstrap.sh (it records one from the vanilla server) or tools/capture_vanilla.py")
     cap = max(c, key=os.path.getmtime)
 rows = [json.loads(l) for l in open(cap)]
@@ -50,3 +50,8 @@ sql = "TRUNCATE net.static_packet; " + "".join(
 p = subprocess.run(psql + ["-X", "-q", "-v", "ON_ERROR_STOP=1"], input=sql.encode(), capture_output=True)
 if p.returncode: sys.exit(p.stderr.decode())
 print(f"loaded {len(found)} opaque packets ({sum(len(b) for b in found.values())} bytes) from {cap}")
+# the command graph (the `commands` packet is generated from rows, sql/810): loaded from the recording of an operator's join when there is one
+r = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "load_command_tree.py")], capture_output=True, text=True)
+sys.stdout.write(r.stdout)
+if r.returncode == 3: sys.stderr.write(r.stderr)          # no recording: the static level-0 packet stays in use for everybody (not an error)
+elif r.returncode: sys.exit(r.stderr)

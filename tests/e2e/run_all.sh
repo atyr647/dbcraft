@@ -50,6 +50,17 @@ else
   echo "skipped: no $E2E/vanilla_fill.json (tests/e2e/record_vanilla.sh records it; the vanilla server needs RCON)"
 fi
 
+if [ -f "$E2E/vanilla_cmd_Op4.jsonl" ]; then
+  step "commands: six players (levels 0 to 4), selectors, feedback, the command tree of every level (tests/e2e/record_commands.sh)"
+  reset_world
+  python3 tests/e2e/cmd_ops.py | tools/pg-dev.sh psql -q
+  tools/pg-dev.sh psql -qc "update mc.server_property set value = '$(python3 tests/e2e/cmd_seed.py "$E2E/vanilla_cmd")' where key = 'level-seed'"
+  python3 tests/e2e/cmd_probe.py --port $PORT --out "$E2E/ours_cmd" --wait 0.3 > /dev/null 2>&1
+  python3 tests/e2e/compare_commands.py "$E2E/vanilla_cmd" "$E2E/ours_cmd" || rc=1
+else
+  echo; echo "(commands: skipped, no $E2E/vanilla_cmd_Op4.jsonl: run tests/e2e/record_commands.sh once)"
+fi
+
 step "gateway status"
 tests/e2e/gateway.sh status
 tests/e2e/gateway.sh stop

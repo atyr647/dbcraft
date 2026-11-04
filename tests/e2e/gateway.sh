@@ -5,8 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export DBCRAFT_PGDATA=${DBCRAFT_PGDATA:-/tmp/dbcraft-pg-int} DBCRAFT_PGPORT=${DBCRAFT_PGPORT:-54399}
 PSQL="psql -X -q -At -h /tmp -p $DBCRAFT_PGPORT -U postgres dbcraft"
-LOG=/tmp/dbcraft-e2e/gateway.log
-mkdir -p /tmp/dbcraft-e2e
+E2EDIR=${DBCRAFT_E2E_DIR:-/tmp/dbcraft-e2e}; LOG=$E2EDIR/gateway.log
+mkdir -p "$E2EDIR"
 case "${1:-}" in
   start)
     PORT=${2:-25621}
