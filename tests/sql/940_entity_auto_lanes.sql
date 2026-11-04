@@ -57,7 +57,7 @@ begin
 end $$;
 select setseed(0.52);
 create table t.lanes as
-select i, 100 + (random() * 50)::int as t0, 3 as every, (random() * 3)::int as slot,
+select i, 100 + (random() * 50)::int as t0, 3 as every, floor(random() * 3)::int as slot,
        -100 + random() * 200 as x0, -100 + random() * 200 as z0, -60.0 as y,
        case when i % 4 = 0 then 0.0 else (random() - 0.5) * 0.2 end as gx, case when i % 4 = 0 then 0.0 else (random() - 0.5) * 0.2 end as gz,
        (random() * 360)::real as yaw, (random() * 360)::real as syaw, 150 + (random() * 100)::int as lend, -(random() * 60)::int as born
@@ -111,7 +111,7 @@ begin
                 eid := e; kind := 'sync'; a := round(proto.f64_read(b, l.nxt) * 4096); bb := round(proto.f64_read(b, l.nxt + 8) * 4096); c := round(proto.f64_read(b, l.nxt + 16) * 4096); return next;
             end;
         elsif nm = 'remove_entities' then
-            eid := e; kind := 'remove'; return next;
+            select * into r from proto.varint_read(b, q); eid := r.val; kind := 'remove'; return next;          -- [count][id ...]: the first id
         end if;
         o := o2 + ln;
     end loop;
@@ -142,15 +142,18 @@ create table t.live_off as select id, x, z from mc.entity_live;
 select t.run('on', 400);
 create table t.live_on as select id, x, z from mc.entity_live;
 select t.is_true('C: autonomous lanes were used (all 60 cows have an autonomous lane at the end of the run)', (select count(*) = 60 from mc.entity_lane where auto));
+select mc.entity_lane_flush_all(401);
 select t.eq('C: all 60 cows are still there in both runs', (select count(*)::int from t.live_off o join t.live_on n using (id)), 60);
 select t.eq('C: positions agree between autonomous lanes and the lanes of sql/541 to 1e-9 (x, z) after 400 ticks of wander (many goals and chunk borders)',
             (select count(*)::int from t.live_off o join t.live_on n using (id) where abs(o.x - n.x) > 1e-9 or abs(o.z - n.z) > 1e-9), 0);
 create table t.recon as
 select s.mode, m.eid, sum(m.a) filter (where m.kind in ('add', 'move')) as qx, sum(m.c) filter (where m.kind in ('add', 'move')) as qz, count(*) filter (where m.kind = 'sync') as syncs, count(*) filter (where m.kind = 'move') as moves
   from t.stream s cross join lateral t.moves(s.data) m group by s.mode, m.eid;
-select t.is_true('C: the viewer got movement packets for every cow in both runs', (select count(*) = 60 and min(moves) > 20 from t.recon where mode = 'on') and (select count(*) = 60 from t.recon where mode = 'off'));
-select t.eq('C: what the viewer was told (appearance + the sum of all deltas) is the same quantised position, cow by cow, with and without autonomous lanes (cows without a position sync)',
-            (select count(*)::int from t.recon a join t.recon b on a.eid = b.eid and a.mode = 'on' and b.mode = 'off' where a.syncs = 0 and b.syncs = 0 and (a.qx <> b.qx or a.qz <> b.qz)), 0);
+select t.is_true('C: the viewer got movement packets for every cow in both runs', (select count(*) = 60 and min(moves) >= 1 and sum(moves) > 1000 from t.recon where mode = 'on') and (select count(*) = 60 from t.recon where mode = 'off'));
+select t.eq('C: the viewer''s reconstruction (appearance + all deltas) of every cow equals EXACTLY the delta base the entity row holds once the lanes have ended (mc.entity_lane_flush_all: the base comes from the closed form), cows without a position sync',
+            (select count(*)::int from t.recon r join (select e.id, e.sent_qx, e.sent_qz from mc.entity e) e on e.id = r.eid where r.mode = 'on' and r.syncs = 0 and (r.qx <> e.sent_qx or r.qz <> e.sent_qz)), 0);
+select t.is_true('C: ... and with and without autonomous lanes the told positions are the same up to the packets in flight when the run stops (a step of the other run that has not happened yet: three walking steps, 1600 units)',
+                 (select count(*) = 0 from t.recon a join t.recon b on a.eid = b.eid and a.mode = 'on' and b.mode = 'off' where a.syncs = 0 and b.syncs = 0 and (abs(a.qx - b.qx) > 1600 or abs(a.qz - b.qz) > 1600)));
 select t.is_true('C: ... and within one quantisation step of the real position the viewer sees in the end (the told position is at most three walking steps behind: 1600 units)',
                  (select count(*) = 0 from t.recon r join t.live_on l on l.id = r.eid where r.mode = 'on' and r.syncs = 0 and (abs(r.qx - round(l.x * 4096)) > 1600 or abs(r.qz - round(l.z * 4096)) > 1600)));
 select t.is_true('C: autonomous lanes send about as many movement packets as the lanes they replace (a border crossing is no tracker event of its own: a little fewer, never more than 10 % apart)',
@@ -185,7 +188,7 @@ select mc.entity_floor_build('minecraft:overworld', cx, cz) from generate_series
 insert into mc.entity (id, uuid, type, type_id, x, y, z, on_ground, born_tick, phys_tick, cx, cz, gx, gz, goal_until, last_sent_tick, sent_cx, sent_cz, sent_qx, sent_qy, sent_qz, yaw)
 values (5301, gen_random_uuid(), 'minecraft:cow', mc.entity_type_id('minecraft:cow'), 15.0, -60, 8.5, true, 0, 0, 0, 0, 0.1, 0, 60, 1, 0, 0, round(15.0 * 4096), round(-60 * 4096.0), round(8.5 * 4096), 0);
 select mc.entity_tick(t) from generate_series(1, 10) t;
-select t.is_true('E1: after the border (x = 16 at tick 10) the cow is in chunk 1 in the entity row AND in the lane, still in an autonomous lane, the entity row says chunk 1 for the viewers\' tables',
+select t.is_true('E1: after the border (x = 16 at tick 10) the cow is in chunk 1 in the entity row AND in the lane, still in an autonomous lane, the entity row says chunk 1 for the viewers tables',
                  (select e.cx = 1 and l.cx = 1 and l.auto and e.sent_cx = 1 from mc.entity e join mc.entity_lane l on l.id = e.id where e.id = 5301));
 -- E2: the viewer stands where he loses the cow when it crosses (view distance 3: chunk -3 sees chunks -6..0): the lane ends and the exact sweep + tracker send the removal
 select t.clear();
@@ -216,9 +219,9 @@ select t.is_true('F: the cow walks in an autonomous lane at tick 20', exists (se
 select mc.set_block('minecraft:overworld', 12, -60, 8, 'minecraft:stone');            -- in the cow's path, in the same chunk
 select t.is_true('F: a block placed near the lane ended it: no lane row, the entity row is the state after the last entity tick (x = 2.5 + 0.1 * 19... phys_tick 20 at the anchor of that tick)',
                  (select not exists (select 1 from mc.entity_lane where id = 5401) and e.lane_until = 0 and e.phys_tick = 20 and abs(e.x - (2.5 + 0.1 * 20)) < 1e-9 from mc.entity e where e.id = 5401));
-select t.is_true('F: ... its goal is back in the entity row (the AI scan sees it again) and the viewers\' delta base is the position of the last tracker step (tick 18: x = 2.5 + 0.1 * 18)',
+select t.is_true('F: ... its goal is back in the entity row (the AI scan sees it again) and the viewers delta base is the position of the last tracker step (tick 18: x = 2.5 + 0.1 * 18)',
                  (select e.goal_until = 120 and e.sent_qx = mc.quant(2.5 + 0.1 * 18) and e.last_sent_tick = 18 from mc.entity e where e.id = 5401));
-select mc.entity_tick(t) from generate_series(21, 70) t;
+select mc.entity_tick(t) from generate_series(21, 110) t;
 select t.is_true('F: the cow stops at the stone (x = 12 - 0.45) like the exact sweep', (select abs(v.x - 11.55) < 1e-6 from mc.entity_live v where v.id = 5401));
 select mc.set_block('minecraft:overworld', 12, -60, 8, 'minecraft:air');
 

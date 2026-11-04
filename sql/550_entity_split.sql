@@ -208,7 +208,7 @@ begin
     -- the steps of an autonomous lane (sql/940) are a closed form of the tick: they assume that the tick before this one ran.  When it did not (the entity connection jumped, a new
     -- clock after a crash) every lane is re-anchored at the last tick that did run, with the viewers' real delta base stored
     select c.last_tick into prev from mc.entity_clock c;
-    if prev is distinct from t - 1 then perform mc.entity_auto_rebase(coalesce(prev, t - 1)); end if;
+    if prev is distinct from t - 1 then perform mc.entity_auto_rebase(coalesce(prev, t - 1), t - 1); end if;
     perform mc.entity_viewers_refresh(t);
     if lanes then fl := mc.entity_lane_flush(t); else perform mc.entity_lane_flush_all(t); end if;
     ai := mc.entity_ai_ids(t);

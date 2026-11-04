@@ -16,7 +16,7 @@ begin
     for t in p_first .. p_first + p_ticks - 1 loop
         perform set_config('dbcraft.entity_tick', t::text, false);
         truncate mc.play_out;
-        a := tickbench.sched(); select c.last_tick into prev from mc.entity_clock c; if prev is distinct from t - 1 then perform mc.entity_auto_rebase(coalesce(prev, t - 1)); end if;
+        a := tickbench.sched(); select c.last_tick into prev from mc.entity_clock c; if prev is distinct from t - 1 then perform mc.entity_auto_rebase(coalesce(prev, t - 1), t - 1); end if;
                                                                                     insert into _p values ('0 clock check', ((tickbench.sched())[1] - a[1]) / 1e6);
         a := tickbench.sched(); perform mc.entity_viewers_refresh(t);               insert into _p values ('1 viewers_refresh', ((tickbench.sched())[1] - a[1]) / 1e6);
         a := tickbench.sched(); fl := mc.entity_lane_flush(t);                      insert into _p values ('2 legacy lane flush', ((tickbench.sched())[1] - a[1]) / 1e6);

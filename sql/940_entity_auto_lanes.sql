@@ -99,11 +99,13 @@ begin
 end $$;
 
 -- ticks are not consecutive any more (the entity connection jumped ahead, mc.entity_loop): the steps that did not run must not be assumed to have run.  Every autonomous lane is
--- re-anchored at tick p_prev (the last tick that ran) with the viewers' real base stored: its next step is a "first step" again.
-create or replace function mc.entity_auto_rebase(p_prev bigint) returns int language plpgsql volatile as $$
+-- re-anchored at tick p_anchor (the tick before the one that is about to run: positions are closed forms, the skipped ticks are walked) with the viewers' real delta base stored (the
+-- steps up to p_prev, the last tick that did run): its next step is a "first step" again.
+drop function if exists mc.entity_auto_rebase(bigint);
+create or replace function mc.entity_auto_rebase(p_prev bigint, p_anchor bigint) returns int language plpgsql volatile as $$
 declare n int;
 begin
-    update mc.entity_lane l set t0 = greatest(p_prev, l.t0), x0 = l.x0 + l.gx * greatest(p_prev - l.t0, 0), z0 = l.z0 + l.gz * greatest(p_prev - l.t0, 0),
+    update mc.entity_lane l set t0 = greatest(p_anchor, l.t0), x0 = l.x0 + l.gx * greatest(p_anchor - l.t0, 0), z0 = l.z0 + l.gz * greatest(p_anchor - l.t0, 0),
            sqx = b.bx, sqy = b."by", sqz = b.bz, syaw = b.byaw, last_tick = b.blast
       from (select l0.id, l0.t0, l0.every, l0.slot, l0.x0, l0.z0, l0.y, l0.gx, l0.gz, l0.yaw, l0.goal_until, l0.born, l0.sqx, l0.sqy, l0.sqz, l0.syaw, l0.last_tick from mc.entity_lane l0 where l0.auto) o
       cross join lateral mc.entity_auto_base(o.t0, o.every, o.slot, o.x0, o.z0, o.y, o.gx, o.gz, o.yaw, o.goal_until, o.born, o.sqx, o.sqy, o.sqz, o.syaw, o.last_tick, p_prev) b
