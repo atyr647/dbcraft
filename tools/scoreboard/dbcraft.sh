@@ -61,6 +61,7 @@ SQL
     if [ "${SCORE_GATEWAY:-plpython}" = rust ]; then
       DBCRAFT_GW_DATABASE_URL="host=/tmp port=$DBCRAFT_PGPORT user=postgres dbname=dbcraft" DBCRAFT_GW_LISTEN="0.0.0.0:$PORT" \
         DBCRAFT_GW_MAX_CONNECTIONS_PER_IP=0 DBCRAFT_GW_NEW_CONNECTIONS_PER_IP_PER_SEC=0 DBCRAFT_GW_LOGIN_ATTEMPTS_PER_IP_PER_MIN=0 DBCRAFT_GW_TICK_FN="${SCORE_TICKFN:-mc.server_tick()}" \
+        DBCRAFT_GW_TICK_LOG="${SCORE_TICKLOG:-}" \
         DBCRAFT_GW_GENERATORS="$([ -n "${SCORE_PSQL_GENERATORS:-}" ] && echo 0 || echo "${SCORE_GENERATORS:-2}")" \
         nohup gateway/target/dbcraft-gateway > "$LOG" 2>&1 &
       echo $! > $OUTD/gateway.pid     # the Rust gateway is not a child of the postmaster: the runner adds its CPU to the cluster's (tools/scoreboard/run.py)

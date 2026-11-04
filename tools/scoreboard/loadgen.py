@@ -342,7 +342,7 @@ async def main():
         tasks.append(asyncio.ensure_future(open_client(900000 + args.first, 0.0, True)))
     movers = set(random.sample(range(args.n), int(round(args.n * args.moving)))) if args.moving > 0 else set()
 
-    ticking = {"on": False}
+    ticking = {"on": True}      # a client in play sends client_tick_end from its first tick on, like a real one (it used to wait for READY: under load that took longer than the servers' 30 s read timeout)
 
     async def ticker():
         nxt = time.perf_counter()
