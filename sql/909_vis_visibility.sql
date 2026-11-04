@@ -36,7 +36,7 @@ begin
       select p.entity_id as eid, p.conn_id as conn, p.x, p.z, p.chunk_x as cx, p.chunk_z as cz, (p.gamemode = 3) as spec,
              least(greatest(2, least(coalesce(p.view_distance_req, 2), srv)) * 16.0, trk) as rng, greatest(2, least(coalesce(p.view_distance_req, 2), srv)) as vd,
              (p.entity_id = any (d)) as dirty,
-             coalesce((c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z), false) as stale           -- the client has not been sent the chunks of its new position yet (net.stream_chunks runs after this)
+             p.tp_ground_tick is not null and coalesce((c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z), false) as stale     -- a teleported client has not been sent the chunks of its new position yet (net.stream_chunks runs after this); a walking one is paired at once (recorded: range)
         from mc.player p left join net.conn c on c.conn_id = p.conn_id where p.conn_id is not null),
     w as (
       select a.eid as v, b.eid as t, a.conn as c, a.stale
@@ -48,7 +48,7 @@ begin
            coalesce(array_agg(w.v) filter (where not w.stale), '{}'), coalesce(array_agg(w.t) filter (where not w.stale), '{}'), coalesce(array_agg(w.c) filter (where not w.stale), '{}')
       into wv, wt, wc, av, at_, ac from w;
 
-    -- a viewer whose client is still waiting for the chunks of its new position is shown nobody yet: vanilla sends the chunks, then the entities (ChunkMap.tick: chunk tracking first)
+    -- a viewer that was teleported and whose client is still waiting for the chunks of its new position is shown nobody yet: after /tp vanilla sends the chunks, then the entities (recorded: walk)
     with w as (select * from unnest(av, at_, ac) as w(viewer_eid, target_eid, viewer_conn)),
     ins as (
       insert into mc.visible (viewer_eid, target_eid, viewer_conn)
@@ -75,6 +75,6 @@ begin
     select (select count(*) from del) into removed;
   end if;
   update mc.player p set vis_dirty = false, vis_ocx = null, vis_ocz = null, vis_x = x, vis_z = z
-   where vis_dirty and not exists (select 1 from net.conn c where c.conn_id = p.conn_id and (c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z));      -- (a stale viewer is looked at again next tick)
+   where vis_dirty and not (p.tp_ground_tick is not null and exists (select 1 from net.conn c where c.conn_id = p.conn_id and (c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z)));      -- (a stale viewer is looked at again next tick)
   return next;
 end $$;
