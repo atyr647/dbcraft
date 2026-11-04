@@ -20,7 +20,7 @@ import rcon as rconmod
 ap = argparse.ArgumentParser()
 ap.add_argument("--dir", default="/dev/shm/mob2/van"); ap.add_argument("--port", type=int, default=25911); ap.add_argument("--rcon", type=int, default=25912)
 ap.add_argument("--jar", default=os.path.expanduser("~/.cache/dbcraft/server-26.3.jar")); ap.add_argument("--out", default="vanilla_mobs.jsonl")
-ap.add_argument("--reps", type=int, default=1); ap.add_argument("--scenarios", default="500v,2000v,5000v,2000n,5000n,5000i")
+ap.add_argument("--reps", type=int, default=1); ap.add_argument("--rep-offset", type=int, default=0); ap.add_argument("--scenarios", default="500v,2000v,5000v,2000n,5000n,5000i")
 ap.add_argument("--settle", type=float, default=45.0); ap.add_argument("--window", type=float, default=40.0); ap.add_argument("--tag", default="")
 ap.add_argument("--after", default="", help="shell command run right after each scenario window (strict V-D alternation); {code} {rep} are substituted; run with the machine as the server left it")
 ap.add_argument("--viewdist", type=int, default=5); ap.add_argument("--xmx", default="2G")
@@ -123,7 +123,7 @@ def counts(path):
 
 def main():
     scen = a.scenarios.split(",")
-    for rep in range(1, a.reps + 1):
+    for rep in range(a.rep_offset + 1, a.rep_offset + a.reps + 1):
         srv = start_server(); pid = srv.pid
         mark = os.path.join(a.dir, "mark.json")
         probe = subprocess.Popen([sys.executable, "-I", os.path.join(HERE, "probe_client.py"), "--port", str(a.port), "--name", "Stay", "--seconds", "100000", "--mark", mark],

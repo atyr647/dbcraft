@@ -61,10 +61,10 @@ from (
       from generate_series(1, :items)
     union all
     select nextval('mc.entity_id_seq')::int, 'minecraft:cow', q.x, -60.0, q.z, -floor(random() * 60)::int, false, 1 + (random() * 60)::int, (random() * 360)::real
-      from (select case when :'where' = 'ring' then r.x else (-a.area + random() * 2 * a.area) end as x, case when :'where' = 'ring' then r.z else (-a.area + random() * 2 * a.area) end as z
-              from (select case when :mobs >= 5000 then 72 else 40 end as area) a, generate_series(1, :mobs) g
-              cross join lateral (select case when random() < 0.5 then (case when random() < 0.5 then -1 else 1 end) * (100 + random() * 40) else -140 + random() * 280 end as x,
-                                         case when random() < 0.5 then -140 + random() * 280 else (case when random() < 0.5 then -1 else 1 end) * (100 + random() * 40) end as z) r) q
+      from (select case when :'where' = 'ring' then (case when r.u1 < 0.5 then (case when r.u2 < 0.5 then -1 else 1 end) * (100 + r.u3 * 40) else -140 + r.u3 * 280 end) else (-r.area + r.u3 * 2 * r.area) end as x,
+                   case when :'where' = 'ring' then (case when r.u1 < 0.5 then -140 + r.u4 * 280 else (case when r.u2 < 0.5 then -1 else 1 end) * (100 + r.u4 * 40) end) else (-r.area + r.u4 * 2 * r.area) end as z
+              -- one set of random numbers per mob: random() in a sub-select that does not depend on the row is evaluated ONCE (the first version of the ring put all 2,000 mobs into one chunk)
+              from (select case when :mobs >= 5000 then 72 else 40 end as area, random() as u1, random() as u2, random() as u3, random() as u4 from generate_series(1, :mobs) g) r) q
 ) e;
 vacuum analyze mc.entity; vacuum analyze mc.entity_lane; analyze mc.player;
 create temp table _t (tick int, cpu float8, wall float8, ai float8, phys float8, trk float8, pick float8, awake int, rows_out int, bytes_out bigint, wal bigint);

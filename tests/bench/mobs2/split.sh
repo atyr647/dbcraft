@@ -14,10 +14,13 @@ psql -X -q -At -v ON_ERROR_STOP=1 -v mobs=$mobs -v items=$items -v where=$where 
 psql -X -q -At -v ON_ERROR_STOP=1 -c "update mc.server_property set value = 'split' where key = 'dbcraft.entity-mode'" \
      -c "update mc.game_state set game_time = (select last_tick from mc.entity_clock)" -c "truncate mc.entity_loop_log, mc.play_out" > /dev/null
 psql -X -q -At -c "create or replace procedure public.mob2_clock(p_n int) language plpgsql as \$\$ begin for i in 1..p_n loop update mc.game_state set game_time = game_time + 1; commit; perform pg_sleep(0.05); end loop; end \$\$" > /dev/null
-PGAPPNAME=entity_b timeout 200 psql -X -q -At -c "call mc.entity_loop($ticks)" > /dev/null 2>&1 &
+PGAPPNAME=entity_b psql -X -q -At -c "call mc.entity_loop($ticks)" > /dev/null 2>&1 &
 BPID=$!
 sleep 1
 psql -X -q -At -c "call public.mob2_clock($((ticks + 5)))" > /dev/null
+sleep 2
+# B stops after TICKS ticks it RAN; when it skipped ticks (it jumps ahead when it lags) it would wait for ever for a clock that has stopped: end it, never leave it behind (it would also hold the vacuum horizon back)
+psql -X -q -At -c "select pg_terminate_backend(pid) from pg_stat_activity where application_name = 'entity_b'" > /dev/null
 wait $BPID || true
 psql -X -q -At -c "update mc.server_property set value = 'off' where key = 'dbcraft.entity-mode'" > /dev/null
 res=$(psql -X -q -At -F ' ' -c "select 'B: ticks run ' || count(*) || ' of $ticks | ms wall avg ' || round(avg(ms)::numeric, 2) || ' p50 ' || round((percentile_cont(.5) within group (order by ms))::numeric, 2) || ' p99 ' || round((percentile_cont(.99) within group (order by ms))::numeric, 2) || ' max ' || round(max(ms)::numeric, 1) from mc.entity_loop_log where tick > (select min(tick) + 10 from mc.entity_loop_log)" \

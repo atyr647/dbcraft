@@ -29,12 +29,12 @@ def rng(xs, f="%.1f"):
 
 order = ["500v", "2000v", "5000v", "2000n", "5000n", "5000i"]
 print("### vanilla 26.3 (real server), per scenario")
-print("| scenario | reps | tick mean ms | tick p99 ms | server-thread CPU ms/tick | JVM cores | viewer KB/s | load |")
+print("| scenario | reps | tick mean ms | tick p99 ms | server-thread CPU ms per tick (cores x max(mean, 50 ms)) | JVM cores | viewer KB/s | load |")
 print("|---|---|---|---|---|---|---|---|")
 for s in order:
     rs = van.get(s, [])
     if not rs: continue
-    cpu = [r["server_thread_cores"] * 50 for r in rs]
+    cpu = [r["server_thread_cores"] * max(r["mean_ms"], 50.0) for r in rs]        # CPU per tick = cores x time per tick (a tick that takes longer than 50 ms is the whole interval)
     print(f"| {s} | {len(rs)} | {rng([r['mean_ms'] for r in rs])} | {rng([r['p99_ms'] for r in rs], '%.0f')} | {rng(cpu)} | {rng([r['jvm_cores'] for r in rs], '%.2f')} | "
           f"{rng([r.get('viewer_bytes_per_s', 0) / 1000 for r in rs], '%.0f')} | {rng([float(r['load']) for r in rs], '%.0f')} |")
 print()
