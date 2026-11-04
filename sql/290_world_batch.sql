@@ -102,6 +102,8 @@ begin
             cur_cx := grp.cx; cur_cz := grp.cz; cur_secs := 0; hm_ch := false;
             select c.hm_world_surface, c.hm_motion_blocking, c.hm_motion_blocking_no_leaves, c.hm_world_surface is not null and not c.hm_dirty into hws, hmb, hmn, hm_ok
               from mc.chunk c where c.dimension = p_dim and c.cx = cur_cx and c.cz = cur_cz;
+            -- sql/950: the heightmaps of a chunk row are stored compressed; a compressed value stays compressed in a variable and every subscript decompresses it again: once here
+            hws := case when hws is null then null else array_cat(hws, '{}'::smallint[]) end; hmb := case when hmb is null then null else array_cat(hmb, '{}'::smallint[]) end; hmn := case when hmn is null then null else array_cat(hmn, '{}'::smallint[]) end;
         end if;
 
         res := mc.edit_section_core(p_dim, grp.cx, grp.sy, grp.cz, grp.idxs, grp.names, dn, cn, d.default_biome);

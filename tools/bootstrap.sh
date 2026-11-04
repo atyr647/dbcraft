@@ -69,7 +69,7 @@ fi
 # ------------------------------------------------------------------------------------------------------------------------------ 3. generator reports
 say "3/6 data generator reports (the official generator, run from the jar)"
 want=""; [ -f "$DBCRAFT_SERVER_JAR" ] && want=$(sha1sum "$DBCRAFT_SERVER_JAR" | cut -d' ' -f1)
-have_reports() { [ -f "$DBCRAFT_REPORTS/blocks.json" ] && [ -f "$DBCRAFT_REPORTS/packets.json" ] && [ -f "$DBCRAFT_REPORTS/registries.json" ] && [ "$(cat "$DBCRAFT_REPORTS/.jar-sha1" 2>/dev/null)" = "$want" ]; }
+have_reports() { [ -f "$DBCRAFT_REPORTS/blocks.json" ] && [ -f "$DBCRAFT_REPORTS/packets.json" ] && [ -f "$DBCRAFT_REPORTS/registries.json" ] && [ -d "$DBCRAFT_REPORTS/item_components" ] && [ "$(cat "$DBCRAFT_REPORTS/.jar-sha1" 2>/dev/null)" = "$want" ]; }
 if have_reports; then ok "reports in $DBCRAFT_REPORTS"; elif [ "$CHECK" = 1 ]; then todo "reports ($DBCRAFT_REPORTS)"; else
   [ -n "$JAVA" ] || { echo "Java 25 is needed to run the generator"; exit 1; }
   work="$DBCRAFT_HOME/work"; rm -rf "$work"; mkdir -p "$work"
@@ -78,9 +78,25 @@ if have_reports; then ok "reports in $DBCRAFT_REPORTS"; elif [ "$CHECK" = 1 ]; t
     || { echo "generator failed, see $DBCRAFT_LOG/generator.log"; exit 1; }
   mkdir -p "$DBCRAFT_REPORTS"
   for f in blocks registries packets commands datapack; do cp "$work/gen/reports/$f.json" "$DBCRAFT_REPORTS/$f.json"; done
+  rm -rf "$DBCRAFT_REPORTS/item_components"; cp -r "$work/gen/reports/minecraft/components/item" "$DBCRAFT_REPORTS/item_components"    # default components of every item (stack sizes, fuel, equipment slots): tools/load_recipes.py
   echo "$want" > "$DBCRAFT_REPORTS/.jar-sha1"; rm -rf "$work"
   ok "reports written to $DBCRAFT_REPORTS"
 fi
+# the per-item component reports came later than the other reports: a cache made before them gets them from a second generator run
+have_items() { [ -s "$DBCRAFT_REPORTS/item_components/iron_sword.json" ]; }
+if have_items; then ok "item components in $DBCRAFT_REPORTS/item_components"; elif [ "$CHECK" = 1 ]; then todo "item components ($DBCRAFT_REPORTS/item_components)"; else
+  [ -n "$JAVA" ] || { echo "Java 25 is needed to run the generator"; exit 1; }
+  work="$DBCRAFT_HOME/work"; rm -rf "$work"; mkdir -p "$work"
+  ( cd "$work" && "$JAVA" -DbundlerMainClass=net.minecraft.data.Main -jar "$DBCRAFT_SERVER_JAR" --reports --output gen ) >"$DBCRAFT_LOG/generator.log" 2>&1 \
+    || { echo "generator failed, see $DBCRAFT_LOG/generator.log"; exit 1; }
+  rm -rf "$DBCRAFT_REPORTS/item_components"; cp -r "$work/gen/reports/minecraft/components/item" "$DBCRAFT_REPORTS/item_components"; rm -rf "$work"
+  ok "item components written to $DBCRAFT_REPORTS/item_components"
+fi
+
+# the world-dynamics reference data (collision shapes, fluid states, class chains of every block state), read from the jar by tools/java/DynDump.java
+if [ "$CHECK" = 1 ]; then
+  if [ -s "$DBCRAFT_REPORTS/dyn_states.tsv" ]; then ok "dyn_states.tsv (world dynamics)"; else todo "dyn_states.tsv (tools/gen_dynamics.sh)"; fi
+elif have_reports; then tools/gen_dynamics.sh >"$DBCRAFT_LOG/gen-dynamics.log" 2>&1 && ok "world-dynamics data in $DBCRAFT_REPORTS/dyn_states.tsv" || echo "    note     tools/gen_dynamics.sh failed (see $DBCRAFT_LOG/gen-dynamics.log): world dynamics stay disabled"; fi
 
 # ------------------------------------------------------------------------------------------------------------------------------ 4. captures
 say "4/6 recorded capture of a real vanilla server (configuration data the database replays)"

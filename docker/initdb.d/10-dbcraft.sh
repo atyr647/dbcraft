@@ -27,6 +27,7 @@ if [ -n "$CAP" ]; then
   python3 tools/load_datapack.py "$CAP"
   python3 tools/load_static_packets.py "$CAP"
   python3 tools/load_world_ref.py
+  python3 tools/load_recipes.py
 else
   echo "dbcraft: WARNING: no capture play_nocomp.jsonl under $DBCRAFT_CAPTURES: registries, tags and the world reference data are not loaded, logins stop in configuration"
 fi

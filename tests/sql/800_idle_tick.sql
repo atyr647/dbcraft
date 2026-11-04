@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- sql/800: an idle server does (almost) nothing.  What is proved here:
 --   1. mc.tick_quiet() is true on an empty server and flips to false for every single thing the full tick would have to look at;
 --   2. the quiet tick leaves the same state as the full tick (`set dbcraft.quiet_tick = 'off'` runs every phase as before): clock, queues, relation housekeeping, log rows;

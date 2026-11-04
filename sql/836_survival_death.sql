@@ -42,10 +42,12 @@ begin
          sent_health = 20, sent_food = 20, sent_sat_zero = false, sent_eh = 20, sent_using = false, sent_score = case when keep then xp_score else 0 end,
          sent_xp_total = case when keep then xp_total else 0 end
    where uuid = p_uuid returning * into p;
+  r := mc.conn_view_r(p.conn_id, r);                                            -- the player's own view distance (sql/909)
   perform mc.generate_flat('minecraft:overworld', s.x, s.z) from net.chunk_square(p.chunk_x, p.chunk_z, r) s
    where not exists (select 1 from mc.chunk c where c.dimension = 'minecraft:overworld' and c.cx = s.x and c.cz = s.z);
   select string_agg(mc.chunk_packet('minecraft:overworld', q.x, q.z), '\x'::bytea order by q.o), count(*) into chunks, nch from (select x, z, row_number() over () as o from net.chunk_square(p.chunk_x, p.chunk_z, r)) q;
-  update net.conn set view_cx = p.chunk_x, view_cz = p.chunk_z where conn_id = p.conn_id;
+  update net.conn set view_cx = p.chunk_x, view_cz = p.chunk_z, view_r = r where conn_id = p.conn_id;
+  perform mc.vis_respawn(p_uuid, p_cur);                                        -- the new entity's tracker state (sql/906)
   insert into mc.play_out (conn_id, data) values (p.conn_id,
        mc.pkt_player_abilities(mc.gamemode_abilities(p.gamemode))
     || mc.pkt_respawn(p.gamemode, coalesce(w.seed, 0), p.death_x::int, p.death_y::int, p.death_z::int)

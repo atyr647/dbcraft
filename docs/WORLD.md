@@ -83,6 +83,10 @@ How dbcraft produces the same bytes:
   in `/fill` order) go through `mc.shortset_order`, their states are read from the section as it is *now* (`mc.section_state_ids`), exactly as vanilla reads `LevelChunkSection` (a section whose only event this tick is one fill takes the fill's block instead: the same result without the read).  Only
   sections some connection can see are encoded; one packet per section is fanned out to every connection in range.  A whole-section fill uses a constant order stored in
   `mc.sbu_const`.  Events of the old `kind = 'section'` (nothing writes them any more) still re-send the chunk.
+  **Since [PERF-WORLD2.md](PERF-WORLD2.md):** a section whose only event is ONE fill is not simulated by the tick at all: its packet depends on the section, the bit map and the block alone, so
+  `mc.fill` builds it (when a connection can see the section; stored in `mc.block_event.pkt`) from a cached per-bit-map template (`mc.sbu_tpl`, `mc.fill_packet`, sql/960) and the tick copies the
+  bytes; with nobody in range at the time of the fill the broadcast builds it from the same template.  Byte-identical to the original encoder (tests/sql/960) and to vanilla (compare_fill.py, re-run).
+  A fill's events are queued by one statement per fill.
 * Changed from before: a position that changes and changes back is now announced (vanilla's set keeps it); the net-change logic remains for the break effect (`level_event` 2001
   for the connections other than the actor), which vanilla sends from the player's `destroyBlock`, not from `broadcastChanges`, and which dbcraft still sends for any removal by
   `mc.set_block` / `mc.set_blocks` (a deviation from `/setblock` and `/fill`, which send none).  A **fill never sends it** (vanilla's `/fill` does not).
@@ -102,7 +106,7 @@ fills, a fill to air, a fill over 9 chunks, a batch of 74 `/setblock` in one tic
 
 **Not verified against vanilla:** `light_update` (vanilla sends it after block changes; there is no light engine here), `block_entity_data` after a block update of a block with a
 block entity (dbcraft sends none), the order of sections of *different* chunks in one tick (vanilla's is a hash-map order; dbcraft sends chunk by chunk), `/fill` modes other than the
-default (`hollow`, `outline`, `keep`, `destroy`, `replace <filter>`: they have no SQL counterpart yet), fills across dimensions, more than one connection per chunk
+default (`mc.fill_mode`, sql/961: `replace <filter>`, `keep`, `outline`, `hollow`, checked against a position-by-position reference but not recorded from vanilla; `destroy` is refused), fills across dimensions, more than one connection per chunk
 with different view distances.  Entities in deep sleep wake only near a fill's section corner (the trigger on `mc.block_event` looks at the event's x, y, z), the same limit the old
 whole-section event had.
 
@@ -151,7 +155,9 @@ Cost, `tests/bench/world/bench_terrain.sql` (CPU time of the backend per chunk, 
 
 That is 38 times the flat generator and, against the 1.8 ms the scoreboard measured for vanilla generating a FLAT chunk (`docs/SCOREBOARD.md`, 10,000 chunks in 17.8 s), 2.9 times.  I did **not**
 measure vanilla generating real terrain here; its pipeline (noise, carvers, surface, features, lighting) costs far more per chunk than its flat one, and I would not quote a ratio without
-running it.  Within the rows the 25 lattice samples are about 0.5 ms (6 noise values each), the bedrock hash 0.5 ms, the surface sections 0.7 ms.
+running it.  **Since [PERF-WORLD2.md](PERF-WORLD2.md):** vanilla generating real terrain was measured (6,400 chunks, structures on, load average 18 to 22): median 61.6 ms of CPU per chunk (52 to 104 per rectangle of 256), against 8.1 ms
+for the whole Postgres cluster generating `dbcraft:noise` (6,400 chunks, load 12; not the same work: dbcraft has no caves, ores, trees or structures).  The same document records that these figures above, taken on fresh databases, hid a planner bug in `mc.compute_light` that made light
+take 0.6 to 1.8 s per terrain chunk on a populated database (fixed in sql/220).  Within the rows the 25 lattice samples are about 0.5 ms (6 noise values each), the bedrock hash 0.5 ms, the surface sections 0.7 ms.
 
 For the async queue (`dbcraft.chunk-generation = async`, `call mc.run_generator()`, as many loops as cores): about 190 (1 / 5.15 ms of CPU, computed, not measured with several loops) chunks per second per loop.  **Run noise worlds in async mode**:
 in the default inline mode a join at view distance 10 generates its 441 chunks inside the join, about 2.3 (441 x 5.15 ms, computed from the per-chunk cost, not a measured join) s for terrain against 70 ms for flat.
@@ -197,8 +203,14 @@ about 100,000 blocks (the hash arithmetic is bounded, the tests stop at 4,000 bl
 | `mc.block_event` | block changes for the tick to broadcast (the only unlogged table; transient): one row per changed block (`kind = 'block'`) or one per section a fill changed (`kind = 'cells'`, a 512-byte bit map of the positions) |
 | `mc.flat_layer` | the flat generator's layers per dimension (default: bedrock, 2 dirt, grass_block) |
 
-World data is **not** unlogged.  `mc.chunk_section` uses `fillfactor 70`, `toast_tuple_target 8160` and `STORAGE MAIN` so sections stay inline (byte loops over a detoasted
-value are quadratic, see `docs/COMPRESSION.md`).  A section with no palette growth is 0.2 to 3 KB; the largest seen was 7.2 KB.
+World data is **not** unlogged.  Since `sql/950` the world tables are on the **compact storage profile** (docs/PERF-DISK.md): every variable-length column of `mc.chunk_section` is
+`STORAGE MAIN` (compressed inside the row, never moved to the TOAST table: byte loops over a detoasted value are quadratic, see `docs/COMPRESSION.md`) and lz4-compressed when
+written, `toast_tuple_target 512`, fillfactor 90; `mc.chunk`'s heightmaps are `MAIN` with `toast_tuple_target 128` (a row under 2,032 bytes is never compressed, so a flat chunk
+inherits the compressed arrays of its template), `mc.chunk_light` is `MAIN`, `mc.chunk_cache` has fillfactor 100.  The stored row of a flat section is 270 bytes (2,285 before), a
+flat chunk costs 1,692 bytes on disk with its light rows, cache row and indexes.  `select mc.set_world_storage('legacy')` puts the original settings back
+(fillfactor 70, nothing compressed); `tools/compact_world.sh` rewrites an existing database (pglz, then `VACUUM FULL`).  **A function that loops over a section's `data` / `palette`
+or a chunk's heightmaps held in a variable must decompress it once first** (`v := v || ''::bytea`, `array_cat(v, '{}')`): a compressed value stays compressed in a PL/pgSQL
+variable and every use decompresses it again (PERF-DISK.md section 6).  A section with no palette growth is 0.2 to 3 KB uncompressed; the largest seen was 7.2 KB.
 
 ## API
 
@@ -207,6 +219,7 @@ mc.get_block(dim, x, y, z)                   -- state name; NULL when the chunk 
 mc.set_block(dim, x, y, z, block)            -- true when it changed
 mc.set_blocks(dim, xs[], ys[], zs[], blocks[])  -- batched: one read + write per touched section; returns blocks changed
 mc.fill(dim, x1, y1, z1, x2, y2, z2, block)  -- per section: a whole section becomes single-value, a partial box is written word by word (no unpacking); returns blocks covered
+mc.fill_mode(dim, x1, y1, z1, x2, y2, z2, block, mode, filter)  -- mode replace (with an optional filter: block, block[props], #tag), keep, outline, hollow; returns blocks changed (PERF-WORLD2.md)
 mc.compact_section(dim, cx, sy, cz)          -- minimal palette again; an all-air section is deleted
 mc.generate_flat(dim, cx, cz [, replace]) / mc.generate_flat_area(dim, cx1, cz1, cx2, cz2)
 mc.chunk_packet(dim, cx, cz)                 -- framed bytes, cached; recomputes derived data first if the chunk is dirty
@@ -251,7 +264,7 @@ Measured on the 4-core dev container with other benchmark processes running, so 
 | `chunk_packet_body`, real terrain chunk (24 sections, about 11 palette) | 16 to 20 ms |
 | `compute_heightmaps` in full, flat / real terrain | 4 to 5 ms / 44 to 49 ms (only after a whole-section fill or on import) |
 | `compute_light`, flat / real terrain | about 1 ms / 1.7 to 2.3 ms |
-| storage: flat chunk / real terrain chunk (all section rows) | 2.4 KB / 40.5 KB on average (palette sections average 3.4 KB, single-value 173 B) |
+| storage: flat chunk / real terrain chunk (all section rows) | **uncompressed, before `sql/950`:** 2.4 KB / 40.5 KB on average (palette sections average 3.4 KB, single-value 173 B).  **Now, whole chunk on disk** (all four tables, indexes included; re-measured, PERF-DISK.md): flat 1,692 B (was 9,713); imported vanilla terrain 17.9 KB after `tools/compact_world.sh`, 23.9 KB as imported (was 59 KB), 32.7 KB with the packet cache; `dbcraft:noise` 7.0 KB compacted (was 24.4 KB) |
 
 ### Large fills (sql/210 `mc.fill_section`, measured for this change)
 
@@ -270,6 +283,7 @@ ranges shown; the 100,000-block scenario is the scoreboard's `fill -25 -60 -25 2
 | 100 blocks in a section (box path) | 1.8 ms | 1.2 ms | 1.5x |
 | 40 blocks in a section (the per-block path, unchanged apart from sorting its positions) | 1.4 to 1.5 ms | 1.6 to 1.7 ms | **0.9x (slower)** |
 | one whole section (16x16x16), the section was single-valued | 0.31 to 0.33 ms | 0.42 to 0.46 ms | **0.7x (slower)**: a section is read before it is replaced (to know which positions change) and the event carries a bit map |
+| ...the same after [PERF-WORLD2.md](PERF-WORLD2.md) (inline one-statement update, events queued once per fill) | | | **1.00x** of the original (5.62 against 5.57 ms of CPU at load average 22, 3.61 against 3.48 at 15; the absolute times of that session are not comparable with this table's) |
 | 64 whole sections | 13 to 17 ms | 13 to 16 ms | 1.0x to 1.1x |
 
 The scoreboard's own statements (`tools/scoreboard/fill_dbcraft.py`: 16 fills of 1,000 and 6 of 100,000 blocks in one psql session, `\timing`, five repetitions on the shared
@@ -296,8 +310,9 @@ Where the 100,000 blocks went and what became of it (the 535 ms of the scoreboar
   with **no connection in range** the same fill's broadcast takes 2 ms (sections nobody sees are not encoded).  A first version took 495 ms: `proto.varint` costs 14 µs for the 4-byte
   values of `state << 12 | position` (57 ms per whole section), replaced by `mc.varint_u28` (1 µs, equal to `proto.varint` over the whole range, tests/sql/851).  So **with a player
   watching, a 100,000-block fill stalls one tick for about a quarter of a second** (five ticks); the scoreboard measured vanilla's `fill` of the same blocks at 201 ms
-  (an RCON round trip, no player online, so no broadcast in that number either).  The scoreboard's fill scenario runs without players on both servers.  Not done: caching the order per bit map (identical box shapes repeat across the
-  interior sections of a big fill and across repeated fills) and encoding runs of equal states in bulk.
+  (an RCON round trip, no player online, so no broadcast in that number either).  The scoreboard's fill scenario runs without players on both servers.  **Superseded by [PERF-WORLD2.md](PERF-WORLD2.md):**
+  vanilla measured with a viewer (main thread 239 to 286 ms of CPU for command and broadcast), the per-bit-map template cache and the packet built by the fill: the tick spends 3 to 9 ms instead of 240 to 320 ms
+  (the cost moved into the filling statement, 7 to 13% more for a fill to stone).  Not done: encoding runs of equal states in bulk.
 * what is left per section (about 0.7 ms): reading and rewriting the 2 KB row, the words array (256 `proto.i64_read`), the row loop, the counting.  The rows of a section are 4 KB
   of WAL each (full-page images aside).  I did not specialise the 4-bit case further.
 
@@ -328,9 +343,17 @@ Use these instead for anything but a small world:
 I looked for a way to give the view real coordinate pushdown and found none without a C planner support function or a physical per-block table (billions of rows).  Two
 performance bugs in the view itself were fixed on the way (the palette air flags were re-evaluated per block); the remaining cost is the unpack.
 
+## World dynamics (fluids, gravity, random ticks)
+
+Nothing in this document's storage layer ticks by itself; [WORLD-DYNAMICS.md](WORLD-DYNAMICS.md) describes the layer on top: `sql/880`-`887` (scheduled-tick queue `mc.block_tick`, the engine that runs fluid, block
+and random ticks against a private copy of the sections, the neighbour-update cascade of `Level.setBlock`).  It writes through `mc.set_blocks`, so every change reaches the clients through
+`mc.broadcast_block_events` above, and its packets were compared with the real server.  Two consequences for the block change packets: the engine's writes are re-recorded as one-position `cells` events
+(vanilla's `setBlock` sends no level event 2001; only a block destroyed by lost support does, and that stays a `block` event), and falling blocks that land are announced by the NEXT tick's
+broadcast (vanilla's entity phase follows its broadcast).  A statement trigger on `mc.block_event` (`mc.dyn_on_events`) runs the reactions to a change from outside inside the same statement.
+
 ## Gaps and next steps
 
-* **Compression.**  `mc.chunk_cache` holds the uncompressed framed packet.  `docs/COMPRESSION.md` describes the plan (per-section deflate fragments, an RLE-style encoder
+* **Packet compression.**  `mc.chunk_cache` holds the uncompressed framed packet (stored pglz-compressed, plus the compressed frame `packet_z` since sql/440).  `docs/COMPRESSION.md` describes the plan (per-section deflate fragments, an RLE-style encoder
   in SQL or a tiny native function); nothing of it is built here.
 * **Block entity NBT** is stored as the raw network bytes, not as a readable representation.  Editing or inspecting a chest means decoding bytes.
 * **No biome editing API** (sections carry biomes; nothing sets them after generation), no vanilla terrain generator (flat, and the seeded `dbcraft:noise` above, which is not vanilla's: no caves, ores, trees), no structures.

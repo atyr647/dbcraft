@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- Differential test, Part A: the batched movement phase (mc.moves_batched) against the baseline (mc.apply_player_moves) on random states and random traffic: kicks, NaN and
 -- infinite values, jumps, confirmations, malformed packets, clamping, offline players.  From one random state and one script the two functions run in turn (the state is
 -- restored in between, and which goes first alternates); the bytes written for every connection, the final state of every player, the kicks and the returned counts

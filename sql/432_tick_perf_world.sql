@@ -171,6 +171,12 @@ begin
                 perform mc.set_block(dim, tx, ty, tz, blk);
                 insert into mc.block_actor values (dim, tx, ty, tz, r.conn_id);
                 places := places + 1;
+                -- the viewers of the placing player see its arm swing, twice (recorded from the real server: two identical swing_animation packets before the block update)
+                if mc.vis_on() then
+                    insert into mc.play_out (conn_id, data)
+                    select v.viewer_conn, mc.pkt_swing(v.target_eid, hand, 1, 6) || mc.pkt_swing(v.target_eid, hand, 1, 6)
+                      from mc.visible v join mc.player t on t.entity_id = v.target_eid where t.uuid = r.uuid and v.viewer_conn <> r.conn_id order by v.viewer_conn;
+                end if;
                 -- vanilla (recorded): the placing player is sent the clicked block's state and the new block's state, then the broadcast sends the new
                 -- block again, then the ack: [clicked, target, target, ack]
                 perform mc.queue_block_update(r.conn_id, pos.x, pos.y, pos.z, clicked);
@@ -197,19 +203,19 @@ end $$;
 -- number of positions announced.
 create or replace function mc.broadcast_block_events() returns int language plpgsql as $$
 declare r int := mc.prop_int('view-distance') + 1; i_bu int := mc.pid('block_update'); i_le int := mc.pid('level_event'); i_ack int := mc.pid('block_changed_ack'); n int := 0;
-        e_id bigint[]; e_kind text[]; e_dim text[]; e_x int[]; e_y int[]; e_z int[]; e_old text[]; e_new text[]; e_cells bytea[];      -- every event of the tick
+        e_id bigint[]; e_kind text[]; e_dim text[]; e_x int[]; e_y int[]; e_z int[]; e_old text[]; e_new text[]; e_cells bytea[]; e_pkt bytea[];      -- every event of the tick (e_pkt: the packet a fill pre-built, sql/960)
         a_dim text[]; a_x int[]; a_y int[]; a_z int[]; a_old int[]; a_new int[];          -- the net changes of the per-block events: dimension, position, old and new state id
         u_dim text[]; u_x int[]; u_y int[]; u_z int[]; u_id int[];                          -- sections with one changed position: that position and its state
         kd text[]; kx int[]; kz int[];                                        -- the chunks whose sections were replaced whole
-        s record; ord int[]; ids int[]; full_ord int[]; full_ins int[]; ins int[]; full_cells bytea; k int;
+        s record; ord int[]; ids int[]; full_ins int[]; ins int[]; full_cells bytea; k int;
         m_cx int[] := '{}'; m_cz int[] := '{}'; m_pkt bytea[] := '{}'; mn int := 0;     -- the packets of multi-position sections: chunk, bytes
 begin
     -- (idle early return: no recorded block change, section change or pending acknowledgement)
     if not exists (select 1 from mc.block_event) and not exists (select 1 from mc.pending_ack) then return 0; end if;
     -- The per-tick sets live in arrays, not in temp tables (sql/437), and the queue is consumed with DELETE ... RETURNING instead of TRUNCATE.
-    with ev as (delete from mc.block_event returning id, kind, dimension, x, y, z, old_state, new_state, cells)
-    select array_agg(id), array_agg(kind), array_agg(dimension), array_agg(x), array_agg(y), array_agg(z), array_agg(old_state), array_agg(new_state), array_agg(cells)
-      into e_id, e_kind, e_dim, e_x, e_y, e_z, e_old, e_new, e_cells from ev;
+    with ev as (delete from mc.block_event returning id, kind, dimension, x, y, z, old_state, new_state, cells, pkt)
+    select array_agg(id), array_agg(kind), array_agg(dimension), array_agg(x), array_agg(y), array_agg(z), array_agg(old_state), array_agg(new_state), array_agg(cells), array_agg(pkt)
+      into e_id, e_kind, e_dim, e_x, e_y, e_z, e_old, e_new, e_cells, e_pkt from ev;
 
     if e_id is not null then
         -- net change per position of the per-block events (the break effect): the first old state against the last new one
@@ -238,37 +244,42 @@ begin
                  group by dimension, x >> 4, z >> 4) t;
 
         -- sections with two or more changed positions, or a fill: the events of each, in order.  A fill's cells are expanded only for the sections some connection can see.
-        select c.ord, c.ins into full_ord, full_ins from mc.sbu_const c where c.id = 1;
+        select c.ins into full_ins from mc.sbu_const c where c.id = 1;
         full_cells := mc.block_event_full_cells();
         for s in
-            with ev as (select * from unnest(e_id, e_kind, e_dim, e_x, e_y, e_z, e_new, e_cells) u(id, kind, dimension, x, y, z, new_state, cells) where kind <> 'section')
+            with ev as (select * from unnest(e_id, e_kind, e_dim, e_x, e_y, e_z, e_new, e_cells, e_pkt) u(id, kind, dimension, x, y, z, new_state, cells, pkt) where kind <> 'section')
             select dimension, x >> 4 as cx, y >> 4 as sy, z >> 4 as cz, count(*) as nev, bool_or(kind = 'cells') as has_cells,
                    array_agg(kind order by id) as kinds,
                    array_agg(((x & 15) << 8) | ((z & 15) << 4) | (y & 15) order by id) as bpos,        -- (only meaningful for per-block events)
-                   array_agg(cells order by id) as cellss, array_agg(new_state order by id) as news
+                   array_agg(cells order by id) as cellss, array_agg(new_state order by id) as news, array_agg(pkt order by id) as pkts
               from ev group by dimension, x >> 4, y >> 4, z >> 4
              having bool_or(kind = 'cells') or count(distinct (x, y, z)) >= 2
              order by dimension, cx, cz, sy
         loop
             -- only sections some connection can see are encoded
-            if not exists (select 1 from net.conn c where c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - s.cx) <= r and abs(c.view_cz - s.cz) <= r) then
+            if not exists (select 1 from net.conn c where c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - s.cx) <= coalesce(c.view_r, r) and abs(c.view_cz - s.cz) <= coalesce(c.view_r, r)) then
                 continue;
             end if;
-            if s.nev = 1 and s.has_cells and s.cellss[1] = full_cells then ord := full_ord;           -- one fill of the whole section: the order is a constant
-            else
-                if not s.has_cells then ins := s.bpos;
-                else
-                    ins := '{}';
-                    for k in 1 .. s.nev loop
-                        if s.kinds[k] = 'block' then ins := ins || s.bpos[k];
-                        elsif s.cellss[k] = full_cells then ins := ins || full_ins;
-                        else ins := ins || mc.cells_positions(s.cellss[k]); end if;
-                    end loop;
-                end if;
-                ord := mc.shortset_order(ins);
+            if s.nev = 1 and s.has_cells and s.news[1] <> '*' then
+                -- ONE fill is the only event of the section: the packet depends on the section, the bit map and the block alone.  The fill built it when it ran (sql/210, a connection
+                -- could see the section then); otherwise it is built now from the cached template (mc.fill_packet, sql/960).  The same bytes as the general path below gives.  (A fill mode that
+                -- puts two blocks in one section, sql/961 hollow, marks its event '*': the states are then read from the section by the general path.)
+                mn := mn + 1;
+                m_cx[mn] := s.cx; m_cz[mn] := s.cz; m_pkt[mn] := coalesce(s.pkts[1], mc.fill_packet(s.cx, s.sy, s.cz, s.cellss[1], mc.block_state_id(s.news[1])));
+                n := n + bit_count(s.cellss[1]);
+                continue;
             end if;
-            if s.nev = 1 and s.has_cells then ids := array_fill(mc.block_state_id(s.news[1]), array[cardinality(ord)]);     -- the only change of the section this tick: every position holds that block
-            else ids := mc.section_state_ids(s.dimension, s.cx, s.sy, s.cz, ord); end if;
+            if not s.has_cells then ins := s.bpos;
+            else
+                ins := '{}';
+                for k in 1 .. s.nev loop
+                    if s.kinds[k] = 'block' then ins := ins || s.bpos[k];
+                    elsif s.cellss[k] = full_cells then ins := ins || full_ins;
+                    else ins := ins || mc.cells_positions(s.cellss[k]); end if;
+                end loop;
+            end if;
+            ord := mc.shortset_order(ins);
+            ids := mc.section_state_ids(s.dimension, s.cx, s.sy, s.cz, ord);
             mn := mn + 1;
             m_cx[mn] := s.cx; m_cz[mn] := s.cz; m_pkt[mn] := mc.section_update_packet(s.cx, s.sy, s.cz, ord, ids);
             n := n + cardinality(ord);
@@ -279,7 +290,7 @@ begin
             insert into mc.play_out (conn_id, data)
             select c.conn_id, proto.frame(i_le, proto.i32(2001) || proto.position(b.x, b.y, b.z) || proto.i32(b.old_id) || '\x00'::bytea)
             from unnest(a_dim, a_x, a_y, a_z, a_old, a_new) as b(dimension, x, y, z, old_id, new_id)
-            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= r and abs(c.view_cz - (b.z >> 4)) <= r
+            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= coalesce(c.view_r, r) and abs(c.view_cz - (b.z >> 4)) <= coalesce(c.view_r, r)
             where b.new_id = 0 and b.old_id <> 0
               and not exists (select 1 from mc.block_actor a where a.dimension = b.dimension and a.x = b.x and a.y = b.y and a.z = b.z and a.conn_id = c.conn_id)
             order by b.x, b.y, b.z;
@@ -288,20 +299,20 @@ begin
             insert into mc.play_out (conn_id, data)
             select c.conn_id, proto.frame(i_bu, proto.position(b.x, b.y, b.z) || proto.varint(b.new_id))
             from unnest(u_dim, u_x, u_y, u_z, u_id) as b(dimension, x, y, z, new_id)
-            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= r and abs(c.view_cz - (b.z >> 4)) <= r
+            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= coalesce(c.view_r, r) and abs(c.view_cz - (b.z >> 4)) <= coalesce(c.view_r, r)
             order by b.x, b.y, b.z;
         end if;
         if mn > 0 then
             insert into mc.play_out (conn_id, data)
             select c.conn_id, k.pkt
             from unnest(m_cx, m_cz, m_pkt) with ordinality as k(cx, cz, pkt, ord)
-            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= r and abs(c.view_cz - k.cz) <= r
+            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= coalesce(c.view_r, r) and abs(c.view_cz - k.cz) <= coalesce(c.view_r, r)
             order by k.ord, c.conn_id;
         end if;
         if kx is not null then
             insert into mc.play_out (conn_id, data)
             select c.conn_id, mc.chunk_packet(k.dimension, k.cx, k.cz)
-            from unnest(kd, kx, kz) with ordinality as k(dimension, cx, cz, ord) join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= r and abs(c.view_cz - k.cz) <= r
+            from unnest(kd, kx, kz) with ordinality as k(dimension, cx, cz, ord) join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= coalesce(c.view_r, r) and abs(c.view_cz - k.cz) <= coalesce(c.view_r, r)
             order by k.ord, c.conn_id;
         end if;
     end if;
@@ -388,12 +399,12 @@ begin
     perform mc.generate_flat(dim, x, z) from (select distinct x, z from _stn) t;
 
     insert into mc.play_out (conn_id, data) select conn_id, proto.frame(i_ctr, proto.varint(ncx) || proto.varint(ncz)) from _st order by conn_id;
-    -- chunks that left the client's square: z ascending, then x (the order of the one recorded case)
+    -- chunks that left the client's square: x ascending, then z (ChunkTrackingView.difference; recorded, sql/436)
     insert into mc.play_out (conn_id, data)
     select s.conn_id, proto.frame(i_fg, proto.i32(s.ocz + dz) || proto.i32(s.ocx + dx))
     from _st s, generate_series(-r, r) dx, generate_series(-r, r) dz
     where abs(s.ocx + dx - s.ncx) > r or abs(s.ocz + dz - s.ncz) > r
-    order by s.conn_id, s.ocz + dz, s.ocx + dx;
+    order by s.conn_id, s.ocx + dx, s.ocz + dz;
     insert into mc.play_out (conn_id, data) select distinct conn_id, proto.frame(i_bs, '\x') from _stn;
     insert into mc.play_out (conn_id, data) select conn_id, mc.chunk_packet(dim, x, z) from _stn order by conn_id, d, x, z;
     insert into mc.play_out (conn_id, data) select conn_id, proto.frame(i_bf, proto.varint(count(*)::int)) from _stn group by conn_id;

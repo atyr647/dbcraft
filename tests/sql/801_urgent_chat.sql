@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- sql/801: the urgent chat lane.  net.urgent_chat handles serverbound chat frames between ticks; what it sends must be byte for byte what the tick sends for the same frames.
 --   A. the tick path: frames into net.inbox, mc.server_tick(), net.drain_outbox();  B. the lane: net.urgent_chat(frames), net.drain_outbox(), then an ordinary tick with an empty inbox.
 --   Both start from the same state; the bytes every connection receives (A: the tick's; B: the lane's followed by the tick's) and the state of the players must be equal.

@@ -16,7 +16,7 @@
 
 ------------------------------------------------------------------------------------------------ the template
 -- Bump when the generic generation, heightmap or light code changes in a way that alters its output: it invalidates every template.
-create or replace function mc.gen_version() returns int language sql immutable parallel safe as $$ select 3 $$;     -- 3: template chunk rows carry the light cache key
+create or replace function mc.gen_version() returns int language sql immutable parallel safe as $$ select 4 $$;     -- 3: template chunk rows carry the light cache key; 4: the template's compressed rest is zlib level 9 when the native deflate is installed (sql/950: the cached packet_z of a flat chunk is 130 bytes, was 1,100)
 
 create table if not exists mc.gen_template (
     dimension  text primary key,                 -- the dimension it serves
@@ -98,7 +98,12 @@ begin
     hdr := (select nxt from proto.varint_read(pkt, o1));                         -- bytes of [length][packet id]; the body starts with int cx, int cz
     -- compressed form: payload = packet id + body; its first 9 bytes (id < 128, then the two coordinates) are spliced per chunk, the rest is compressed once
     pay := substring(pkt from o1 + 1);
-    zr  := mc.deflate_fixed(substring(pay from 10), true);
+    if mc.deflate_impl() = 'native' then
+        -- a bare deflate stream (one final block, byte aligned at its end) follows the stored block as well as the SQL encoder's does; level 9 makes it 99 bytes instead of 1,071
+        execute 'select dbcraft_zlib.deflate_raw($1, 9)' into zr using substring(pay from 10);
+    else
+        zr := mc.deflate_fixed(substring(pay from 10), true);
+    end if;
     insert into mc.gen_template (dimension, sig, chunk, sections, light, pkt_prefix, pkt_suffix, z_prefix, z_rest, z_a_rest, z_l_rest)
     select p_dim, sig, c,
            array(select s from mc.chunk_section s where s.dimension = tdim and s.cx = 0 and s.cz = 0 order by s.sy),

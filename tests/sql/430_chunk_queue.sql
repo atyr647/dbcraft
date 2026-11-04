@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- The chunk request queue (sql/430): generation off the tick.
 --   part 1: the queue itself (priorities, who wants what, failures, the generator loop)
 --   part 2: through the connection layer in async mode: a join gets no chunks from the tick, they arrive as the generator produces them, byte-identical

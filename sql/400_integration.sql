@@ -12,6 +12,7 @@
 alter table net.conn add column if not exists ip      inet;
 alter table net.conn add column if not exists view_cx int;     -- chunk the client's view is centred on (what it has loaded); null before the first chunk batch
 alter table net.conn add column if not exists view_cz int;
+alter table net.conn add column if not exists view_r  int;     -- radius (in chunks) of the square the client's view holds: the player's view distance + 1 (sql/909: the view distance a client asked for); null = the server's
 
 ------------------------------------------------------------------------------------------------ settings
 create table if not exists net.setting_map (net_key text primary key, mc_key text not null);

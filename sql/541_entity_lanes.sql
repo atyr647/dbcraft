@@ -32,6 +32,7 @@ create table if not exists mc.entity_lane (
     -- and written back to mc.entity when the lane ends
     sqx bigint not null default 0, sqy bigint not null default 0, sqz bigint not null default 0, syaw real not null default 0, last_tick bigint not null default 0
 ) with (fillfactor = 70);
+alter table mc.entity_lane add column if not exists auto boolean not null default false;     -- autonomous lane (sql/940); false: the lanes of this file (chasing mobs)
 -- the table is scanned every tick and churns (lanes start and end constantly): vacuum it early and often so a quiet world never scans dead pages
 alter table mc.entity_lane set (autovacuum_vacuum_threshold = 200, autovacuum_vacuum_scale_factor = 0) ;
 drop index if exists mc.entity_lane_goal_idx; drop index if exists mc.entity_lane_chase_idx; drop index if exists mc.entity_lane_slot_idx; drop index if exists mc.entity_lane_idx;
@@ -104,6 +105,8 @@ language sql stable parallel safe as $$
 $$;
 
 create or replace function mc.entity_lanes_enabled() returns boolean language sql stable as $$ select coalesce(current_setting('dbcraft.entity_lanes', true), 'on') <> 'off' $$;
+-- autonomous lanes (sql/940) carry every mob that does not chase; with dbcraft.entity_auto = 'off' everybody uses the lanes of this file
+create or replace function mc.entity_auto_enabled() returns boolean language sql stable as $$ select coalesce(current_setting('dbcraft.entity_auto', true), 'on') <> 'off' $$;
 
 -- The mobs that may start a lane now: standing on the ground, at rest vertically, y exactly an integer (the top of a full cube), walking, with at least two ticks of goal left.
 -- The footprint chunks are those the bounding box of the whole walk (start to the position at the end of the goal, plus the entity width) touches.
@@ -118,12 +121,12 @@ returns table (id int, dimension text, fy int, lend bigint, cx0 int, cx1 int, cz
                          ((e.born_tick % p.update_interval) + p.update_interval)::int % p.update_interval as slot,
                          -- the lane ends with the goal, or one tick before the centre would be in another chunk (so cx, cz, and with them who sees the entity, stay exact for the whole lane)
                          least(e.goal_until,
-                               e.phys_tick + case when e.gx > 0 then ceil((16 * (e.cx + 1) - e.x) / e.gx)::bigint when e.gx < 0 then floor((e.x - 16 * e.cx) / -e.gx)::bigint + 1 else 1000000 end - 1,
-                               e.phys_tick + case when e.gz > 0 then ceil((16 * (e.cz + 1) - e.z) / e.gz)::bigint when e.gz < 0 then floor((e.z - 16 * e.cz) / -e.gz)::bigint + 1 else 1000000 end - 1) as lend
+                               e.phys_tick + case when e.gx > 0 then least(ceil((16 * (e.cx + 1) - e.x) / e.gx), 1000000)::bigint when e.gx < 0 then least(floor((e.x - 16 * e.cx) / -e.gx), 1000000)::bigint + 1 else 1000000 end - 1,
+                               e.phys_tick + case when e.gz > 0 then least(ceil((16 * (e.cz + 1) - e.z) / e.gz), 1000000)::bigint when e.gz < 0 then least(floor((e.z - 16 * e.cz) / -e.gz), 1000000)::bigint + 1 else 1000000 end - 1) as lend
                     from (select distinct i from unnest(p_ids) i) u(id)
                     cross join lateral (select e0.* from mc.entity e0 where e0.id = u.id offset 0) e         -- offset 0: one primary-key probe per id (the planner scanned the goal index instead)
                     join mc.entity_type_param p on p.type = e.type
-                   where p.kind = 'mob' and e.on_ground and not e.deep_sleep and e.lane_until = 0 and e.vy = 0
+                   where p.kind = 'mob' and (p.can_chase or not mc.entity_auto_enabled()) and e.on_ground and not e.deep_sleep and e.lane_until = 0 and e.vy = 0
                      and (e.gx <> 0 or e.gz <> 0) and e.y = floor(e.y)
                      and e.last_sent_tick > 0 and e.sent_cx = e.cx and e.sent_cz = e.cz and e.pitch = e.sent_pitch and e.cx = floor(e.x / 16)::int and e.cz = floor(e.z / 16)::int) q
            where q.lend > p_tick + 1) c
@@ -176,7 +179,7 @@ set enable_hashjoin = off set enable_mergejoin = off as $$
 declare ids int[]; due int[];
 begin
     select coalesce(array_agg(l.id), '{}') into due from mc.entity_lane l
-     where l.goal_until <= p_tick or (l.chase and l.id % 5 = ((5 - p_tick % 5) % 5)::int);
+     where not l.auto and (l.goal_until <= p_tick or (l.chase and l.id % 5 = ((5 - p_tick % 5) % 5)::int));
     if cardinality(due) = 0 then return '{}'; end if;
     -- the row is brought up to the state after tick p_tick - 1 and gets back what the viewers were last told (kept in the lane row during the lane)
     with u as (update mc.entity e set x = e.x + e.gx * ((p_tick - 1) - e.phys_tick), z = e.z + e.gz * ((p_tick - 1) - e.phys_tick), phys_tick = p_tick - 1, lane_until = 0,
@@ -190,13 +193,15 @@ end $$;
 
 -- Switching lanes off at run time (dbcraft.entity_lanes = 'off'): everybody leaves their lane, exactly at the state after tick p_tick - 1.
 create or replace function mc.entity_lane_flush_all(p_tick bigint) returns int language plpgsql volatile as $$
-declare n int;
+declare n int; m int;
 begin
+    m := mc.entity_auto_end(array(select a.id from mc.entity_lane a where a.auto), p_tick - 1, p_tick - 1);       -- autonomous lanes (sql/940)
     update mc.entity e set x = e.x + e.gx * greatest((p_tick - 1) - e.phys_tick, 0), z = e.z + e.gz * greatest((p_tick - 1) - e.phys_tick, 0), phys_tick = greatest(p_tick - 1, e.phys_tick), lane_until = 0,
            cx = floor((e.x + e.gx * greatest((p_tick - 1) - e.phys_tick, 0)) / 16)::int, cz = floor((e.z + e.gz * greatest((p_tick - 1) - e.phys_tick, 0)) / 16)::int,
            sent_qx = l.sqx, sent_qy = l.sqy, sent_qz = l.sqz, sent_yaw = l.syaw, last_sent_tick = l.last_tick
-      from mc.entity_lane l where e.id = l.id and e.lane_until > 0;
+      from mc.entity_lane l where e.id = l.id and e.lane_until > 0 and not l.auto;
     get diagnostics n = row_count;
+    n := n + coalesce(m, 0);
     delete from mc.entity_lane;
     update mc.entity set lane_until = 0 where lane_until > 0;      -- (lane rows of entities that no longer exist were deleted above; this catches rows without a lane row)
     return n;
@@ -390,10 +395,14 @@ begin
         -- what enters the view: the entities in the new cells within their tracking range of the NEW centre appear
         insert into mc.play_out (conn_id, data)
         select q.conn, string_agg(q.pkt, '\x'::bytea order by q.eid)
-          from (select a.conn, e.id as eid, mc.epkt_appear(e.id, e.uuid, e.type, e.type_id, case when ln.id is not null then ln.sqx / 4096.0 else e.x end, e.y, case when ln.id is not null then ln.sqz / 4096.0 else e.z end, e.vx, e.vy, e.vz, e.yaw, e.pitch, e.data) as pkt
+          from (select a.conn, e.id as eid, mc.epkt_appear(e.id, e.uuid, e.type, e.type_id, case when ln.auto then ab.bx / 4096.0 when ln.id is not null then ln.sqx / 4096.0 else e.x end, e.y,
+                                                           case when ln.auto then ab.bz / 4096.0 when ln.id is not null then ln.sqz / 4096.0 else e.z end,
+                                                           case when ln.auto then ln.gx else e.vx end, e.vy, case when ln.auto then ln.gz else e.vz end, case when ln.auto then ln.yaw else e.yaw end, e.pitch, e.data) as pkt
                   from unnest(ad_conn, ad_cx, ad_cz, ad_nx, ad_nz) a(conn, cx, cz, nx, nz)
                   join mc.entity e on e.cx = a.cx and e.cz = a.cz and e.last_sent_tick > 0
                   left join mc.entity_lane ln on ln.id = e.id     -- a lane entity is not rewritten while it walks: it appears where its viewers last saw it (their delta base)
+                  left join lateral (select b.bx, b.bz from mc.entity_auto_base(ln.t0, ln.every, ln.slot, ln.x0, ln.z0, ln.y, ln.gx, ln.gz, ln.yaw, ln.goal_until, ln.born, ln.sqx, ln.sqy, ln.sqz, ln.syaw, ln.last_tick, p_tick - 1) b
+                                      where ln.auto) ab on true      -- an autonomous lane (sql/940): the base after the steps up to the last tick, from the closed form; its entity row is the anchor of the first segment only
                   join mc.entity_type_param p on p.type = e.type
                  where greatest(abs(a.nx - e.cx), abs(a.nz - e.cz)) <= least(vr, p.tracking_chunks)) q
          group by q.conn order by q.conn;

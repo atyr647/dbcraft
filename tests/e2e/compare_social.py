@@ -44,9 +44,10 @@ sv, so = load(van_p, "second"), load(our_p, "second")
 K = {"minecraft:system_chat", "minecraft:player_info_update", "minecraft:add_entity"}
 a, b = window(fv, "second joins", K), window(fo, "second joins", K)
 # vanilla also tells the first player about entities dbcraft does not have yet (extra add_entity) and sends a latency update afterwards: not compared
-check(names(b) == names(a)[:len(b)] and len(b) == 3, f"first player, second joins: dbcraft sends {names(b)}, vanilla sends the same first three {names(a)[:3]}",
+# (with the vanilla tracker, sql/900, ours also ends with the hat flag's player_info_update when the joiner's client says it wears the hat layer: vanilla's list ends with one too)
+check(names(b)[:3] == names(a)[:3] and len(b) >= 3 and set(names(b)[3:]) <= {"player_info_update"}, f"first player, second joins: dbcraft sends {names(b)}, vanilla sends the same first three {names(a)[:3]}",
       f"vanilla {names(a)} ours {names(b)}")
-for x, y in zip(a, b):
+for x, y in zip(a[:3], b[:3]):
     n = x["name"][10:]
     bx, by = body(x), body(y)
     if n == "add_entity":

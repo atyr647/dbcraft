@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- The optional native accelerator dbcraft_zlib (native/dbcraft_zlib, sql/441_deflate_native.sql).  SKIPPED (with a notice) when the extension is not installed on
 -- the server; the suite passes either way.  Every claim about compressed bytes is judged by a REAL inflater (tools/zlib_check.py: Python's zlib; the Java Inflater
 -- check is tests/bench/native/inflate_java.sh over /tmp/dbcraft_native_zin.tsv).

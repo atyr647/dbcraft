@@ -16,11 +16,12 @@ do $$ begin
 end $$;
 
 create or replace function net.process_fast() returns int language plpgsql as $$
-declare r record; n int; handled int[] := net.handled_play_ids_c(); known int[] := net.known_play_ids_c();       -- sql/800: plan-time constants (two table queries per tick before)
-        i_ka int := mc.sid('keep_alive'); i_tp int := mc.sid('accept_teleportation');
+declare r record; n int; n_vis int; vis_ids int[] := array[mc.sid('player_input'), mc.sid('punch'), mc.sid('client_information'), mc.sid('player_abilities')]; handled int[] := net.handled_play_ids_c(); known int[] := net.known_play_ids_c();       -- sql/800: plan-time constants (two table queries per tick before)
+        i_ka int := mc.sid('keep_alive'); i_tp int := mc.sid('accept_teleportation'); i_ci int := mc.sid('client_information');       -- (client_information: the game reads the skin layers, main hand and view distance too: sql/904)
         i_te int := mc.sid('client_tick_end'); i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot');
-        both_ids int[] := array[i_ka, i_tp]; keep_te boolean := current_setting('dbcraft.quiet_tick', true) = 'off';          -- sql/800: the switch queues every client_tick_end again
+        both_ids int[] := array[i_ka, i_tp, i_ci]; keep_te boolean := current_setting('dbcraft.quiet_tick', true) = 'off';          -- sql/800: the switch queues every client_tick_end again
 begin
+    perform set_config('dbcraft.tick_t0', clock_timestamp()::text, true);       -- sql/791: when this tick started (mc.deliver_ready_chunks spends what is left of dbcraft.tick-budget-ms)
     perform net.join_gate();                          -- sql/790: admission gate for logins (parks/releases hello packets; a no-op when nothing is queued or the budget is off)
     delete from net.batch;
     with t as (delete from net.inbox returning conn_id, seq, payload),
@@ -40,7 +41,8 @@ begin
              insert into net.batch (conn_id, seq, payload)
              select conn_id, seq, payload from k where not (known_play and not (pid = any (handled)))
              returning 1)
-    select (select count(*) from t) into n;
+    select (select count(*) from t), (select count(*) from k where known_play and pid = any (vis_ids)) into n, n_vis;
+    perform set_config('dbcraft.vis_in', case when n_vis > 0 then '1' else '0' end, true);       -- sql/904: did a packet arrive that the visibility layer reads (shift key, swing, client information, abilities)?
     if n = 0 then return 0; end if;
     -- idle bookkeeping: nothing reads it yet, one refresh per second per connection is plenty (it used to be a write of every connection every tick)
     update net.conn c set last_activity = now()
@@ -71,13 +73,45 @@ begin
                               teleport_ok = c.teleport_ok or ev.tp_hit
           from ev where c.conn_id = ev.conn_id and (ev.ka_hit or (ev.tp_hit and not c.teleport_ok));
     end if;
-    for r in select conn_id, payload from net.batch order by conn_id, seq loop
+    -- Join entry budget (sql/920, docs/PERF-STORM.md): the packet that makes a connection enter play (finish_configuration: mc.on_join, the entry burst, the first chunks) is the
+    -- expensive step of a login, 15-20 ms.  Once this tick has spent dbcraft.join-entry-budget-ms in this function (25; off = never) further entries are put back into
+    -- net.inbox with their sequence numbers and run in the next tick, oldest first; the first dbcraft.join-entry-free (1) of a tick always run, so a login never starves, and a
+    -- connection that has waited longer than dbcraft.join-max-wait-s is let in regardless of the budget, at most 3 per tick (a queue that all reaches the limit together, as under an overloaded machine, must not flood one tick).  What a held-back connection sent after the entry packet waits behind it.  A client
+    -- waiting for its `login` packet sends nothing, so nothing is lost; the bytes a joiner receives do not change, only the tick they are produced in.
+    declare jb_ms numeric; jb_free int; jb_wait numeric; i_fc int; t_pf timestamptz := clock_timestamp(); n_entry int := 0; n_over int := 0; held bigint[] := '{}';
+            d_c bigint[] := '{}'; d_s bigint[] := '{}'; d_p bytea[] := '{}';
+    begin
+    if exists (select 1 from net.batch where conn_id in (select conn_id from net.conn where state = 'configuration')) then
+        select nullif(case when lower(value) in ('off', '0', '-1', '') then null else value end, '')::numeric into jb_ms from mc.server_property where key = 'dbcraft.join-entry-budget-ms';
+        if jb_ms is not null then
+            jb_free := coalesce((select value::int from mc.server_property where key = 'dbcraft.join-entry-free'), 1);
+            jb_wait := coalesce((select value::numeric from mc.server_property where key = 'dbcraft.join-max-wait-s'), 20);
+            i_fc := net.pkt('configuration', 'serverbound', 'minecraft:finish_configuration');
+        end if;
+    end if;
+    for r in select b.conn_id, b.seq, b.payload, c.connected_at,
+                    (jb_ms is not null and c.state = 'configuration' and net.pid(b.payload) = i_fc) as entry
+               from net.batch b left join net.conn c on c.conn_id = b.conn_id order by b.conn_id, b.seq loop
+        if jb_ms is not null then
+            if r.conn_id = any (held)
+               or (r.entry and n_entry >= jb_free and extract(epoch from clock_timestamp() - t_pf) * 1000 > jb_ms
+                   and not (extract(epoch from now() - r.connected_at) >= least(25, jb_wait) and n_over < 3)) then
+                held := held || r.conn_id; d_c := d_c || r.conn_id; d_s := d_s || r.seq; d_p := d_p || r.payload;
+                continue;
+            end if;
+            if r.entry and n_entry >= jb_free and extract(epoch from clock_timestamp() - t_pf) * 1000 > jb_ms then n_over := n_over + 1; end if;
+            if r.entry then n_entry := n_entry + 1; end if;
+        end if;
         begin
             perform net.handle(r.conn_id, r.payload);
         exception when others then
             perform net.fail(r.conn_id, sqlerrm);
         end;
     end loop;
+    if cardinality(d_c) > 0 then
+        insert into net.inbox (conn_id, seq, payload) select u.c, u.s, u.p from unnest(d_c, d_s, d_p) u(c, s, p);
+    end if;
+    end;
     return n;
 end $$;
 
@@ -119,10 +153,14 @@ begin
 end $$;
 
 create or replace function mc.tick() returns bigint language plpgsql as $$
+declare n_vis int;
 begin
   delete from mc.play_in_work;
   -- claim this tick's input atomically; anything inserted from now on waits for the next tick
-  with c as (delete from mc.play_in returning seq, conn_id, packet_id, body) insert into mc.play_in_work (seq, conn_id, packet_id, body) select seq, conn_id, packet_id, body from c;
+  with c as (delete from mc.play_in returning seq, conn_id, packet_id, body),
+       i as (insert into mc.play_in_work (seq, conn_id, packet_id, body) select seq, conn_id, packet_id, body from c returning packet_id)
+  select count(*) filter (where packet_id = any (array[mc.sid('player_input'), mc.sid('punch'), mc.sid('client_information'), mc.sid('player_abilities')])) into n_vis from i;
+  perform set_config('dbcraft.vis_in', case when n_vis > 0 then '1' else '0' end, true);       -- sql/904: a packet the visibility layer reads arrived (as in net.process_fast)
   return mc.tick_core();
 end $$;
 

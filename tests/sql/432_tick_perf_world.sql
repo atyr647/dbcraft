@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- The rewritten visibility refresh and chunk streaming (sql/432) must do exactly what the originals do.  Random states are built, snapshotted, run through the
 -- original (mc.refresh_visibility_general / net.stream_chunks_general, kept verbatim in sql/432), restored, run through the rewrite, and everything is compared:
 -- the visible pairs, the bytes in every connection's queue, the returned counters, the connections' client views.

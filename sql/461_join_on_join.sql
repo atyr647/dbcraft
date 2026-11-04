@@ -29,13 +29,13 @@ begin
   with m as materialized (select mc.pkt_system_chat(proto.nbt_root(mc.tc_translate('multiplayer.player.joined', array[mc.tc_player(p.uuid, p.name)], 'yellow'))) as d)
   insert into mc.play_out (conn_id, data)
     select o.conn_id, m.d from mc.player o, m where o.conn_id is not null and (p_to_joiner or o.conn_id <> p_conn) order by o.entity_id;
-  with m as materialized (select mc.pkt_player_info_add(array[mc.pie_add(p.uuid, p.name, p.gamemode)]) as d)
+  with m as materialized (select mc.pkt_player_info_add(array[mc.pie_add(p.uuid, p.name, p.gamemode, hat => coalesce((select ((client_info ->> 'skin_parts')::int & 64) <> 0 from net.conn where conn_id = p_conn), false))]) as d)
   insert into mc.play_out (conn_id, data)
     select o.conn_id, m.d from mc.player o, m where o.conn_id is not null and (p_to_joiner or o.conn_id <> p_conn) order by o.entity_id;
   -- 2. the joiner learns the players that are already online
   if p_to_joiner then
     insert into mc.play_out (conn_id, data)
-      select p_conn, mc.pkt_player_info_add(array_agg(mc.pie_add(o.uuid, o.name, o.gamemode) order by o.entity_id))
+      select p_conn, mc.pkt_player_info_add(array_agg(mc.pie_add(o.uuid, o.name, o.gamemode, hat => coalesce(o.sent_hat, false)) order by o.entity_id))
         from mc.player o where o.conn_id is not null and o.uuid <> p.uuid having count(*) > 0;
   end if;
   return p;
@@ -55,6 +55,8 @@ begin
     -- round 2: false = mc.on_join builds no rows for the joiner itself.  The original deleted them right after (DELETE ... WHERE seq > before AND conn_id = ...), and
     -- mc.play_out has no index, so every join scanned the whole queue: with a storm queueing about 1,200 rows per joiner that was quadratic in the number of joiners.
     p := mc.on_join(p_conn::int, c.uuid, c.name, false);
+    perform mc.vis_join(p_conn::int, c.uuid);                       -- sql/906: client information, first-time or returning, the visible-state baselines
+    select * into p from mc.player where uuid = c.uuid;
     -- the join teleport id is 1 (the next correction uses 2); the first keep-alive is due 15 s after joining, as in vanilla, not on the first tick
     update mc.player set teleport_id = 1, awaiting_teleport = null, keepalive_id = null, keepalive_sent_tick = gs.game_time where uuid = p.uuid;
 
@@ -75,12 +77,15 @@ begin
     j.health := p.health; j.food := p.food; j.saturation := p.saturation; j.xp_level := p.xp_level; j.xp_progress := p.xp_progress; j.xp_total := p.xp_total;      -- survival (sql/830): experience in full
     j.show_death_screen := not coalesce((select value::boolean from mc.game_rule where name = 'minecraft:immediate_respawn'), false);
 
-    -- a returning player's inventory: the burst's container_set_content is empty, so send each stack as a slot update right after it
-    st := 1;
-    for s in select slot, item, count from mc.inventory_slot where player = p.uuid and components is null order by slot loop
-        st := st + 1;
-        insert into mc.play_out (conn_id, data) values (p_conn::int, mc.pkt_container_set_slot(st, s.slot, s.item, s.count));
-    end loop;
-    update mc.player set inv_state = st where uuid = p.uuid;
+    -- a returning player's inventory: the burst's container_set_content is empty (state id 1), so the stacks follow as ONE container_set_content with the next state id
+    -- (every slot, stacks with components included: their raw bytes).  Vanilla puts the items into the first packet (state id 1); the packet the burst carries is a capture.
+    if exists (select 1 from mc.inventory_slot i where i.player = p.uuid and i.slot between 1 and 45) then
+        insert into mc.play_out (conn_id, data)
+        select p_conn::int, mc.pkt_cc(0, 2, array_agg(row(i.item, coalesce(i.count, 0), i.components ->> 'raw_hex')::mc.stk order by g), mc.s_empty())
+          from generate_series(0, 45) g left join mc.inventory_slot i on i.player = p.uuid and i.slot = g;
+        update mc.player set inv_state = 2 where uuid = p.uuid;
+    else
+        update mc.player set inv_state = 1 where uuid = p.uuid;
+    end if;
     return j;
 end $$;
