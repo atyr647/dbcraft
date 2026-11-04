@@ -99,7 +99,7 @@ begin
       chunk_x = case when f.has_pos then floor(greatest(-3.0e7, least(3.0e7, f.x)) / 16)::int else p.chunk_x end,
       chunk_z = case when f.has_pos then floor(greatest(-3.0e7, least(3.0e7, f.z)) / 16)::int else p.chunk_z end,
       vis_dirty = p.vis_dirty or (f.has_pos and (floor(f.x / 16)::int <> p.chunk_x or floor(f.z / 16)::int <> p.chunk_z or coalesce(vison and (f.x - p.vis_x) ^ 2 + (f.z - p.vis_z) ^ 2 >= 16, false))),     -- (sql/909: with the exact rule also 4 blocks from where the pairs were last evaluated)
-      last_move_tick = cur_tick, yaw_prev = p.yaw       -- (sql/907: the head of the tracker follows the yaw one tick later)
+      last_move_tick = cur_tick, yaw_prev = case when vison then p.yaw else p.yaw_prev end       -- (sql/907: the head of the tracker follows the yaw one tick later)
     from _fin f where p.conn_id = f.conn_id;
 
   perform mc.prof('6 apply to mc.player');
@@ -257,7 +257,7 @@ begin
     update mc.player p set x = n.nx, y = n.ny, z = n.nz, yaw = n.nyaw, pitch = n.npitch, on_ground = n.nog, chunk_x = n.ncx, chunk_z = n.ncz, vis_dirty = n.nvd,
            vis_ocx = case when n.nvd and not n.ovd then n.ocx else p.vis_ocx end, vis_ocz = case when n.nvd and not n.ovd then n.ocz else p.vis_ocz end,   -- the chunk mc.visible was computed from (sql/468)
            last_move_tick = case when n.touched then cur_tick else p.last_move_tick end,       -- (sql/900: a movement packet of any kind)
-           yaw_prev = case when n.touched then p.yaw else p.yaw_prev end,
+           yaw_prev = case when vison and n.touched then p.yaw else p.yaw_prev end,
            sent_qx = case when m.eid is not null then mc.quant(n.nx) else p.sent_qx end,
            sent_qy = case when m.eid is not null then mc.quant(n.ny) else p.sent_qy end,
            sent_qz = case when m.eid is not null then mc.quant(n.nz) else p.sent_qz end,

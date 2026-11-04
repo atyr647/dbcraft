@@ -89,6 +89,7 @@ create or replace function mc.ed_flags(p_shift boolean, p_sprint boolean, p_game
 create or replace function mc.vis_on_join() returns trigger language plpgsql as $$
 declare gt bigint := (select game_time from mc.game_state);
 begin
+  if tg_op = 'INSERT' and not mc.vis_on() then return new; end if;       -- a row inserted online with the classic broadcast: nothing to start (mc.vis_init_missing does it if the layer is switched on later)
   new.shift := false; new.flying := new.gamemode = 3; new.pose := 0;
   new.sent_flags := mc.ed_flags(false, false, new.gamemode); new.sent_pose := 0; new.sent_skin := new.skin_parts; new.sent_arm := new.main_hand; new.sent_hat := (new.skin_parts & 64) <> 0;
   new.sent_equip := null; new.sent_held := null; new.equip_dirty := true; new.attr_sent := null; new.attr_due := null; new.attr_gm := new.gamemode; new.attr_spr := false; new.vis_recheck := false; new.last_move_tick := null; new.swing_tick := null; new.trk_first := true; new.fresh_join := false;
