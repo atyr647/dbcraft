@@ -68,9 +68,26 @@ create unlogged table if not exists mc.dyn_sec_ver (dimension text not null, cx 
 alter table mc.dyn_sec_cache alter column cells set storage external;       -- no compression: reading and writing 16 KB rows should not cost a pglz pass
 
 -- decode a section and remember it (the section row's palette names become state ids)
+-- A section made of 16 uniform horizontal layers (a flat or superflat world, a floor, a fill: every layer is one state) is decoded without looking at 4,096 entries: each layer of 256 four-bit
+-- entries is 128 bytes, all equal to one byte with both nibbles the same.  Null when a layer is not uniform (or the section is not 4 bits).
+create or replace function mc.dyn_decode_layered(p_bits int, p_data bytea, pal int4[]) returns int4[] language plpgsql immutable parallel safe as $$
+declare res int4[] := '{}'; l int; s bytea; b int; v int;
+begin
+    if p_bits <> 4 or length(p_data) <> 2048 then return null; end if;
+    for l in 0 .. 15 loop
+        s := substring(p_data from l * 128 + 1 for 128);
+        b := get_byte(s, 0);
+        if (b >> 4) <> (b & 15) or encode(s, 'hex') <> repeat(lpad(to_hex(b), 2, '0'), 128) then return null; end if;
+        v := b & 15;
+        res := res || array_fill(case when cardinality(pal) = 0 then v else pal[v + 1] end, array[256]);
+    end loop;
+    return res;
+end $$;
+
 create or replace function mc.dyn_decode_plain(p_bits int, p_data bytea, p_palette text[]) returns int4[] language sql stable as $$
-  select mc.dyn_decode(p_bits, p_data, case when cardinality(p_palette) = 0 then '{}'::int4[]
-                                             else array(select b.state_id from unnest(p_palette) with ordinality p(nm, o) join ref.block_state b on b.name = p.nm order by o) end) $$;
+  select coalesce(mc.dyn_decode_layered(p_bits, p_data, q.pal), mc.dyn_decode(p_bits, p_data, q.pal))
+    from (select case when cardinality(p_palette) = 0 then '{}'::int4[]
+                      else array(select b.state_id from unnest(p_palette) with ordinality p(nm, o) join ref.block_state b on b.name = p.nm order by o) end as pal) q $$;
 
 create or replace function mc.dyn_decode_cached(p_dim text, p_cx int, p_sy int, p_cz int, p_version bigint, p_bits int, p_data bytea, p_palette text[]) returns int4[] language plpgsql volatile as $$
 declare cells int4[];

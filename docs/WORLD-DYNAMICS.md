@@ -26,7 +26,7 @@ when nothing is due and nobody is online (0.07 ms measured).  Without the derive
   `Shapes.mergedFaceOccludes` for all pairs of the 338 distinct shapes (69,038 occluding pairs).  Nothing is simulated.  The block tags come from the datapack rows the client's tag packet is built from.
 * **Block changes from outside** (a player, a command, SQL) are noticed by a statement trigger on `mc.block_event` (`mc.dyn_on_events`) and handled **inside the same statement**, like
   vanilla's `setBlock`: a torch placed on nothing is not removed (vanilla keeps it until a neighbour changes), a torch whose support is removed is gone before the call returns.
-  Cells that are not near anything dynamic are filtered with one section read per neighbour, so an ordinary building edit costs 0.2 ms more.  The trigger reads the sections fresh (`mc.dyn_nocache`): a `/fill` records the events of a chunk before it bumps the chunk's version, and a cached section can be older than the rows (this once dropped the fluid ticks of every fill after the first whose sections were cached, and of every chunk but the first of a multi-chunk fill).
+  It first asks the palettes (below): an edit with nothing reactive or random-ticking near it costs the statement 0.04 ms.  Otherwise cells not near anything dynamic are filtered with one section read per neighbour.  The trigger reads the sections fresh (`mc.dyn_nocache`): a `/fill` records the events of a chunk before it bumps the chunk's version, and a cached section can be older than the rows (this once dropped the fluid ticks of every fill after the first whose sections were cached, and of every chunk but the first of a multi-chunk fill).
 * **`mc.tick_core`** gets one line, `perform mc.dyn_step(cur);` (sql/837, after the visibility refresh).  `mc.dyn_step` is wrapped in an exception handler: a failure rolls back that
   step, is recorded in `mc.error_log` and does not stop the tick.
 * **Quiet writes.**  Vanilla's `setBlock` sends no break effect; only `destroyBlock` does.  The engine's writes are re-recorded as one-position `cells` events (which the broadcast
@@ -35,16 +35,28 @@ when nothing is due and nobody is online (0.07 ms measured).  Without the derive
   other dimension are stored but nothing reacts to them; the SQL tests use private `dbcraft:*` dimensions to test raw storage, and saplings placed in mid-air there would otherwise be
   dropped on the next neighbour update, exactly as in vanilla), `dbcraft.dynamics-max-ticks` (65,536 per kind per tick: **vanilla's own limit**, read in the jar: `ServerLevel.tick`
   passes 65536 to `LevelTicks.tick`, whose drain stops there and leaves the rest queued in order, which is what the `limit` of `mc.dyn_run_due` does), `dbcraft.random-tick-interval`
-  (4: random ticks run every 4th tick with 4 ticks' worth of draws), `dbcraft.random-tick-max-hits` (6 per tick), `dbcraft.random-tick-chunk-budget` (4: chunks whose random-tick list is
-  rebuilt per run), the gamerules `minecraft:random_tick_speed`, `water_source_conversion`, `lava_source_conversion` in `mc.game_rule`.
+  (4: random ticks run every 4th tick with 4 ticks' worth of draws), `dbcraft.random-tick-max-hits` (6 per tick), `dbcraft.random-tick-build-ms` (0.3: CPU per tick, on average, the maintenance of the lists may use), `dbcraft.random-tick-quiet` (100: ticks a chunk must be left alone before its list is rebuilt), the gamerules `minecraft:random_tick_speed`, `water_source_conversion`, `lava_source_conversion` in `mc.game_rule`.
 * **Random ticks (sql/887).**  Vanilla draws `randomTickSpeed` positions per section per tick and runs the tick of the block it hits; the tick of most blocks is a no-op (a grass block
   with no exposed dirt around it, ripe wheat, wet farmland, a sapling at stage 1).  dbcraft keeps, per section, the list of the **active** cells: those whose tick can change something
   (`mc.dyn_rt_build`: grass that dies or has exposed dirt in its 3 x 5 x 3 spreading volume, crops and saplings that can still grow, farmland that is not fully wet with water in reach), in
-  `mc.dyn_rt_sec` (only sections with an active cell have a row).  The lists are rebuilt for the chunks a change touches (queued in `mc.dyn_rt_dirty` by the event trigger, within 4 cells of
-  a border also for the neighbour; new chunks by a trigger; the newest change first, 4 chunks per run).  A run is: the hit count is Poisson with mean `3 * speed * interval * active cells in
-  range / 4096`, each hit lands in a section with probability proportional to its active cells and at a uniformly random one of them: the same distribution as vanilla's draws on the
-  active cells, and skipping the no-ops changes nothing.  **O(hits), and next to nothing when no active cell is within a player's simulation distance.**  All online players' areas are
-  served (no longer a random few).  A test runs 40 random ticks on each of 665 inactive cells (grass, wheat, farmland, saplings across chunk borders) and requires that nothing changes.
+  `mc.dyn_rt_sec` (only sections with an active cell have a row).  A run (every 4th tick) is: the hit count is Poisson with mean `3 * speed * interval * active cells in range / 4096`, each hit
+  lands in a section with probability proportional to its active cells and at a uniformly random one of them: the same distribution as vanilla's draws on the active cells, and skipping the
+  no-ops changes nothing.  **O(hits), one probe of one table when nothing is active.**  All online players' areas are served.  A test runs 40 random ticks on each of 665 inactive cells (grass,
+  wheat, farmland, saplings across chunk borders) and requires that nothing changes.
+* **Keeping the lists current (sql/885, 887) is bounded work, not a rebuild on every edit.**  The cost of the first version was not the hits but the lists: every chunk built 4 at a time every
+  4th tick at 50 ms each, 100 to 240 ms spikes while a pregenerated world was being listed, and again after every fill.  Now:
+  * The event trigger asks the **palettes** first.  The sections the events are in (and the face neighbours, when a block event is on that face, always for a fill) and the old and new
+    states of the events are looked up by name in `mc.dyn_state` (`react`: a state a change next to it can make react; `tickc`: a class of random tick this engine implements).  Nothing of
+    either kind: the statement returns without reading the engine's arrays.  Only a random-ticking kind queues lists (`mc.dyn_rt_dirty`: the chunk, its neighbours within 4 cells of a border,
+    stamped with the game time, newest first); only a reactive kind runs the reaction (the old per-cell code).
+  * A queued chunk is built only after it has been **left alone for `dbcraft.random-tick-quiet` ticks** (100: a burst of edits is built once, afterwards) and by one chunk at a time, whose
+    CPU time is **paid back in ticks**: the maintenance (`mc.dyn_rt_maintain`) uses `dbcraft.random-tick-build-ms` (0.3 ms) per tick on average, a build that cost 10 ms makes the next 33 ticks
+    wait.  A pregenerated world of 7,000 chunks is listed in the background over about half an hour; nothing queued costs one probe per tick.
+  * **A neighbourhood is hashed** (`mc.dyn_rt_memo`: the stored rows of the chunk's nine columns): when an identical one is known to have no active cell, so has this chunk.  A flat world is one
+    neighbourhood: its chunks cost 1.4 ms, not a build.  Sections made of 16 uniform layers (a flat world, a floor, a fill) are decoded without looking at 4,096 entries
+    (`mc.dyn_decode_layered`).  What remains of a real build is 8 to 12 ms (the nine columns' decoded sections, a pass over the candidates, the border cells), once per edit burst.
+  * The lists are maintained per chunk, not per cell: an edit rebuilds its chunk's lists (and a neighbour's when it is within 4 cells), it does not patch them.  Patching cell by cell would be
+    cheaper per edit; this is bounded and simple, and nothing is rebuilt that nobody edited.
 * **Cheaper fluid ticks (sql/882, 884, 888).**  The slope search is skipped when no hole can exist (every cell below the search diamond is a full block: the common case, a flow over a
   floor), the wall / hole / replaceable predicates are inlineable SQL, the pending-tick check of a run is an open-addressing hash set instead of a linear scan, the reaction of a water
   neighbour to a change is computed in place, and `mc.cells_positions` (sql/850, called once per recorded change by the broadcast) visits only the non-zero bytes of the bit map
@@ -55,7 +67,7 @@ when nothing is due and nobody is online (0.07 ms measured).  Without the derive
 `tests/e2e/dyn_probe.py`: a scripted client joins the real server (RCON; `/tick freeze`, then `/tick step 1` per step; the clock is polled until the step ran) and records every
 `block_update`, `section_blocks_update` and `level_event` after every tick; the same scenario runs on dbcraft (the game clock moved by hand, `mc.dyn_step`, `mc.broadcast_block_events`,
 the packets of a fake connection read from `mc.play_out`).  `compare` requires **each tick's packets to be equal, entry by entry, byte for byte** (packets of different chunks as a
-multiset: vanilla sends them in hash-set order).  **Re-run after the cost work of this round: the 12 scenarios below plus the burst, against a fresh vanilla world: ALL IDENTICAL.**  12 scenarios, 800+ ticks:
+multiset: vanilla sends them in hash-set order).  **Re-run after the cost work of this round: the 13 scenarios below, against a fresh vanilla world: ALL IDENTICAL.**  13 scenarios, 900+ ticks:
 
 | Scenario | Ticks | Result |
 |---|---|---|
@@ -75,15 +87,17 @@ water cell; blocks falling in the same column lands one above the other; the ent
 in the same recorded step.  RCON commands and packet-borne edits differ by one tick in when a scheduled tick is due (a command runs before the world tick); dbcraft's SQL edits match the command convention
 the probe uses.
 
-**The burst** (`water_layer`: 16 x 16 water sources, 256 fluid ticks in one tick, falling columns, a sheet that spreads 7 blocks into the neighbouring chunks, 60 ticks, 78 packets):
-the changed cells and their states are identical in every one of the 60 ticks; the entries inside the packets of 3 of the 60 ticks (4, 9 and 24) are in a different order, which is
-cosmetic (a client applies them in any order).  A `/fill` across several chunks is not compared: vanilla schedules its ticks in one sweep over the fill, dbcraft chunk by chunk (the events of
-a fill are recorded per section), so the order of the entries inside packets differs there.  The probe now rebuilds the floor (a hole left by `water_hole` made the first scenario of a
-second run differ) and a vanilla world must be fresh for each recording (a recorded flow leaves pending ticks).
+**The burst** (`water_layer`, the 13th scenario: 16 x 16 water sources placed by one `/fill`, 256 fluid ticks in one tick, falling columns, a sheet that spreads 7 blocks into the neighbouring
+chunks, 60 ticks, 73 packets): **identical in all 60 ticks**.  It found that a `/fill` is not a row of `setBlock`s: vanilla places every block with flags 2 | 256 (onPlace and updateShape run, no
+neighbour update), collects them, and calls `updateNeighboursOnBlockSet` for each of them AFTER all are placed (`FillCommand`, read in the bytecode).  The engine now does the same for the events
+of a fill (items of kind 9 and 10, sql/884): the cells are put back to their old state in its private copy and set to the new one when their turn comes, so an early block's updateShape does not
+see the blocks that come after it, and the fluid ticks are scheduled in placement order.  Before, the first rows of the layer scheduled their neighbours early and the entries inside three of the
+60 packets were in a different order.  A fill across several chunks is still handled chunk by chunk (its events are recorded per section, one trigger run each), which vanilla does in one sweep.
+The probe rebuilds the floor at the start of each run and a vanilla world must be fresh for each recording (a recorded flow leaves pending ticks).
 
-In SQL (`tests/sql/880_dynamics.sql`, 57 checks): data consistency, `mc.dyn_secs` against `mc.get_block`, queue rules, the diamond, source conversion and its gamerule, lava reactions,
+In SQL (`tests/sql/880_dynamics.sql`, 63 checks): data consistency, `mc.dyn_secs` against `mc.get_block`, queue rules, the diamond, source conversion and its gamerule, lava reactions,
 walls and waterlogging, simulation range (a tick waits while nobody is near and runs when a player comes), fall times, columns of sand, concrete powder, every support rule, `dbcraft.dynamics = off`,
-the random-tick statistics (grass spreads, does not spread at midnight, dies under stone, wheat grows at the formula's rate, farmland stays wet near water), the lists of active cells (inactive cells never change under 40 random ticks each; the lists are rebuilt after edits and for new chunks), a fill across four chunks, `mc.cells_positions` against the old definition, and the idle cost.
+the random-tick statistics (grass spreads, does not spread at midnight, dies under stone, wheat grows at the formula's rate, farmland stays wet near water), the lists of active cells (inactive cells never change under 40 random ticks each; the lists are rebuilt after edits and for new chunks), a fill across four chunks, `mc.cells_positions` against the old definition, the layered decode against the entry-by-entry decode, the event trigger doing nothing when nothing near an edit reacts or ticks, and the idle cost.
 
 ## NOT verified against vanilla, not modelled, honest list
 
@@ -139,6 +153,31 @@ Worst tick: the first waves (1,600 sources and 1,600 falling columns in one tick
 The cap: dbcraft's `dbcraft.dynamics-max-ticks` is now vanilla's 65,536 per kind per tick with vanilla's semantics (the ticks over the limit stay queued in order).  The earlier default
 of 500 hid the cost by delaying ticks, which also changed the result at a given tick; that is gone.  Lower it (for example to 2,000) to spread a burst over more ticks at the price of a
 slower flow, if a long tick matters more than vanilla's timing.
+
+### With the scoreboard's conditions (flat world, simulation and view distance 10, players spread over 960 x 960 blocks, the world pregenerated)
+
+The final scoreboard campaign (docs/SCOREBOARD.md, a quiet machine, the tree before this change) measured dynamics ON against OFF: 50 idle players 15.4 against 5.7 ms per tick (every 4th tick
+about 100 ms), a 1,000-block fill with a viewer 80 against 4.7 ms of tick cost (vanilla 19), a 100,000-block fill 297 against 6.5 ms (vanilla 352), one `set_block` statement 3.9 against 2.7 ms
+(vanilla).  Reproduced here with the same settings in SQL (`mc.tick()` / `mc.server_tick()` called one transaction at a time, 50 and 200 `mc.player` rows spread over 960 x 960 blocks, 7,225
+flat chunks, a fake viewer connection at the spawn for the edits; no gateway, no vanilla, so the absolute values are not the scoreboard's: the baseline tick here is 13 to 19 ms because the
+synthetic players have pending visibility work).  **The machine was shared with other agents (load average 3 to 8), so every figure carries noise of about +-1 ms; ON and OFF were alternated
+in blocks of 100 ticks (ABBA) or per repetition, never run one after the other.**
+
+| | before (the tree the campaign measured) | now | target |
+|---|---|---|---|
+| 50 idle players, mean tick ON minus OFF | +46 ms (62.6 against 16.7, three ABBA blocks), every 4th tick 177 to 239 ms, worst tick 414 ms | **+0.5 and 0.0 ms** (two ABBA runs of 1,600 ticks; worst tick 41 against 33 ms) | at most +1 ms |
+| 200 idle players, mean tick ON minus OFF | (not run; the rebuild cost grows with the area) | **+1.2, +1.4 and -0.7 ms** (three runs; in the first two no list was built, the harness had put the game clock below the queue's stamps; in the last 390 chunks were listed) | at most +1 ms |
+| the engine's own cost per tick (`mc.dyn_step`, nothing due, 200 players) | | 0.05 ms (every 4th tick 0.3 ms with a list probe, 0.11 on the others at 50 players) | |
+| fill 1,000 blocks with a viewer, tick cost (median / mean of 22, ON; OFF) | 80 ms (campaign) | **0.0 / 5.2 ms; OFF 2.1 / 21.7 ms** (OFF is as noisy as ON: the viewer's own encode work) | at or below vanilla's 19 ms |
+| fill 100,000 blocks with a viewer, tick cost (median / mean; OFF) | 297 ms (campaign) | **3.8 / 16.7 ms; OFF 22.1 / 38.2 ms** | at or below vanilla's 352 ms |
+| a `set_block` statement, ON minus OFF (24 batches of 1,000, ABBA) | 3.9 ms in the campaign (vanilla 2.7; OFF not given) | **+0.04 ms** (0.107 against 0.071 ms in a session; the statement is `mc.set_block` alone) | within +0.3 ms |
+| worst single tick after an edit, ON | | 45 to 50 ms (a list build of 8 to 12 ms warm, 25 to 50 ms in a cold session, once per edit burst, 100 ticks after it) | no 100 ms spike |
+
+What the causes were (found by reproducing, not guessed): the standing cost was the rebuild of the random-tick lists of every pregenerated chunk, 4 at a time every 4th tick at about 50 ms each, so
+a world that had just been generated (or a fill that touched 36 chunks) paid it in the measured window; the fill and edit costs were the same rebuild, queued by the event trigger for every edit,
+plus the trigger loading the engine's 1.5 MB of arrays for every statement; the `set_block` overhead was that trigger.  Now the trigger asks the palettes first and the rebuild is debounced,
+budgeted and hashed (above).  A fill still runs the reactions of its cells in one statement when something reactive is in or next to it (at most 2,000 cells per event, as before); a fill of stone,
+air or any other inert block does nothing.  Not done: patching the lists cell by cell, and a per-tick budget for the reaction pass of a fill of water or other reactive blocks.
 
 ### Standing cost of random ticks with 500 players (nothing scheduled)
 

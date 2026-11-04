@@ -23,10 +23,10 @@ for rep in $(seq 1 "$reps"); do
   for code in $scen; do
     waitload
     echo "load before: $(cut -d' ' -f1 /proc/loadavg)" >> "$out/dbcraft.txt"
-    tests/bench/mobs2/run_one.sh "$code" "$rep" final "$out/dbcraft.txt" -v warm=150 2>&1 | grep -v NOTICE
+    tests/bench/mobs2/run_one.sh "$code" "$rep" final "$out/dbcraft.txt" -v warm=150 -v reset=1 2>&1 | grep -v NOTICE
     case "$code" in 2000v|5000v)
       waitload
-      tests/bench/mobs2/run_one.sh "$code" "$rep" final-walk1 "$out/dbcraft.txt" -v warm=150 -v walk=1.0 2>&1 | grep -v NOTICE ;;
+      tests/bench/mobs2/run_one.sh "$code" "$rep" final-walk1 "$out/dbcraft.txt" -v warm=150 -v reset=1 -v walk=1.0 2>&1 | grep -v NOTICE ;;
     esac
   done
 done

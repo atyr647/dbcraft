@@ -21,12 +21,20 @@
 
 insert into mc.server_property (key, value, default_value, note) values
     ('dbcraft.random-tick-max-hits', '6', '6', 'dbcraft: at most this many random-tick hits are processed per tick (a random subset when there are more: the rate of every block drops proportionally)'),
+    ('dbcraft.random-tick-build-ms', '0.3', '0.3', 'dbcraft: CPU milliseconds per tick (average) the maintenance of the random-tick lists may use; one chunk is built at a time and the next waits for the time it cost'),
+    ('dbcraft.random-tick-quiet', '100', '100', 'dbcraft: ticks a chunk must have been left alone before its random-tick list is rebuilt (a burst of edits is rebuilt once, after it)'),
     ('dbcraft.random-tick-interval', '4', '4', 'dbcraft: random ticks run every this many ticks, with that many ticks of draws at once (1 = every tick, vanilla timing)')
 on conflict (key) do nothing;
 
 -- derived data, rebuilt from the dirty queue: forget what an older version of this file stored
 drop table if exists mc.dyn_rt_sec;
 create table mc.dyn_rt_sec (dimension text not null, cx int not null, sy int not null, cz int not null, version bigint not null, cnt int not null, cells smallint[] not null, primary key (dimension, cx, cz, sy));
+-- when the next list may be built (the maintenance pays back the time a build took: a few tenths of a millisecond per tick on average, never a burst), and the neighbourhoods known to have
+-- no active cell (a flat world is one neighbourhood: its chunks cost a hash, not a build)
+create table if not exists mc.dyn_rt_state (id int primary key check (id = 1), next_build bigint not null default 0);
+insert into mc.dyn_rt_state (id) values (1) on conflict do nothing;
+create table if not exists mc.dyn_rt_memo (key text primary key);
+truncate mc.dyn_rt_memo;
 drop table if exists mc.dyn_rt_chunk;
 create table mc.dyn_rt_chunk (dimension text not null, cx int not null, cz int not null, version bigint not null, primary key (dimension, cx, cz));
 insert into mc.dyn_rt_dirty (dimension, cx, cz) select c.dimension, c.cx, c.cz from mc.chunk c on conflict (dimension, cx, cz) do update set seq = excluded.seq;
@@ -35,9 +43,9 @@ create index if not exists player_online_chunk_idx on mc.player (chunk_x, chunk_
 -- every new chunk, and its eight neighbours (their border cells see new neighbours), are queued for a rebuild of their lists
 create or replace function mc.dyn_rt_chunk_new() returns trigger language plpgsql volatile as $$
 begin
-    insert into mc.dyn_rt_dirty (dimension, cx, cz)
-    select distinct n.dimension, n.cx + dx.v, n.cz + dz.v from new_c n, (values (-1), (0), (1)) dx(v), (values (-1), (0), (1)) dz(v)
-    on conflict (dimension, cx, cz) do update set seq = excluded.seq;
+    insert into mc.dyn_rt_dirty (dimension, cx, cz, mt)
+    select distinct n.dimension, n.cx + dx.v, n.cz + dz.v, (select game_time from mc.game_state) from new_c n, (values (-1), (0), (1)) dx(v), (values (-1), (0), (1)) dz(v)
+    on conflict (dimension, cx, cz) do update set seq = excluded.seq, mt = excluded.mt;
     return null;
 end $$;
 drop trigger if exists dyn_rt_chunk_new on mc.chunk;
@@ -66,7 +74,7 @@ declare
     fl    int4[]; fa int2[]; kk int4[]; tg int8[]; npv int4[]; ld int2[];
     ver   bigint; sys int[]; sy0 int; sy1 int; nsy int; secs int4[]; gm int4[];
     ii int; s int; rw int; cand int[]; act smallint[]; k int; i int; x int; y int; z int; lx int; ly int; lz int; cell int; ab int; a2 int; q int;
-    ex_x int[]; ex_y int[]; ex_z int[]; ex_n int; dpos int[]; hit boolean; dx int; dy int; dz int; m1 int; need_ex boolean; found boolean;
+    ex_x int[]; ex_y int[]; ex_z int[]; ex_n int; dpos int[]; hit boolean; dx int; dy int; dz int; m1 int; need_ex boolean; found boolean; memo_key text; total_act int := 0;
 begin
     select version into ver from mc.chunk where dimension = p_dim and cx = p_cx and cz = p_cz;
     delete from mc.dyn_rt_sec where dimension = p_dim and cx = p_cx and cz = p_cz;
@@ -74,13 +82,24 @@ begin
         delete from mc.dyn_rt_chunk where dimension = p_dim and cx = p_cx and cz = p_cz;
         return;
     end if;
-    select * into v from mc.dyn_vec;
-    fl := v.flags; fa := v.famt; kk := v.k; tg := v.tagbits; npv := v.nextp; ld := v.lightd;
     select array_agg(cs.sy order by cs.sy) into sys from mc.chunk_section cs
      where cs.dimension = p_dim and cs.cx = p_cx and cs.cz = p_cz and cardinality(cs.palette) > 0
-       and exists (select 1 from unnest(cs.palette) pn join mc.dyn_state d on d.name = pn where (fl[d.sid + 1] & 7864320) <> 0);     -- 524288 | 1048576 | 2097152 | 4194304
+       and exists (select 1 from unnest(cs.palette) pn join mc.dyn_state d on d.name = pn and d.tickc);
     if sys is not null then
         sy0 := sys[1] - 1; sy1 := sys[cardinality(sys)] + 1; nsy := sy1 - sy0 + 1;
+        -- the neighbourhood (this chunk and its eight neighbours, sections sy0 .. sy1) as a hash of the stored rows: when an identical one is known to have no active cell, so has this chunk
+        select md5(string_agg(coalesce(md5(array_to_string(cs.palette, ',') || ':' || cs.bits::text) || md5(cs.data), case when ch.cx is null then 'B' else 'A' end), ',' order by c.sy, b.cz, a.cx))
+          into memo_key
+          from generate_series(p_cx - 1, p_cx + 1) a(cx) cross join generate_series(p_cz - 1, p_cz + 1) b(cz) cross join generate_series(sy0, sy1) c(sy)
+          left join mc.chunk ch on ch.dimension = p_dim and ch.cx = a.cx and ch.cz = b.cz
+          left join mc.chunk_section cs on cs.dimension = p_dim and cs.cx = a.cx and cs.cz = b.cz and cs.sy = c.sy;
+        memo_key := memo_key || ':' || sys::text;
+        if exists (select 1 from mc.dyn_rt_memo m where m.key = memo_key) then
+            insert into mc.dyn_rt_chunk (dimension, cx, cz, version) values (p_dim, p_cx, p_cz, ver)
+            on conflict (dimension, cx, cz) do update set version = excluded.version;
+            return;
+        end if;
+        select dv.flags, dv.k into fl, kk from mc.dyn_vec dv;                                   -- (the other arrays are read when a class needs them: each is 70 to 280 KB)
         secs := mc.dyn_secs(p_dim, p_cx - 1, p_cx + 1, sy0, sy1, p_cz - 1, p_cz + 1, array(select generate_series(1, 9 * nsy)));
         gm := array[sy0, p_cz - 1, p_cx - 1, 3, 3] || array(select generate_series(2, 9 * nsy + 1));
         for ii in 1 .. cardinality(sys) loop
@@ -93,12 +112,13 @@ begin
             ex_x := '{}'; ex_y := '{}'; ex_z := '{}'; ex_n := 0;
             select exists (select 1 from unnest(cand) c where (fl[secs[rw][c + 1] + 1] & 524288) <> 0) into need_ex;
             if need_ex then
+                if ld is null then select dv.lightd into ld from mc.dyn_vec dv; end if;
                 select array_agg(u.o - 1) into dpos from unnest(secs[rw:rw][1:4096]) with ordinality u(c, o) where u.c = kk[41];
                 for k in 1 .. coalesce(cardinality(dpos), 0) loop
                     i := dpos[k]; lx := i & 15; lz := (i >> 4) & 15; ly := i >> 8;
                     x := p_cx * 16 + lx; y := s * 16 + ly; z := p_cz * 16 + lz;
                     a2 := case when ly < 15 then secs[rw][i + 256 + 1] else mc.dyn_at(secs, gm, x, y + 1, z) end;
-                    if (a2 = kk[50] or not ((fl[a2 + 1] & 8) <> 0 and mc.dyn_famount(mc.dyn_fstate(fl, fa, a2)) = 8 or ld[a2 + 1] >= 15)) and (fl[a2 + 1] & 8) = 0 then
+                    if (a2 = kk[50] or not ((fl[a2 + 1] & 8) <> 0 and (fl[a2 + 1] & (32 | 64)) <> 0 or ld[a2 + 1] >= 15)) and (fl[a2 + 1] & 8) = 0 then
                         ex_n := ex_n + 1; ex_x[ex_n] := x; ex_y[ex_n] := y; ex_z[ex_n] := z;
                     end if;
                 end loop;
@@ -110,7 +130,7 @@ begin
                 hit := false;
                 if (fl[cell + 1] & 524288) <> 0 then
                     ab := mc.dyn_at(secs, gm, x, y + 1, z);
-                    if ab <> kk[50] and ((fl[ab + 1] & 8) <> 0 and mc.dyn_famount(mc.dyn_fstate(fl, fa, ab)) = 8 or ld[ab + 1] >= 15) then hit := true;                  -- it dies
+                    if ab <> kk[50] and ((fl[ab + 1] & 8) <> 0 and (fl[ab + 1] & (32 | 64)) <> 0 or ld[ab + 1] >= 15) then hit := true;                  -- it dies
                     elsif lx = 0 or lx = 15 or lz = 0 or lz = 15 or ly < 3 or ly > 13 then
                         -- the spreading volume reaches into a neighbour section: look at every cell
                         <<vol>>
@@ -119,7 +139,7 @@ begin
                                 for dx in -1 .. 1 loop
                                     if mc.dyn_at(secs, gm, x + dx, y + dy, z + dz) = kk[41] then
                                         m1 := mc.dyn_at(secs, gm, x + dx, y + dy + 1, z + dz);
-                                        if (m1 = kk[50] or not ((fl[m1 + 1] & 8) <> 0 and mc.dyn_famount(mc.dyn_fstate(fl, fa, m1)) = 8 or ld[m1 + 1] >= 15)) and (fl[m1 + 1] & 8) = 0 then hit := true; exit vol; end if;
+                                        if (m1 = kk[50] or not ((fl[m1 + 1] & 8) <> 0 and (fl[m1 + 1] & (32 | 64)) <> 0 or ld[m1 + 1] >= 15)) and (fl[m1 + 1] & 8) = 0 then hit := true; exit vol; end if;
                                     end if;
                                 end loop;
                             end loop;
@@ -130,8 +150,10 @@ begin
                         end loop;
                     end if;
                 elsif (fl[cell + 1] & 1048576) <> 0 or (fl[cell + 1] & 4194304) <> 0 then
+                    if npv is null then select dv.nextp into npv from mc.dyn_vec dv; end if;
                     hit := npv[cell + 1] >= 0;                                                       -- a crop that can age, a sapling at stage 0
                 elsif (fl[cell + 1] & 2097152) <> 0 then
+                    if tg is null then select dv.tagbits into tg from mc.dyn_vec dv; end if;
                     m1 := cell - kk[42];                                                             -- the moisture of this state
                     found := false;
                     <<wat>>
@@ -147,47 +169,64 @@ begin
                 end if;
                 if hit then act := act || i::smallint; end if;
             end loop;
+            total_act := total_act + cardinality(act);
             if cardinality(act) > 0 then
                 insert into mc.dyn_rt_sec (dimension, cx, sy, cz, version, cnt, cells) values (p_dim, p_cx, s, p_cz, ver, cardinality(act), act);
             end if;
         end loop;
+        if total_act = 0 then insert into mc.dyn_rt_memo (key) values (memo_key) on conflict do nothing; end if;
     end if;
     insert into mc.dyn_rt_chunk (dimension, cx, cz, version) values (p_dim, p_cx, p_cz, ver)
     on conflict (dimension, cx, cz) do update set version = excluded.version;
 end $$;
 
+-- Keep the lists current: build the list of the newest queued chunk, then the next, until this tick's share of CPU time (dbcraft.random-tick-build-ms, 0.3 ms) is used; a build that cost more
+-- than the share makes the following ticks wait (the debt is paid in ticks), so the cost per tick stays at the share and one tick never pays for more than one slow build.
+create or replace function mc.dyn_rt_maintain(p_cur bigint) returns void language plpgsql volatile as $$
+declare
+    dim text := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
+    share float8 := greatest(coalesce((select value::float8 from mc.server_property where key = 'dbcraft.random-tick-build-ms'), 0.3), 0.01);
+    quiet int := coalesce((select value::int from mc.server_property where key = 'dbcraft.random-tick-quiet'), 100);
+    t0 timestamptz; el float8 := 0; v_cx int; v_cz int;
+begin
+    if (select next_build - p_cur from mc.dyn_rt_state) between 1 and 100000 then return; end if;                   -- (a clock set far back does not stall the maintenance)
+    if not exists (select 1 from mc.player where conn_id is not null) then return; end if;
+    t0 := clock_timestamp();
+    loop
+        v_cx := null;
+        select d.cx, d.cz into v_cx, v_cz from mc.dyn_rt_dirty d where d.dimension = dim and d.mt <= p_cur - quiet order by d.seq desc limit 1;
+        exit when v_cx is null;
+        perform mc.dyn_rt_build(dim, v_cx, v_cz);
+        delete from mc.dyn_rt_dirty d where d.dimension = dim and d.cx = v_cx and d.cz = v_cz;
+        el := extract(epoch from clock_timestamp() - t0) * 1000;
+        exit when el >= share;
+    end loop;
+    if el > 0 then update mc.dyn_rt_state set next_build = p_cur + ceil(el / share)::bigint; end if;
+end $$;
+
 create or replace function mc.dyn_random_ticks(p_cur bigint) returns void language plpgsql volatile as $$
 declare
-    speed  int := mc.rule_int('random_tick_speed', 3);
-    r      int := mc.prop_int('simulation-distance');
-    cap    int := coalesce(mc.prop_int('dbcraft.random-tick-max-hits'), 6);
+    speed  int; r int; cap int;
     iv     int := greatest(coalesce(mc.prop_int('dbcraft.random-tick-interval'), 4), 1);
-    budget int := greatest(coalesce(mc.prop_int('dbcraft.random-tick-chunk-budget'), 4), 1);
     dim    text;
-    dcx int[]; dcz int[]; acx int[]; asy int[]; acz int[]; acnt int[];
+    acx int[]; asy int[]; acz int[]; acnt int[];
     hcx int[]; hsy int[]; hcz int[]; hidx int[]; hsid int[];
     kinds int[]; xs int[]; ys int[]; zs int[]; aux int[]; hs int[];
-    wtot bigint; ew float8; lim int; h int; l float8; pr float8; i int;
+    wtot bigint; ew float8; lim int; h int; l float8; pr float8;
 begin
-    if speed <= 0 or p_cur % iv <> 0 then return; end if;                               -- every iv-th tick, with iv ticks' worth of draws
-    if not exists (select 1 from mc.player where conn_id is not null) then return; end if;
-    dim := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
+    if p_cur % iv <> 0 then return; end if;                                             -- every iv-th tick, with iv ticks' worth of draws
     -- once in a while: chunks whose cached version is not the chunk's (an edit that did not go through mc.block_event) are queued again
-    if p_cur % 1200 < iv then
+    if p_cur % 6000 < iv then
+        dim := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
         insert into mc.dyn_rt_dirty (dimension, cx, cz)
         select c.dimension, c.cx, c.cz from mc.chunk c left join mc.dyn_rt_chunk k on k.dimension = c.dimension and k.cx = c.cx and k.cz = c.cz
          where c.dimension = dim and k.version is distinct from c.version on conflict (dimension, cx, cz) do update set seq = excluded.seq;
     end if;
-    -- rebuild the lists of the queued chunks, at most `budget` per run (fresh terrain, or the first run after an upgrade, does not make one tick pay for all of it).  Every queued chunk is
-    -- built, near a player or not (a queue that is mostly empty costs one probe, a queue with chunks nobody is near would cost a scan per run), the newest change first: an edit near a player
-    -- does not wait behind the backlog of an upgrade or of terrain nobody is near.
-    if exists (select 1 from mc.dyn_rt_dirty) then
-        select array_agg(q.cx), array_agg(q.cz) into dcx, dcz from (select d.cx, d.cz from mc.dyn_rt_dirty d where d.dimension = dim order by d.seq desc limit budget) q;
-        if dcx is not null then
-            for i in 1 .. cardinality(dcx) loop perform mc.dyn_rt_build(dim, dcx[i], dcz[i]); end loop;
-            delete from mc.dyn_rt_dirty d using unnest(dcx, dcz) u(cx, cz) where d.dimension = dim and d.cx = u.cx and d.cz = u.cz;
-        end if;
-    end if;
+    if not exists (select 1 from mc.dyn_rt_sec) then return; end if;                    -- nothing active anywhere: this run is over
+    speed := mc.rule_int('random_tick_speed', 3);
+    if speed <= 0 or not exists (select 1 from mc.player where conn_id is not null) then return; end if;
+    r := mc.prop_int('simulation-distance'); cap := coalesce(mc.prop_int('dbcraft.random-tick-max-hits'), 6);
+    dim := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
     -- the active sections in range of any online player
     select array_agg(t.cx order by t.cx, t.sy, t.cz), array_agg(t.sy order by t.cx, t.sy, t.cz), array_agg(t.cz order by t.cx, t.sy, t.cz), array_agg(t.cnt order by t.cx, t.sy, t.cz), coalesce(sum(t.cnt), 0)
       into acx, asy, acz, acnt, wtot

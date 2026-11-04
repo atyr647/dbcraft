@@ -51,8 +51,8 @@ net.pkt/3 | 480_inlining.sql | key lookup as PL/pgSQL (123 us -> 42 us per call)
 net.pkt_name/3 | 480_inlining.sql | key lookup as PL/pgSQL
 net.setting/1 | 480_inlining.sql | key lookup as PL/pgSQL
 mc.entity_active/1 | 541_entity_lanes.sql | the physics step skips entities that walk in a lane (analytic movement, docs/PERF-ENTITY.md)
-mc.entity_mask_invalidate/0 | 541_entity_lanes.sql | also drops the chunk's floor summary (lanes are validated against it)
-mc.entity_viewers_refresh/1 | 541_entity_lanes.sql | the 'enters the view' announcement of a lane mob uses its viewers' delta base (it is not rewritten while it walks)
+mc.entity_mask_invalidate/0 | 541_entity_lanes.sql | also drops the chunk's floor summary (lanes are validated against it), after the lazy lanes around it were replayed against it (sql/940)
+mc.entity_viewers_refresh/1 | 541_entity_lanes.sql | the 'enters the view' announcement of a lane mob uses its viewers' delta base (it is not rewritten while it walks); lazy lanes near the new cells are caught up first and lanes within reach of a viewer stop being lazy (sql/940)
 mc.entity_tracker/2 | 551_entity_fanout.sql | sql/542 (mob movement packets by one tight function, byte-identical) plus the remove_entities packet built once per entity instead of once per viewer pair (a crowd: 40 ms)
 mc.deliver_ready_chunks/0 | 791_join_chunk_budget.sql | adds the shared per-tick chunk budget (dbcraft.chunk-budget-per-tick) to sql/430's delivery; identical bytes per connection
 net.drain_outbox/0 | 780_queue_trim.sql | the same drain, plus net.trim_queues(): a big EMPTY queue is truncated so the DELETE-per-tick queues cannot bloat without a vacuum (docs/SOAK.md)

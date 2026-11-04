@@ -18,6 +18,21 @@ cheaper again and write almost nothing to the WAL.  Against vanilla's server thr
 So **mobs are no longer a loss wherever a player can see them (2,000 and 5,000 awake walking mobs: dbcraft 6 and 10 times cheaper than the vanilla server thread), and resting items stay a large win;
 mobs nobody can see are still a loss of about 2x**, and that part is explained and measured below.  Read the caveats first.
 
+**Part 2 (the scoreboard campaign found mobs nobody can see 3.8-6.6x worse than vanilla, and the in-view cost 3-4x higher than part 1 measured; sections "Part 2" below).**  Vanilla and dbcraft alternated
+V D V D V D, vanilla `-Xms1G -Xmx2G`, CPU per tick, median of 3, machine load 3-7:
+
+| scenario | vanilla | dbcraft part 1 | dbcraft now | now / vanilla |
+|---|---|---|---|---|
+| 500 cows nobody can see (a viewer is connected, the ring is outside his view) | 5.0 ms | 5.4 | **3.5** | **0.71** (dbcraft) |
+| 2,000 cows nobody can see | 6.6 | 11.4 | 8.2 | 1.24 (vanilla) |
+| 5,000 cows nobody can see | 10.5 | 21.1 | 13.2 | 1.25 (vanilla) |
+| same, **nobody connected**: 500 / 2,000 / 5,000 cows | 5.0 / 6.6 / 10.5 | | **1.4 / 4.2 / 7.5** | **0.28 / 0.64 / 0.71** (dbcraft) |
+| 2,000 / 5,000 cows in view | 81.5 / 195 | 9.6 / 18.7 | **9.5 / 20.6** | **0.12 / 0.11** (dbcraft) |
+
+The in-view cost was never 3-4x higher because of the simulation distance: the scoreboard ran its mob rows on a database whose ground its edit scenario had littered with 2,000 blocks, and a mob that
+cannot get a lane costs 250-300 us a tick (section 1).  Mobs nobody can see are no longer simulated tick by tick (lazy lanes, section 2); `dbcraft.entity-mode` stays `off` (section 5).  What is still a
+loss is in section 6.
+
 ## Method, and what the machine allowed
 
 * **Vanilla**: the real 26.3 server (`~/.cache/dbcraft/server-26.3.jar`, Java 25), flat world, view distance 5, simulation distance 10, one probe client (`tools/entity/probe_client.py`: logs in,
@@ -164,16 +179,169 @@ the next regular one, and the viewer's reconstructed position is the same).  New
   player.  Alternation is per repetition now.  Vanilla at `-Xms2G -Xmx2G` was killed by the memory cgroup (see Method).
 * **Skipping the steps of mobs no viewer can see** (about 20 % of the tick in the viewer-less case): written, measured by alternating the two versions tick by tick on one population, differences inside the noise
   of that machine (-15 % to +40 % between runs of the same comparison), not adopted.  An `= any(array)` or `exists` over an array costs 12-20 us per mob, more than the packet it saves.
-* **`plan_cache_mode = force_generic_plan` on the lane tick**: no measurable difference.
+* **`plan_cache_mode = force_generic_plan` on the lane tick**: no measurable difference in part 1; in part 2 it turned out to matter for the catch-up statement (13.7 ms of planning per call, section 3).
 
 ## Still a loss / not done
-* **Mobs nobody can see: 1.9-2.3x vanilla's CPU** (numbers and the cause above).  Not reachable with this design without not simulating unobserved lanes (the closed-form catch-up described above).
+* **Mobs nobody can see: 1.9-2.3x vanilla's CPU** (part 1).  Part 2 built the closed-form catch-up (lazy lanes): see section 6 for what is left.
 * The comparison is not like for like: dbcraft models no pathfinding, goals, look-around, motion packets, sounds, collision (list above).  The vanilla wall-clock tick times of this machine are not usable
   (load 8-24); only CPU time is compared and both sides are inflated by contention, vanilla more.
 * The wander model (45 % walking) is more active than vanilla's cows (about 24 %): it is dbcraft's cost to bear in the comparison, left as it was.
 * vanilla and the final dbcraft numbers were not interleaved (see Alternation); the viewer-less vanilla runs show 5.2 / 10.1 ms of CPU at load 11, where a quiet machine might measure less.
 * The byte/cadence comparison against recorded vanilla MOB traffic was not repeated beyond the packet counts above.
 * A real client was not used (the probe client counts packets); the real gateway was not in the loop (the SQL entity tick is measured).
+
+## Part 2: why the scoreboard saw three times more in view, mobs nobody can see, and the default mode
+
+The scoreboard campaign (docs/SCOREBOARD.md) measured 500 / 2,000 / 5,000 cows in view at 13 / 33 / 71 ms of CPU per tick (vanilla 16 / 61 / 149) and cows nobody can see at 15.5 / 33.9 / 76 ms
+(vanilla 4.1 / 6.0 / 11.5, a loss of 3.8-6.6x), and noted that `dbcraft.entity-mode` is `off` as shipped.  Three requests: find the 3-4x, make mobs nobody can see cost no more than vanilla,
+decide the default mode.
+
+### 1. The simulation distance is not the cause; the world the scenario ran in is
+
+No entity code reads `simulation-distance`.  Measured to be sure (`tests/bench/mobs2/simdist.sh`, the same scenario at simulation distance 3 and 10 alternating, 2 repetitions,
+`docs/perf-mobs2-results/part2/simdist.txt`): 2,000 cows in view cost 12.0 and 13.1 ms at distance 3 and 11.1 and 10.9 ms at distance 10.
+
+What differs is the ground.  A mob gets an autonomous lane only when every column of its walk has the same floor under its feet (`mc.entity_floor`: the highest solid cell is exactly one below
+the feet); otherwise it stays in the exact sweep (physics, the generic tracker, a lane retry every tick), at about 250-300 us per mob and tick instead of 3-8.  The scoreboard ran its mob rows
+on the database its *edit* scenario had just used, which left 2,000 stone and gold blocks scattered over +-45 blocks at y = -60: a quarter of the columns the cows walk on.  Reproduced:
+
+| 2,000 cows in view, dbcraft CPU ms per tick | |
+|---|---|
+| fresh flat chunks (`bench.sql -v reset=1`) | 9-11 |
+| the same area after the campaign's 2,000 scattered blocks (`-v scatter=2000`, a worse scatter than the campaign's) | 215-238 (about 800 mobs outside lanes: physics 53-63, lane retry 129-149, tracker 26-30 ms) |
+| the campaign's database as it was found (`world-state-contamination.txt`) | 69 (1,885 of 2,000 cows in lanes: the awake ones cost 10 ms of physics and 39 of tracker) |
+
+Fixed: `bench.sql` regenerates the flat chunks of the mob area (`reset=1`) and `tools/scoreboard/mobs.sh` passes it, so the mob rows no longer depend on what ran before them in the same
+database.  Not fixed: **a mob that cannot get a lane is still expensive** (a built-up world is full of them: the exact sweep is 60-80 us, the lane retry of the two functions 160 us, the generic
+tracker 30-60 us per mob and tick).  A negative cache for lane attempts (retry when the goal, the floor or the cell changes) is the obvious next step; it was not built.
+
+### 2. Lazy lanes: what nobody can see is not simulated tick by tick
+
+A lane whose chunk cell is farther than `min(tracking range, view radius) + 1` cells from every viewer cannot be seen by anybody, and nobody can get to see it without a refresh that
+passes through `mc.entity_viewers_refresh`.  Its whole future is a pure function of the lane row (a goal is the hash of (id, tick), a walk a closed form), so:
+
+* it is **replayed every 32nd tick** (its slot, `id % 32`), each expired segment with the tick it expired at (`tt = goal_until`), which is exactly the computation a tick-by-tick run makes at `tt`;
+  it sends no packets and writes only its own narrow row (HOT);
+* **whoever is about to look catches it up first** (`mc.entity_auto_catchup`): a viewer's new cells (before the appearance packets are built), a block change within three chunks (before the lane
+  ends), a section change of a chunk with a floor summary (before the summary is dropped: the lane is replayed against the floor as it was), a gap in the tick numbers (`mc.entity_auto_rebase`),
+  and the end of a lane;
+* **a viewer who gets within reach wakes the lanes around him** (the same refresh): lanes within `min(trk, r) + 1` of his new cell are simulated tick by tick again, so a mob that walks into
+  his view is announced at the tick it crosses, exactly as before;
+* a lane that is behind by several segments replays one per visit (`mc.entity_auto_tick` runs one pass; a second pass costs 0.7 ms of set-up for a handful of rows), and all of them in
+  one call when somebody looks.  `dbcraft.entity_lazy = off` disables all of it.
+
+**Proof** (`tests/sql/940_entity_auto_lanes.sql`, section L; 400 cows, tick-by-tick run against lazy run):
+
+| check | result |
+|---|---|
+| after 353 ticks the lanes of the lazy run, caught up to that tick, equal the lanes of the tick-by-tick run, every column, to the last bit (anchor, position, velocity, goal, segment end, cell, the viewers' base) | 0 differences in 400 lanes (about 7 goals each; more than 20 lanes were behind when they were caught up: the test asserts it) |
+| a viewer teleports next to the cows: the packets he is told in the 120 ticks after (tick, cow, kind, values) | identical sets |
+| a viewer walks up, one chunk every 8 ticks, 200 ticks | identical packets |
+| a block is placed on the spot of a lane that is behind | every cow in the same state after 7 more ticks |
+| a gap of 150 ticks in the tick numbers | same goal chain for all 400 lanes, positions within 0.15 blocks, 90 % identical to the last bit (see the note below) |
+| lanes within reach of a viewer are never lazy, and become lazy again within a segment of his leaving | yes |
+| no tracker step is computed for a lane nobody watches (after the first ticks) | none logged |
+
+Note on the gap check: the lazy run and the tick-by-tick run differ by up to one walking step (0.1 block) in about 4 % of the lanes there.  The cause is not the replay: in the tick-by-tick run the first
+step after a gap cannot always be expressed as a plain delta, the lane is handed to the exact sweep and the generic tracker, and the sweep of that tick places the mob one step off the closed form (the same
+hand-off happens at a position sync every 400 ticks: `mc.entity_auto_end(bad, p_tick, ...)` then physics in the same tick; present in sql/541's lanes too).  Lazy lanes have no steps and so avoid it.
+The cows of the comparison are born at tick 100000 minus up to 29 and the runs are shorter than 370 ticks for the same reason: tick minus birth = 400 would end a lane in one run only.
+
+### 3. What made the cost, from profiling (the corrected picture of part 1)
+
+Per due mob the replay statement is ~60-90 us of CPU (the goal hash, the segment end, the floor verdict, a HOT update of a 250-byte row), about what part 1 had measured as "transitions 60-110 us",
+but **the fixed cost per tick, not the per-mob cost, was what lost against vanilla**:
+
+* **Planning.**  The statement that replays lanes with `p_ids` takes 13.7 ms to plan, and PostgreSQL kept choosing custom plans for it (they looked cheaper than the generic plan): 13.7 ms per call
+  of the catch-up path (a viewer's arrival, a block change).  `plan_cache_mode = force_generic_plan` on the function: 1.4 ms.  The per-tick path was less affected (its first plan is generic), which is why
+  part 1 measured no difference there.  Applied to `mc.entity_auto_run`, `mc.entity_auto_try` and `mc.entity_lane_try`.
+* **Statement set-up**: 1.4 ms per call for the 12-CTE statement even with nothing to do, 0.7 ms after splitting it into a replay statement and a step statement (the second only when an eager lane
+  inside the viewers' box is due), after taking the `UPDATE` of the wide `mc.entity` row out of it (opening its six indexes), and a single probe of "what is due" instead of three.
+* **Passes**: 2.7 statement passes per tick (80 due rows, then 10, then 1: the lanes that were behind by more than one segment) became one.
+* **Index on `goal_until`** (to find the due lanes): worse, not better.  Every segment update then writes an index entry (no HOT), and the dead ones are re-checked by every scan until the next vacuum
+  (the probe of one slot read 252 buffers to return one row: 6 ms).  The two partial indexes now are on immutable keys (`id` for the eager lanes, `id % 32` for the lazy ones), so the updates stay HOT.
+* **The floor test**: `mc.entity_floor_ok` is a SQL function with sub-selects: 30-42 us per call (executor start-up, not probes).  Each lane keeps the verdict "the 3x3 chunks around my cell are
+  uniform at my level" (`ucx`, `ucz`, `uok`; recomputed on a cell change by `mc.entity_floor3`, cleared by the invalidation trigger of sql/541), and a walk that stays within those chunks needs no probe.
+* **Dead ends**: removing the CTE materialization (-> 73 ms: every inlined stage re-evaluated the expressions of the one before for each use); a margin of two chunks instead of one around the viewers
+  (more eager lanes for nothing); a lane bench on a bloated lane table (the earlier runs of a database left 2,000 pages for 5,000 rows and HOT chains of 40 versions: `bench.sql` starts from a
+  `VACUUM FULL` now; the docker configuration vacuums every 10 s).
+* **Measuring**: `/proc/self/schedstat` has the resolution of a scheduler tick (4 ms) here, so a single tick's CPU is quantised and p99 values are noise; means over 100 ticks are fine.
+  Machine load of 2-8 from other agents moved single runs by up to 2x; every number below is a median of 3 repetitions alternated with the vanilla runs, with the range.
+
+### 4. Results (V D V D V D, `tests/bench/mobs2/campaign2.sh`, `docs/perf-mobs2-results/part2/campaign/`)
+
+CPU per tick, median [min-max] of 3 repetitions.  Vanilla: Server-thread cores x max(mean tick, 50 ms), the real 26.3 jar, `-Xms1G -Xmx2G`, view distance 5, simulation distance 10, one probe client.  dbcraft:
+`mc.entity_tick` on freshly generated flat chunks (`reset=1`), one transaction per tick, on-CPU time of the backend, 100 ticks after 150 warm-up ticks and a VACUUM.  `old` = part 1 of this work
+(commit d53eb24's tree, in its own database), `now` = this branch.  Load average during the runs: vanilla 2.1-7.5, dbcraft 3.7-7.6 (4 vCPUs shared with other agents).
+
+| scenario | vanilla | old (part 1) | **now** | now / vanilla | now, nobody connected | now, every mob walks all the time |
+|---|---|---|---|---|---|---|
+| 500 cows, nobody can see them (ring 100-140 blocks, view 5) | 5.0 [4.9-5.0] | 5.4 [4.6-5.9] | **3.5** [3.5-4.4] | **0.71** | **1.4** [1.1-2.2] | |
+| 2,000 cows, nobody can see them | 6.6 [6.2-6.8] | 11.4 [10.3-14.0] | 8.2 [7.0-10.1] | 1.24 | **4.2** [3.5-5.1] | |
+| 5,000 cows, nobody can see them | 10.5 [10.4-11.2] | 21.1 [19.3-21.6] | 13.2 [12.8-20.6] | 1.25 | **7.5** [7.3-8.3] | |
+| 2,000 cows in view | 81.5 [67.9-84.6] | 9.6 [9.2-15.5] | **9.5** [9.0-9.9] | **0.12** | | 11.8 [11.8-12.8] |
+| 5,000 cows in view | 195 [173-260] | 18.7 [18.4-18.8] | **20.6** [20.4-22.1] | **0.11** | | 32.6 [31.5-33.6] |
+
+(The scoreboard campaign measured vanilla at 6.0 / 11.5 ms for 2,000 / 5,000 cows out of sight and 61 / 149 in view on a quiet machine; here, at load 3-7, 6.6 / 10.5 and 81.5 / 195.  dbcraft's
+100-tick means move by 10-20 % between runs at that load.  Neither side is corrected.)
+
+* **Nobody can see the mobs and nobody is connected: below vanilla at all three sizes** (0.28, 0.64, 0.71 of vanilla): lanes replayed every 32nd tick cost 1.4 / 4.2 / 7.5 ms, that is 2.8 / 2.1 / 1.5 us
+  per mob and tick against vanilla's 10 / 3.3 / 2.1 (vanilla's fixed cost dominates at 500).
+* **A viewer is connected but cannot see the mobs (the scoreboard's "nobody in range" rows): 500 cows below vanilla (0.71), 2,000 and 5,000 still about 1.25x vanilla**, down from 1.7x and 2.0x (part 1)
+  and from the scoreboard's 5.7x and 6.6x (that tree on the contaminated world).  What is left over the nobody-connected case (+4 ms at 2,000, +6 ms at 5,000) is the viewer's margin: lanes within
+  `min(tracking range, view) + 1` = 6 chunks of him are simulated every tick (14 % of the ring's mobs; they cannot be lazy: a mob that crosses into his view has to be announced at the tick it crosses),
+  they send nothing while they are outside his view, but each time one *does* cross the edge of his view the lane ends, and the exact sweep, the generic tracker and the lane retry take
+  over for a few ticks: 0.2 mobs a tick at 5,000 cows, 3 ms a tick for the three statements together (about 13 ms of statement set-up per such mob).  Handling the appearance inside the lane statement instead of ending the lane would remove that; not done.
+* **In view: unchanged, 10-12x below vanilla** (the tick is the same tick: 9.5 against 9.6 ms at 2,000, 20.6 against 18.7 at 5,000: the lazy bookkeeping, the verdict columns and the second statement cost
+  the in-view case 0-10 %).  With every mob walking all the time (how the scoreboard ran these rows) 11.8 / 32.6 ms.
+* **Spread of the dbcraft runs** is 5-10 % for nobody-connected and in view, up to 25 % for the connected-viewer case (a few mobs a tick leaving lanes at the edge of his view).
+
+### 5. Should `dbcraft.entity-mode` be `inline` by default?  Measured: no.
+
+`tests/bench/mobs2/idle.sql` / `idle.sh`: players stand still, **no entity exists**, the hook that `mc.server_tick` calls (`if mc.entity_mode() <> 'off' then mc.entity_step(tick)`) is timed in wall
+microseconds (CPU time has a 4 ms resolution here), 200 ticks per cell, 3 rounds alternating the modes (`docs/perf-mobs2-results/part2/idle-entity-mode.txt`; the machine was shared: compare the minimum
+and p50):
+
+| players | `off` | `inline` (no mobs) | `split`, player connection | `split`, the entity connection |
+|---|---|---|---|---|
+| 0 | 15 us | 500-960 us | 60-70 us | 480-980 us |
+| 50 | 15-20 us | 700-1,600 us | 60-80 us | 720-1,380 us |
+| 200 | 15-20 us | 1,160-1,970 us | 63-86 us | 1,170-2,150 us |
+
+The cost with nothing to simulate is not about zero.  `inline` costs 0.5-1 ms at no players, 1.2-2 ms at 200 players (the viewer-cell refresh of every player every tick, the AI and tracker
+statements, the log row), which is 5-9 % of the scoreboard's idle-200 tick (20.6 ms) and 4-8x the whole quiet tick of an idle server with nobody connected (0.125 ms); and it **switches the quiet-tick
+fast path off**: `mc.tick_quiet` (sql/800) requires `mc.entity_mode() = 'off'`, so an idle server with no players would run full ticks.  The prototype spawner is also on in `inline` mode unless
+`dbcraft.entity_spawner = off` (a cow or a zombie within 16-32 blocks of every player every 40 ticks, 8 mobs per player): a default of `inline` would change what the server does, not only
+what it costs.  So `off` stays the default, and the server that wants items (drops, containers, death drops) and mobs sets it: `update mc.server_property set value = 'inline' where key =
+'dbcraft.entity-mode'` (`split` with `tools/entity_loop.sh` for the second connection), and `set dbcraft.entity_spawner = 'off'` for items without wandering mobs.  What would make `inline` free:
+an early exit in `mc.entity_step` when there are no entities and nobody to spawn for, a viewer refresh that only runs when a player changed chunk, and `mc.tick_quiet` accepting an empty entity table
+(sql/800 belongs to the idle track and was not touched).
+
+### 6. Still a loss / not done
+* **A viewer connected, mobs just outside his view: 1.25x vanilla at 2,000 and 5,000 cows** (above).  The margin band and the lane that ends when a mob crosses the edge of his view are the cost; the
+  fix (announce inside the lane statement, no end of the lane) was not built.
+* **A mob that cannot get a lane** (a built-up world: any column of its walk not at the floor level of its feet) costs 250-300 us per tick (exact sweep 60-80, lane retry of two functions 160, generic
+  tracker 30-60).  A world where a quarter of the ground has blocks on it costs 215-238 ms at 2,000 cows in view against 10 ms on flat ground.  Needs the negative cache and a cheaper floor test.
+* The first execution of every plan after a VACUUM / ANALYZE of the entity tables costs 3-30 ms (the cached plans are invalidated: 70 ms of re-planning per vacuum cycle, about 0.35 ms a tick at the
+  docker configuration's 10 s cycle) and shows up as spikes (p99 30-45 ms of the bench).
+* Lanes nobody can see are **not exact to the tick** at the moment they end near a floor edge (a lane that cannot continue ends at the tick it is replayed, up to 31 ticks after the tick it
+  expired at: the mob loses that walk); the equality tests use worlds where lanes stay on a floor.  `mc.entity_live` of a lazy lane is exact only after `mc.entity_auto_catchup`.
+* The comparison is still not like for like (vanilla's pathfinding, goals, tracker traffic: list above), and dbcraft's cows walk 45 % of the time against vanilla's 24 %.
+* Split mode (entity connection) was not re-measured in part 2; its block-event path (`mc.entity_wake_apply`) catches lanes up before it ends them, but in split mode the floor-change hook is off
+  (the lanes belong to the other connection) and a lane that is behind when the floor of its chunk changes is replayed against the new floor.
+
+### 7. Reproduce part 2
+```
+export PGHOST=/tmp PGPORT=57411 PGUSER=postgres
+tests/bench/mobs2/applydir.sh DB [DIR]            # apply the entity files of sql/ (or of DIR: the old tree) to a database
+OLD_DB=mob3old NEW_DB=dbcraft tests/bench/mobs2/campaign2.sh /dev/shm/mob3-res 3 500n,2000n,5000n,2000v,5000v     # V D V D V D
+python3 tests/bench/mobs2/aggregate2.py /dev/shm/mob3-res                                                       # the table of section 4
+psql -X -v mobs=2000 -v where=view -v reset=1 -v scatter=2000 -v warm=150 -f tests/bench/mobs2/bench.sql         # the world the scoreboard's edit scenario leaves behind
+tests/bench/mobs2/simdist.sh 2000v 2                                                                            # simulation distance 3 against 10
+tests/bench/mobs2/idle.sh 0 50 200                                                                              # section 5
+psql -X -q -At -f tests/bench/mobs2/fn.sql (functions) / passes.sql (passes per tick) / ae3.sql (plans with timing) / stages.py
+```
+Raw results: `docs/perf-mobs2-results/part2/`.
 
 ## Reproduce
 ```

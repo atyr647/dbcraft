@@ -30,12 +30,26 @@
 \else
 \set label ''
 \endif
+\if :{?reset}
+\else
+\set reset 0
+\endif
+\if :{?scatter}
+\else
+\set scatter 0
+\endif
 select set_config('dbcraft.entity_spawner', 'off', false);
 select set_config('dbcraft.entity_walk_prob', :'walk', false);
 update mc.server_property set value = '5' where key = 'view-distance';
+-- reset=1: the chunks of the mob area are regenerated flat first.  Mobs get lanes only on a uniform floor: a world that other scenarios scribbled in (the scoreboard's edit scenario leaves 2,000 stone
+-- and gold blocks in +-45) keeps most mobs out of their lanes (about 1,400 awake instead of 300 and 3-4x the cost), which is NOT a property of the simulation distance.
+delete from mc.chunk where :reset = 1 and dimension = 'minecraft:overworld' and cx between -12 and 11 and cz between -12 and 11;
+delete from mc.entity_floor where :reset = 1;
 select count(*) as chunks_generated from (select mc.generate_flat('minecraft:overworld', a.x, b.z)
   from generate_series(-12, 11) a(x), generate_series(-12, 11) b(z)
  where not exists (select 1 from mc.chunk c where c.dimension = 'minecraft:overworld' and c.cx = a.x and c.cz = b.z)) g \gset
+-- scatter=N: N single stone blocks on the ground in +-45 (what the scoreboard's edit scenario leaves behind): the mob scenarios then run on a floor that is not uniform
+select count(*) as blocks_scattered from (select mc.set_block('minecraft:overworld', (-45 + floor(random() * 91))::int, -60, (-45 + floor(random() * 91))::int, 'minecraft:stone') from generate_series(1, :scatter)) b \gset
 select count(*) as masks_built from (select mc.entity_build_mask('minecraft:overworld', a.x, b.z, c.sy)
   from generate_series(-12, 11) a(x), generate_series(-12, 11) b(z), generate_series(-4, -3) c(sy)
  where not exists (select 1 from mc.solid_mask m2 where m2.dimension = 'minecraft:overworld' and m2.cx = a.x and m2.cz = b.z and m2.sy = c.sy)) w \gset
@@ -66,7 +80,7 @@ from (
               -- one set of random numbers per mob: random() in a sub-select that does not depend on the row is evaluated ONCE (the first version of the ring put all 2,000 mobs into one chunk)
               from (select case when :mobs >= 5000 then 72 else 40 end as area, random() as u1, random() as u2, random() as u3, random() as u4 from generate_series(1, :mobs) g) r) q
 ) e;
-vacuum analyze mc.entity; vacuum analyze mc.entity_lane; analyze mc.player;
+vacuum (full, analyze) mc.entity; vacuum (full, analyze) mc.entity_lane; analyze mc.player;       -- (a compact start: the earlier runs of this database left bloated tables behind)
 create temp table _t (tick int, cpu float8, wall float8, ai float8, phys float8, trk float8, pick float8, awake int, rows_out int, bytes_out bigint, wal bigint);
 -- one transaction per tick (COMMIT in the loop), as the server runs it: in one big transaction every update of a row inserted by the same transaction would also run its foreign-key check
 create procedure pg_temp.run(p_from int, p_to int, p_rec boolean) language plpgsql as $$
@@ -88,6 +102,7 @@ end $$;
 -- warm-up, then VACUUM ANALYZE (what autovacuum + autoanalyze do within a minute on a real server: the transient of mobs entering their lanes leaves dead index entries and the statistics were taken when the lane table was empty: without the ANALYZE the plans were the wrong ones for 250 ticks and a 500-cow tick cost 11 ms instead of 3.5), then the measured ticks
 call pg_temp.run(1, :warm, false);
 vacuum analyze mc.entity, mc.entity_lane;
+-- (autovacuum_naptime = 10s in docker/postgresql.conf: a vacuum every 200 ticks or so; the measured window is 100 ticks after one)
 call pg_temp.run(:warm + 1, :warm + :ticks, true);
 select format('%s mobs=%s items=%s where=%s walk=%s viewers=%s | cpu ms avg %s p50 %s p99 %s | wall avg %s p99 %s | ai %s phys %s trk %s pick %s | awake %s lanes %s | out rows %s KB %s | wal KB %s | load %s',
               :'label', :mobs, :items, :'where', :'walk', :viewers,

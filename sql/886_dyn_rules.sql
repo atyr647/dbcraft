@@ -96,6 +96,9 @@ create or replace function mc.dyn_rebuild() returns void language plpgsql volati
 begin
     perform mc.dyn_rebuild_base();
     if exists (select 1 from mc.dyn_vec) then perform mc.dyn_rebuild_rules(); end if;
+    -- the two per-state facts the event trigger (sql/885) and the random-tick lists (sql/887) test by name, without reading the big arrays
+    update mc.dyn_state s set react = (v.flags[s.sid + 1] & (4 | 8 | 4096 | 65536 | 262144)) <> 0, tickc = (v.flags[s.sid + 1] & (524288 | 1048576 | 2097152 | 4194304)) <> 0
+      from mc.dyn_vec v where s.sid < v.n;
 end $$;
 
 -- Block.canSurvive of a block with rule p_rule at (qx, qy, qz): see the header

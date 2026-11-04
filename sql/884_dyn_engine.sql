@@ -85,6 +85,14 @@ begin
       into ln_x, ln_y, ln_z, ln_n
       from mc.block_tick t where t.dimension = p_dim and t.kind = 'l' and (t.x >> 4) between cx0 and cx1 and (t.z >> 4) between cz0 and cz1;
 
+    -- a fill's blocks are in the world already when its events are handled, but vanilla places them one by one: put the cells of the placements (kind 9) back to what they were, each is set
+    -- to its new state when its turn comes, so the reactions of an early block do not see the blocks that come after it
+    for u in 1 .. n loop
+        if p_kind[u] = 9 then
+            ci := gm[5 + (((p_y[u] >> 4) - sy0) * gm[4] + ((p_z[u] >> 4) - cz0)) * gm[5] + ((p_x[u] >> 4) - cx0) + 1];
+            secs[ci][(((p_y[u] & 15) << 8) | ((p_z[u] & 15) << 4) | (p_x[u] & 15)) + 1] := p_aux[u];
+        end if;
+    end loop;
     for u in 1 .. n loop
         kind := p_kind[u]; x := p_x[u]; y := p_y[u]; z := p_z[u]; aux := p_aux[u];
         ph := 1;
@@ -95,6 +103,7 @@ begin
             ix := (((y & 15) << 8) | ((z & 15) << 4) | (x & 15)) + 1;
             cell := secs[ci][ix];
 
+            if kind = 9 then cell := p_aux2[u]; secs[ci][ix] := cell; end if;                         -- (the placement of a fill's block: it is there from now on)
             if kind = 1 then
                 --------------------------------------------------------------------------------------------------------------------------------------- a fluid tick
                 fs := mc.dyn_fstate(fl, fa, cell);
@@ -229,21 +238,27 @@ begin
                     if greatest(case when y + 1 >= hs then 15 - p_darken else 0 end, 0) >= 9 and floor(random() * 7)::int = 0 and npv[cell + 1] >= 0 then act := array[1, x, y, z, npv[cell + 1], 2]; end if;
                 end if;
 
-            elsif kind = 4 then
+            elsif kind = 4 or kind = 9 or kind = 10 then
                 --------------------------------------------------------------------------------------------------------------------------------------- a change from outside
+                -- 4: Level.setBlock with flags 3 (onPlace, neighborChanged, updateShape, in that order); a /fill sets its blocks with flags 2 | 256 and updates the neighbours of every one of them AFTER all
+                -- are placed (FillCommand: UpdatedPosition list, then updateNeighboursOnBlockSet): 9 = the placement (onPlace, updateShape), 10 = the later neighbour update (neighborChanged).
                 ph := 3;
                 if aux <> cell then
-                    act := mc.dyn_on_place(secs, gm, fl, fa, kk, bidv, x, y, z, aux, cell, fast);
-                    foreach d in array array[4, 5, 0, 1, 2, 3] loop
-                        q := mc.dyn_at(secs, gm, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d));
-                        if (fl[q + 1] & 4) <> 0 then act := act || mc.dyn_liquid_react(secs, gm, fl, fa, kk, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d), q, fast); end if;
-                    end loop;
-                    foreach d in array array[4, 5, 2, 3, 0, 1] loop
-                        q := mc.dyn_at(secs, gm, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d));
-                        if (fl[q + 1] & (4 | 8 | 4096 | 262144)) <> 0 then
-                            act := act || mc.dyn_notify(secs, gm, fl, fa, kk, bidv, 2, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d), q, mc.dyn_opp(d), cell, fast, rl, stv, tg);
-                        end if;
-                    end loop;
+                    if kind <> 10 then act := mc.dyn_on_place(secs, gm, fl, fa, kk, bidv, x, y, z, aux, cell, fast); end if;
+                    if kind <> 9 then
+                        foreach d in array array[4, 5, 0, 1, 2, 3] loop
+                            q := mc.dyn_at(secs, gm, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d));
+                            if (fl[q + 1] & 4) <> 0 then act := act || mc.dyn_liquid_react(secs, gm, fl, fa, kk, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d), q, fast); end if;
+                        end loop;
+                    end if;
+                    if kind <> 10 then
+                        foreach d in array array[4, 5, 2, 3, 0, 1] loop
+                            q := mc.dyn_at(secs, gm, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d));
+                            if (fl[q + 1] & (4 | 8 | 4096 | 262144)) <> 0 then
+                                act := act || mc.dyn_notify(secs, gm, fl, fa, kk, bidv, 2, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d), q, mc.dyn_opp(d), cell, fast, rl, stv, tg);
+                            end if;
+                        end loop;
+                    end if;
                 end if;
 
             elsif kind = 5 then

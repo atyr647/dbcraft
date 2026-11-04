@@ -9,14 +9,16 @@
 
 -- the general VarInt routine (the original implementation, kept for large values and negatives)
 create or replace function proto.varint_slow(n int) returns bytea language sql immutable parallel safe as $$
+  -- sql/920 (docs/PERF-STORM.md): no FROM subselect any more, so it IS inlined (the subselect version ran a full executor start-up, about 50 us, for every VarInt of 16384 and above and every
+  -- negative one: the packet ids 128-143 (teleport_entity, update_attributes, update_advancements, update_tags, waypoint ...) go through proto.frame's slow branch, negative chunk and block
+  -- coordinates through proto.varint).  Same bytes: a negative int is its 32-bit two's complement, the fifth byte holds its top four bits.
   select case
-    when u < 128        then set_byte('\x00'::bytea, 0, u::int)
-    when u < 16384      then set_byte(set_byte('\x0000'::bytea, 0, ((u & 127) | 128)::int), 1, (u >> 7)::int)
-    when u < 2097152    then set_byte(set_byte(set_byte('\x000000'::bytea, 0, ((u & 127) | 128)::int), 1, (((u >> 7) & 127) | 128)::int), 2, (u >> 14)::int)
-    when u < 268435456  then set_byte(set_byte(set_byte(set_byte('\x00000000'::bytea, 0, ((u & 127) | 128)::int), 1, (((u >> 7) & 127) | 128)::int), 2, (((u >> 14) & 127) | 128)::int), 3, (u >> 21)::int)
-    else set_byte(set_byte(set_byte(set_byte(set_byte('\x0000000000'::bytea, 0, ((u & 127) | 128)::int), 1, (((u >> 7) & 127) | 128)::int), 2, (((u >> 14) & 127) | 128)::int), 3, (((u >> 21) & 127) | 128)::int), 4, (u >> 28)::int)
-  end
-  from (select n::bigint & 4294967295 as u) s $$;
+    when n >= 0 and n < 128        then set_byte('\x00'::bytea, 0, n)
+    when n >= 0 and n < 16384      then set_byte(set_byte('\x0000'::bytea, 0, (n & 127) | 128), 1, n >> 7)
+    when n >= 0 and n < 2097152    then set_byte(set_byte(set_byte('\x000000'::bytea, 0, (n & 127) | 128), 1, ((n >> 7) & 127) | 128), 2, n >> 14)
+    when n >= 0 and n < 268435456  then set_byte(set_byte(set_byte(set_byte('\x00000000'::bytea, 0, (n & 127) | 128), 1, ((n >> 7) & 127) | 128), 2, ((n >> 14) & 127) | 128), 3, n >> 21)
+    else set_byte(set_byte(set_byte(set_byte(set_byte('\x0000000000'::bytea, 0, (n & 127) | 128), 1, ((n >> 7) & 127) | 128), 2, ((n >> 14) & 127) | 128), 3, ((n >> 21) & 127) | 128), 4, (n >> 28) & 15)
+  end $$;
 
 -- VarInt: the common sizes (0..16383, covering packet ids, entity ids and lengths) are direct expressions
 create or replace function proto.varint(n int) returns bytea language sql immutable parallel safe as $$
