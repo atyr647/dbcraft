@@ -275,7 +275,7 @@ end $$;
 ------------------------------------------------------------------------------------------------ the tick step (the one hook line in mc.tick_core)
 create or replace function mc.container_step(p_cur bigint) returns void language plpgsql as $$
 declare i_click int := mc.sid('container_click'); i_close int := mc.sid('container_close'); i_input int := mc.sid('player_input'); i_use int := mc.sid('use_item_on');
-        r record; msr mc.menu_state; pl mc.player; sig_blk text;
+        r record; msr mc.menu_state; pl mc.player; sig_blk text; vison boolean := mc.vis_on();
 begin
   for r in select m.seq, m.packet_id, m.body, p as pl from mc.play_in_work m join mc.player p on p.conn_id = m.conn_id
             where m.packet_id in (i_click, i_close, i_input, i_use) order by m.seq loop
@@ -291,7 +291,7 @@ begin
       raise notice 'mc.container_step: packet % from connection ignored: %', r.packet_id, sqlerrm;
     end;
   end loop;
-  delete from mc.play_in_work where packet_id in (i_click, i_close) or (packet_id = i_input and not mc.vis_on());       -- (with the vanilla tracker, sql/904 reads the shift key from the same packets and removes them)
+  delete from mc.play_in_work where packet_id in (i_click, i_close) or (packet_id = i_input and not vison);       -- (with the vanilla tracker, sql/904 reads the shift key from the same packets and removes them)
   -- menus whose block is gone or whose player walked away close (ServerPlayer.tick: containerMenu.stillValid)
   for msr in select * from mc.menu_state where open loop
     select * into pl from mc.player where uuid = msr.player;
