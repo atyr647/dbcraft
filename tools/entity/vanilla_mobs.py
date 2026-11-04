@@ -129,11 +129,15 @@ def main():
         probe = subprocess.Popen([sys.executable, "-I", os.path.join(HERE, "probe_client.py"), "--port", str(a.port), "--name", "Stay", "--seconds", "100000", "--mark", mark],
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(8)
-        r = Rcon()
+        try:
+            r = Rcon()
+        except BaseException as ex:
+            print("rep", rep, "could not connect to rcon:", ex, file=sys.stderr); continue
         for rule in ("mob_drops", "entity_drops"):          # `kill` of the previous scenario's mobs must not leave loot items (and xp) lying around: they are entities too (found: 803 extra items in the 2,000-cow scenario)
             r.cmd(f"gamerule {rule} false")
         try:
             for code in scen:
+              try:
                 rnd = random.Random(7)
                 r.cmd("kill @e[type=!player]"); time.sleep(3)
                 left = r.cmd("execute if entity @e[type=!player]")
@@ -169,6 +173,9 @@ def main():
                         subprocess.call(a.after.format(code=code, rep=rep), shell=True)
                     finally:
                         os.kill(pid, signal.SIGCONT)
+              except BaseException as ex:                  # a server that died (memory cgroup of a shared machine) or a stuck rcon: this repetition ends, the next one starts a fresh server
+                print("rep", rep, "scenario", code, "aborted:", repr(ex), file=sys.stderr, flush=True)
+                break
         finally:
             probe.terminate()
             try:
