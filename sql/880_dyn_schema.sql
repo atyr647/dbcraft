@@ -151,12 +151,15 @@ create table if not exists mc.dyn_late_event (
     kind text not null, dimension text not null, x int not null, y int not null, z int not null, old_state text not null, new_state text not null, cells bytea
 );
 
+-- random ticks (sql/887): the chunks whose list of randomly ticking cells that can change something must be rebuilt (a block changed in or next to them, or they are new)
+create table if not exists mc.dyn_rt_dirty (dimension text not null, cx int not null, cz int not null, primary key (dimension, cx, cz));
+
 -- ---------------------------------------------------------------------------------------------------------------------------------------- settings
 insert into mc.server_property (key, value, default_value, note) values
     ('dbcraft.dynamics', 'on', 'on', 'dbcraft: world dynamics (scheduled ticks, fluids, falling blocks, neighbour updates, random ticks); off makes every dynamics entry point return at once'),
-    ('dbcraft.dynamics-max-ticks', '500', '500', 'dbcraft: most scheduled block ticks, and most fluid ticks, run in one tick (vanilla: 65,536); the rest stay queued and run on the following ticks, so a huge flow lags instead of stalling the server'),
+    ('dbcraft.dynamics-max-ticks', '65536', '65536', 'dbcraft: most scheduled block ticks, and most fluid ticks, run in one tick; the rest stay queued for the following ticks.  65,536 is vanilla''s limit (ServerLevel.tick passes it to LevelTicks.tick, whose drain stops there and leaves the rest queued)'),
     ('dbcraft.dynamics-dimensions', 'minecraft:overworld,minecraft:the_nether,minecraft:the_end', 'minecraft:overworld,minecraft:the_nether,minecraft:the_end', 'dbcraft: comma-separated dimensions in which block edits trigger world dynamics (other dimensions, such as the tests'' dbcraft:a, store blocks without reacting)'),
-    ('dbcraft.random-tick-chunk-budget', '300', '300', 'dbcraft: most chunk columns whose sections get random ticks in one tick; more candidates are served in slices of several ticks that draw proportionally more positions at once (same rate, burstier)')
+    ('dbcraft.random-tick-chunk-budget', '4', '4', 'dbcraft: most chunks whose list of randomly ticking cells that can change something is rebuilt per random-tick run (the rest wait for the next runs)')
 on conflict (key) do nothing;
 
 create or replace function mc.dyn_enabled() returns boolean language plpgsql stable as $$

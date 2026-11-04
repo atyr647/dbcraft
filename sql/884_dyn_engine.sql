@@ -24,9 +24,10 @@ declare
     cx0 int; cx1 int; cz0 int; cz1 int; sy0 int; sy1 int;
     secs  int4[]; gm int4[];
     -- the change log (positions with the new state, in order)
-    ch_n  int := 0; ch_x int4[] := '{}'; ch_y int4[] := '{}'; ch_z int4[] := '{}'; ch_new int4[] := '{}'; ch_loud boolean[] := '{}';
+    ch_n  int := 0; ch_x int4[] := '{}'; ch_y int4[] := '{}'; ch_z int4[] := '{}'; ch_new int4[] := '{}'; ch_loud boolean[] := '{}'; lo_x int4[] := '{}'; lo_y int4[] := '{}'; lo_z int4[] := '{}'; lo_n int := 0;
     -- pending ticks (existing ones from the queue, then the new ones of this run): position key, type and kind
     pk    int8[] := '{}'; pt int4[] := '{}'; pkind "char"[] := '{}';
+    hk    int8[]; hv int4[]; hmask int8; hp int8; hq int8; hv0 int; hn int;           -- the same pending ticks as an open-addressing hash set (value 0 = empty slot)
     nt_n  int := 0; nt_x int4[] := '{}'; nt_y int4[] := '{}'; nt_z int4[] := '{}'; nt_kind "char"[] := '{}'; nt_type int4[] := '{}'; nt_due int8[] := '{}';
     -- pending landings (cells that falling blocks are on their way to): from the queue and from this run
     ln_n int := 0; ln_x int4[] := '{}'; ln_y int4[] := '{}'; ln_z int4[] := '{}';
@@ -39,7 +40,7 @@ declare
     op int; ax int; ay int; az int; pa int; pb int;
     cell int; fs int; fam int; nl int; below int; bf int; nb int; sel int4[]; ci int; old int; d int; q int; qx int; qy int; qz int; key int8; ix int; found boolean;
     dly int; drp int; reach int; conv boolean; sc int; tmp int4[]; act int4[];
-    wrote int := 0; land_y int; wet boolean; found_rows int[]; hs int; lt int; tx int; ty2 int; tz int; gsum numeric; gs float8; g1 float8; ab int; m1 int; m2 int; nid int; tkc "char"; ev_max bigint;
+    wrote int := 0; cr record; cc int4[]; dcx int4[]; dcz int4[]; dver int8[]; land_y int; wet boolean; found_rows int[]; hs int; lt int; tx int; ty2 int; tz int; gsum numeric; gs float8; g1 float8; ab int; m1 int; m2 int; nid int; tkc "char"; ev_max bigint;
 begin
     if n = 0 then return 0; end if;
     select * into v from mc.dyn_vec;
@@ -68,6 +69,16 @@ begin
       into pk, pt, pkind
       from mc.block_tick t
      where t.dimension = p_dim and t.kind in ('f', 'b') and (t.x >> 4) between cx0 and cx1 and (t.z >> 4) between cz0 and cz1;
+
+    hn := 1024;
+    while hn < 4 * (cardinality(pk) + 16 * n + 64) loop hn := hn * 2; end loop;
+    hmask := hn - 1; hk := array_fill(0::int8, array[hn]); hv := array_fill(0, array[hn]);
+    for ii in 1 .. cardinality(pk) loop
+        hv0 := pt[ii] * 2 + (case when pkind[ii] = 'f'::"char" then 0 else 1 end) + 1;
+        hp := (((pk[ii] & 2147483647) * 40503 + (pk[ii] >> 31) * 9973 + hv0 * 7919) & hmask);
+        while hv[hp + 1] <> 0 loop hp := (hp + 1) & hmask; end loop;
+        hk[hp + 1] := pk[ii]; hv[hp + 1] := hv0;
+    end loop;
 
     select coalesce(array_agg(t.x order by t.seq), '{}'), coalesce(array_agg(t.y order by t.seq), '{}'), coalesce(array_agg(t.z order by t.seq), '{}'), count(*)::int
       into ln_x, ln_y, ln_z, ln_n
@@ -262,31 +273,41 @@ begin
                     if old = pa then continue; end if;
                     secs[ci][ix] := pa;
                     ch_n := ch_n + 1; ch_x[ch_n] := ax; ch_y[ch_n] := ay; ch_z[ch_n] := az; ch_new[ch_n] := pa; ch_loud[ch_n] := pb = 1;
+                    if pb = 1 then lo_n := lo_n + 1; lo_x[lo_n] := ax; lo_y[lo_n] := ay; lo_z[lo_n] := az; end if;
                     wrote := wrote + 1;
                     tmp := mc.dyn_on_place(secs, gm, fl, fa, kk, bidv, ax, ay, az, old, pa, fast);
                     if pb = 2 then continue; end if;                                                    -- setBlock with flags 2 (random ticks): the clients are told, nothing is notified
                     foreach d in array array[4, 5, 0, 1, 2, 3] loop                                     -- neighborChanged: WEST EAST DOWN UP NORTH SOUTH
                         qx := ax + mc.dyn_dx(d); qy := ay + mc.dyn_dy(d); qz := az + mc.dyn_dz(d);
                         q := secs[gm[5 + (((qy >> 4) - sy0) * gm[4] + ((qz >> 4) - cz0)) * gm[5] + ((qx >> 4) - cx0) + 1]][(((qy & 15) << 8) | ((qz & 15) << 4) | (qx & 15)) + 1];
-                        if (fl[q + 1] & 4) <> 0 then tmp := tmp || mc.dyn_liquid_react(secs, gm, fl, fa, kk, qx, qy, qz, q, fast); end if;
+                        if (fl[q + 1] & 4) <> 0 then
+                            if (fl[q + 1] & 16) = 0 then tmp := tmp || array[2, qx, qy, qz, mc.dyn_ftype(mc.dyn_fstate(fl, fa, q)), 5];            -- water: LiquidBlock.neighborChanged just schedules its tick (dyn_liquid_react)
+                            else tmp := tmp || mc.dyn_liquid_react(secs, gm, fl, fa, kk, qx, qy, qz, q, fast); end if;
+                        end if;
                     end loop;
                     foreach d in array array[4, 5, 2, 3, 0, 1] loop                                     -- updateShape: WEST EAST NORTH SOUTH DOWN UP
                         qx := ax + mc.dyn_dx(d); qy := ay + mc.dyn_dy(d); qz := az + mc.dyn_dz(d);
                         q := secs[gm[5 + (((qy >> 4) - sy0) * gm[4] + ((qz >> 4) - cz0)) * gm[5] + ((qx >> 4) - cx0) + 1]][(((qy & 15) << 8) | ((qz & 15) << 4) | (qx & 15)) + 1];
-                        if (fl[q + 1] & (4 | 8 | 4096 | 262144)) <> 0 then tmp := tmp || mc.dyn_notify(secs, gm, fl, fa, kk, bidv, 2, qx, qy, qz, q, mc.dyn_opp(d), pa, fast, rl, stv, tg); end if;
+                        if (fl[q + 1] & (4 | 8 | 4096 | 262144)) <> 0 then
+                            -- a liquid block reacts to updateShape only when it or the changed cell is a source (dyn_notify): skip the call otherwise
+                            if (fl[q + 1] & 4) = 0 or (fl[q + 1] & 32) <> 0 or (fl[pa + 1] & 32) <> 0 then
+                                tmp := tmp || mc.dyn_notify(secs, gm, fl, fa, kk, bidv, 2, qx, qy, qz, q, mc.dyn_opp(d), pa, fast, rl, stv, tg);
+                            end if;
+                        end if;
                     end loop;
 
                 elsif op = 2 or op = 3 then                                                             -- SCHED_FLUID / SCHED_BLOCK: ignored when the same tick is pending
                     key := ((ax::int8 & 33554431) << 35) | ((az::int8 & 33554431) << 10) | (ay + 128);
-                    found := false;
                     tkc := case when op = 2 then 'f'::"char" else 'b'::"char" end;
-                    ii := array_position(pk, key);
-                    while ii is not null loop
-                        if pt[ii] = pa and pkind[ii] = tkc then found := true; exit; end if;
-                        ii := array_position(pk, key, ii + 1);
+                    hv0 := pa * 2 + (case when op = 2 then 0 else 1 end) + 1;
+                    hp := (((key & 2147483647) * 40503 + (key >> 31) * 9973 + hv0 * 7919) & hmask);
+                    found := false;
+                    while hv[hp + 1] <> 0 loop
+                        if hk[hp + 1] = key and hv[hp + 1] = hv0 then found := true; exit; end if;
+                        hp := (hp + 1) & hmask;
                     end loop;
                     if not found then
-                        pk := pk || key; pt := pt || pa; pkind := pkind || tkc;
+                        hk[hp + 1] := key; hv[hp + 1] := hv0;
                         nt_n := nt_n + 1; nt_x[nt_n] := ax; nt_y[nt_n] := ay; nt_z[nt_n] := az; nt_kind[nt_n] := tkc; nt_type[nt_n] := pa;
                         nt_due[nt_n] := p_cur + pb;
                     end if;
@@ -366,15 +387,30 @@ begin
     ---------------------------------------------------------------------------------------------------------------------------------------------------- write back
     if ch_n > 0 then
         select coalesce(max(id), 0) into ev_max from mc.block_event;
+        select array_agg(d.cx), array_agg(d.cz), array_agg(c.version) into dcx, dcz, dver
+          from (select distinct u.x >> 4 as cx, u.z >> 4 as cz from unnest(ch_x, ch_z) u(x, z)) d join mc.chunk c on c.dimension = p_dim and c.cx = d.cx and c.cz = d.cz;
         perform set_config('mc.dyn_busy', 'on', false);
         perform mc.set_blocks(p_dim, ch_x, ch_y, ch_z, array(select s.name from unnest(ch_new) with ordinality t(sid, o) join mc.dyn_state s on s.sid = t.sid order by t.o));
         perform set_config('mc.dyn_busy', 'off', false);
+        -- the sections written are decoded already (the engine's private copy): store them in the cache under the chunks' new versions instead of decoding them again on the next tick
+        for cr in select (u.x >> 4) as cx, (u.y >> 4) as sy, (u.z >> 4) as cz, array_agg((((u.y & 15) << 8) | ((u.z & 15) << 4) | (u.x & 15)) order by u.o) as ixs, array_agg(u.sid order by u.o) as news
+                    from unnest(ch_x, ch_y, ch_z, ch_new) with ordinality u(x, y, z, sid, o) group by 1, 2, 3 loop
+            select k.cells into cc from mc.dyn_sec_cache k where k.dimension = p_dim and k.cx = cr.cx and k.cz = cr.cz and k.sy = cr.sy;
+            if found then
+                for ii in 1 .. cardinality(cr.ixs) loop cc[cr.ixs[ii] + 1] := cr.news[ii]; end loop;
+                update mc.dyn_sec_cache k set cells = cc where k.dimension = p_dim and k.cx = cr.cx and k.cz = cr.cz and k.sy = cr.sy;
+            end if;
+        end loop;
+        -- the version of a chunk covers all its sections: the cached sections of these chunks that were not written are still right, under the new version
+        update mc.dyn_sec_ver k set version = c.version
+          from unnest(dcx, dcz, dver) d(cx, cz, v) join mc.chunk c on c.dimension = p_dim and c.cx = d.cx and c.cz = d.cz
+         where k.dimension = p_dim and k.cx = d.cx and k.cz = d.cz and k.version = d.v;
         -- vanilla's setBlock sends no break effect (level_event 2001); only destroyBlock does.  dbcraft's broadcast sends it for every 'block' event that turns a block into air,
         -- so the changes that are not destructions are re-recorded as one-position 'cells' events, which never get it (same set order, same packets otherwise)
         update mc.block_event e set kind = 'cells', x = (e.x >> 4) * 16, y = (e.y >> 4) * 16, z = (e.z >> 4) * 16,
                cells = mc.box_bitmap(e.x & 15, e.x & 15, e.y & 15, e.y & 15, e.z & 15, e.z & 15)
          where e.id > ev_max and e.kind = 'block' and e.dimension = p_dim
-           and not exists (select 1 from unnest(ch_x, ch_y, ch_z, ch_loud) l(x, y, z, loud) where l.x = e.x and l.y = e.y and l.z = e.z and l.loud);
+           and (lo_n = 0 or not exists (select 1 from unnest(lo_x, lo_y, lo_z) l(x, y, z) where l.x = e.x and l.y = e.y and l.z = e.z));
     end if;
     if p_late and ch_n > 0 then
         with moved as (delete from mc.block_event e where e.id > ev_max returning e.id, e.kind, e.dimension, e.x, e.y, e.z, e.old_state, e.new_state, e.cells)

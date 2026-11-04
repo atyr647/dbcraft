@@ -29,17 +29,17 @@ create unlogged table if not exists mc.dyn_sec_cache (dimension text not null, c
 
 create or replace function mc.dyn_secs(p_dim text, cx0 int, cx1 int, sy0 int, sy1 int, cz0 int, cz1 int, p_need int[]) returns int4[] language plpgsql volatile as $$
 declare
-    v    mc.dyn_vec%rowtype;
+    vn   int; vk1 int; vk2 int;
     d    mc.dimension%rowtype;
     smin int; smax int;
     f_bar int4[]; f_air int4[]; f_void int4[];
     res  int4[];
     ncx  int := cx1 - cx0 + 1; ncz int := cz1 - cz0 + 1;
 begin
-    select * into v from mc.dyn_vec;
+    select n, k[1], k[2] into vn, vk1, vk2 from mc.dyn_vec;                       -- (only these: the other arrays are large)
     select * into d from mc.dimension where name = p_dim;
     smin := d.min_y >> 4; smax := (d.min_y + d.height - 1) >> 4;
-    f_bar := array_fill(v.n, array[4096]); f_air := array_fill(v.k[1], array[4096]); f_void := array_fill(v.k[2], array[4096]);
+    f_bar := array_fill(vn, array[4096]); f_air := array_fill(vk1, array[4096]); f_void := array_fill(vk2, array[4096]);
     -- decode and cache the real sections that are not cached (or whose chunk changed); stable-function rules do not allow this write in a STABLE function, hence volatile below
     select array_agg(r.row order by r.ord) into res from (
         select 0 as ord, f_bar as row
@@ -48,15 +48,20 @@ begin
                case when c.cx is null then f_bar
                     when t.sy < smin or t.sy > smax then f_void
                     when s.sy is null then f_air
-                    when k.version = c.version then k.cells
+                    when kv.version = c.version and k.cells is not null then k.cells
                     else mc.dyn_decode_cached(p_dim, t.cx, t.sy, t.cz, c.version, s.bits, s.data, s.palette) end
           from unnest(p_need) with ordinality n(slot, i)
           cross join lateral (select sy0 + (n.slot - 1) / (ncz * ncx) as sy, cz0 + ((n.slot - 1) / ncx) % ncz as cz, cx0 + (n.slot - 1) % ncx as cx) t
           left join mc.chunk c on c.dimension = p_dim and c.cx = t.cx and c.cz = t.cz
           left join mc.chunk_section s on s.dimension = p_dim and s.cx = t.cx and s.cz = t.cz and s.sy = t.sy
+          left join mc.dyn_sec_ver kv on kv.dimension = p_dim and kv.cx = t.cx and kv.cz = t.cz and kv.sy = t.sy
           left join mc.dyn_sec_cache k on k.dimension = p_dim and k.cx = t.cx and k.cz = t.cz and k.sy = t.sy) r;
     return res;
 end $$;
+
+-- which chunk version each cached section is valid for (narrow rows: a chunk edit bumps the version of the chunk's cached sections that were not written, 30 bytes each, not a 16 KB row)
+create unlogged table if not exists mc.dyn_sec_ver (dimension text not null, cx int not null, sy int not null, cz int not null, version bigint not null, primary key (dimension, cx, cz, sy));
+alter table mc.dyn_sec_cache alter column cells set storage external;       -- no compression: reading and writing 16 KB rows should not cost a pglz pass
 
 -- decode a section and remember it (the section row's palette names become state ids)
 create or replace function mc.dyn_decode_cached(p_dim text, p_cx int, p_sy int, p_cz int, p_version bigint, p_bits int, p_data bytea, p_palette text[]) returns int4[] language plpgsql volatile as $$
@@ -66,5 +71,7 @@ begin
                                                   else array(select b.state_id from unnest(p_palette) with ordinality p(nm, o) join ref.block_state b on b.name = p.nm order by o) end);
     insert into mc.dyn_sec_cache (dimension, cx, sy, cz, version, cells) values (p_dim, p_cx, p_sy, p_cz, p_version, cells)
     on conflict (dimension, cx, cz, sy) do update set version = excluded.version, cells = excluded.cells;
+    insert into mc.dyn_sec_ver (dimension, cx, sy, cz, version) values (p_dim, p_cx, p_sy, p_cz, p_version)
+    on conflict (dimension, cx, cz, sy) do update set version = excluded.version;
     return cells;
 end $$;

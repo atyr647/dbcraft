@@ -215,6 +215,50 @@ select t.is_true('... and farmland next to water stays wet', (select count(*) fr
 update mc.server_property set value = '4' where key = 'dbcraft.random-tick-interval';
 update mc.server_property set value = '6' where key = 'dbcraft.random-tick-max-hits';
 
+-- the lists of active cells (sql/887): a cell that is not on its section's list must never change under a random tick, wherever it is (chunk borders included) ---------------------------
+select pg_temp.reset();
+delete from mc.game_rule; insert into mc.game_rule values ('minecraft:random_tick_speed', '3');
+select mc.fill('minecraft:overworld', -20, -61, -20, 20, -61, 20, 'minecraft:dirt');
+select mc.fill('minecraft:overworld', -20, -61, -20, -3, -61, 20, 'minecraft:grass_block[snowy=false]');                  -- a grass field with an edge to bare dirt at x = -2
+select mc.fill('minecraft:overworld', -12, -60, -8, -8, -60, -4, 'minecraft:stone');                                       -- stone above part of the field: that grass dies
+select mc.fill('minecraft:overworld', -16, -61, 10, -14, -61, 12, 'minecraft:dirt');                                      -- a hole in the field next to a chunk border (x = -16)
+select mc.fill('minecraft:overworld', 2, -61, -10, 10, -61, -10, 'minecraft:farmland[moisture=7]');                       -- wet farmland with water beside it, dry farmland further on
+select pg_temp.put(11, -61, -10, 'minecraft:water');
+select mc.fill('minecraft:overworld', 2, -61, 6, 10, -61, 6, 'minecraft:farmland[moisture=0]');
+select mc.fill('minecraft:overworld', 2, -60, -10, 10, -60, -10, 'minecraft:wheat[age=7]'); select mc.fill('minecraft:overworld', 2, -60, 6, 5, -60, 6, 'minecraft:wheat[age=2]');
+select pg_temp.put(12, -60, 12, 'minecraft:oak_sapling[stage=0]'); select pg_temp.put(13, -60, 12, 'minecraft:oak_sapling[stage=1]');
+select pg_temp.put(12, -61, 12, 'minecraft:grass_block[snowy=false]'); select pg_temp.put(13, -61, 12, 'minecraft:grass_block[snowy=false]');
+select t.is_true('every change of the world queued the chunks it touches for a rebuild of the lists', (select count(*) from mc.dyn_rt_dirty) >= 16);
+do $$
+declare cx int; cz int;
+begin
+  for cx in -2 .. 1 loop for cz in -2 .. 1 loop perform mc.dyn_rt_build('minecraft:overworld', cx, cz); end loop; end loop;
+end $$;
+create temp table rt_all as
+  select b.x, b.y, b.z, b.block, s.sid from mc.blocks_in('minecraft:overworld', -20, -61, -20, 20, -59, 20) b join mc.dyn_state s on s.name = b.block
+   where b.block like 'minecraft:grass_block%' or b.block like 'minecraft:wheat%' or b.block like 'minecraft:farmland%' or b.block like 'minecraft:oak_sapling%';
+create temp table rt_active as
+  select (a.cx * 16 + (c.p & 15)) as x, (a.sy * 16 + (c.p >> 8)) as y, (a.cz * 16 + ((c.p >> 4) & 15)) as z
+    from mc.dyn_rt_sec a, lateral unnest(a.cells) c(p) where a.dimension = 'minecraft:overworld';
+select t.is_true('the lists are short: ' || (select count(*) from rt_active) || ' active of ' || (select count(*) from rt_all) || ' tickable cells', (select count(*) from rt_active) < (select count(*) from rt_all) / 2);
+select t.is_true('grass under stone, the grass edge, the hole next to the chunk border, bare dry farmland, growing wheat and the stage-0 sapling are active',
+                 (select count(*) from rt_active) > 50 and exists (select 1 from rt_active where x = -10 and y = -61 and z = -6) and exists (select 1 from rt_active where x = -3 and y = -61 and z = 0)
+                 and exists (select 1 from rt_active where x = -17 and y = -61 and z = 11) and exists (select 1 from rt_active where x = 8 and y = -61 and z = 6) and exists (select 1 from rt_active where x = 3 and y = -60 and z = 6)
+                 and exists (select 1 from rt_active where x = 12 and y = -60 and z = 12));
+select t.is_true('grass in the middle of the field, wet farmland, ripe wheat and the stage-1 sapling are not',
+                 not exists (select 1 from rt_active where (x, y, z) in ((-18, -61, -18), (-18, -61, 0), (8, -61, -10), (5, -60, -10), (13, -60, 12))));
+-- 40 random ticks on every inactive cell, in daylight with open sky, in ONE run (the world is not allowed to change): nothing changes
+select t.eq('40 random ticks on each of ' || (select count(*) from rt_all i where not exists (select 1 from rt_active a where a.x = i.x and a.y = i.y and a.z = i.z)) || ' inactive cells change nothing',
+            (select mc.dyn_run('minecraft:overworld', 5000, array_agg(3), array_agg(i.x), array_agg(i.y), array_agg(i.z), array_agg(i.sid), false, array_agg(i.y + 1), 0)
+               from (select r.* from rt_all r, generate_series(1, 40) g where not exists (select 1 from rt_active a where a.x = r.x and a.y = r.y and a.z = r.z)) i), 0);
+-- and the active ones do change things
+select t.is_true('random ticks on the active cells change blocks',
+                 (select mc.dyn_run('minecraft:overworld', 5000, array_agg(3), array_agg(i.x), array_agg(i.y), array_agg(i.z), array_agg(i.sid), false, array_agg(i.y + 1), 0)
+                    from (select r.* from rt_all r, generate_series(1, 40) g where exists (select 1 from rt_active a where a.x = r.x and a.y = r.y and a.z = r.z)) i) > 0);
+select mc.generate_flat('minecraft:overworld', 90, 90);
+select t.eq('a new chunk and its neighbours are queued for a rebuild', (select count(*) from mc.dyn_rt_dirty where dimension = 'minecraft:overworld' and cx between 89 and 91 and cz between 89 and 91), 9::bigint);
+select pg_temp.reset();
+
 -- cost when nothing is due -------------------------------------------------------------------------------------------------------------------------------------------------
 select pg_temp.reset();
 delete from mc.player;

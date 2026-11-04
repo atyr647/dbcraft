@@ -32,13 +32,10 @@ create or replace function mc.dyn_famount(f int) returns int language sql immuta
   select case when f < 0 then 0 when (f & 15) = 0 or (f & 15) = 8 then 8 else 8 - (f & 15) end $$;
 
 -- FlowingFluid.canPassThroughWall(dir, from, to): the fluid at `from` may enter `to` through the face in direction dir, by the two collision shapes
-create or replace function mc.dyn_pass_wall(p_fs int, p_ts int, p_dir int, p_co int4[], p_sk int2[], p_oc bytea, p_ns int) returns boolean language plpgsql immutable parallel safe as $$
-declare tk int := coalesce(p_sk[p_co[p_ts + 1] + 1], 1); fk int := coalesce(p_sk[p_co[p_fs + 1] + 1], 1);
-begin
-    if tk = 1 or fk = 1 then return false; end if;                    -- a full block on either side
-    if tk = 0 or fk = 0 then return true; end if;                     -- one side empty: the other shape alone cannot cover the face
-    return get_bit(p_oc, (p_co[p_fs + 1] * p_ns + p_co[p_ts + 1]) * 6 + p_dir) = 0;      -- Shapes.mergedFaceOccludes(from, to, dir), precomputed from the jar
-end $$;
+create or replace function mc.dyn_pass_wall(p_fs int, p_ts int, p_dir int, p_co int4[], p_sk int2[], p_oc bytea, p_ns int) returns boolean language sql immutable parallel safe as $$
+  select case when coalesce(p_sk[p_co[p_ts + 1] + 1], 1) = 1 or coalesce(p_sk[p_co[p_fs + 1] + 1], 1) = 1 then false          -- a full block on either side
+              when coalesce(p_sk[p_co[p_ts + 1] + 1], 1) = 0 or coalesce(p_sk[p_co[p_fs + 1] + 1], 1) = 0 then true            -- one side empty: the other shape alone cannot cover the face
+              else get_bit(p_oc, (p_co[p_fs + 1] * p_ns + p_co[p_ts + 1]) * 6 + p_dir) = 0 end $$;                           -- Shapes.mergedFaceOccludes(from, to, dir), precomputed from the jar
 
 -- FlowingFluid.canHoldSpecificFluid(level, pos, state, fluid): a LiquidBlockContainer decides (a SimpleWaterloggedBlock takes still water, only when dry; kelp and seagrass take none),
 -- anything else holds any fluid.  p_ftype is the TYPE code of the fluid.
@@ -86,14 +83,10 @@ end $$;
 
 -- FlowingFluid.isWaterHole(level, pos, state, belowPos, belowState): can the fluid at pos fall into the cell below it
 create or replace function mc.dyn_is_hole(p_fl int4[], p_fa int2[], p_co int4[], p_sk int2[], p_oc bytea, p_ns int, p_family int, p_fs int, p_bs int)
-returns boolean language plpgsql immutable parallel safe as $$
-declare bf int;
-begin
-    if not mc.dyn_pass_wall(p_fs, p_bs, 0, p_co, p_sk, p_oc, p_ns) then return false; end if;
-    bf := mc.dyn_fstate(p_fl, p_fa, p_bs);
-    if bf >= 0 and (bf >> 4) = p_family then return true; end if;                                        -- the fluid below is of this family
-    return (p_fl[p_bs + 1] & 512) <> 0 and mc.dyn_hold_specific(p_fl, p_bs, p_family * 2 + 1);          -- canHoldFluid(.., getFlowing())
-end $$;
+returns boolean language sql immutable parallel safe as $$
+  select mc.dyn_pass_wall(p_fs, p_bs, 0, p_co, p_sk, p_oc, p_ns)
+         and (mc.dyn_fstate(p_fl, p_fa, p_bs) >> 4 = p_family and mc.dyn_fstate(p_fl, p_fa, p_bs) >= 0                                     -- the fluid below is of this family
+              or ((p_fl[p_bs + 1] & 512) <> 0 and mc.dyn_hold_specific(p_fl, p_bs, p_family * 2 + 1))) $$;                                 -- canHoldFluid(.., getFlowing())
 
 -- FlowingFluid.getSlopeDistance(level, pos, distance, fromDir, state, ctx): depth-first search over the four horizontal directions (NORTH, EAST, SOUTH, WEST) for a hole within
 -- p_reach steps.  Returns the distance of the FIRST hole met in direction order at this level (vanilla returns at once), else the smallest result of the deeper searches, else 1000.
@@ -130,14 +123,27 @@ declare
     best int := 1000; d int; nx int; nz int; ns int; nf int; nl int; dist int; ok boolean;
     sel int[] := '{}'; ncode int[] := array[-1, -1, -1, -1, -1, -1];
     dirs int[] := array[2, 5, 3, 4];                                    -- the EnumMap is filled in this order but read in enum order below
+    nohole boolean := true; dx int; dz int; rr int := p_reach + 1;
 begin
+    -- A hole needs a cell below that is not a full block (canPassThroughWall is false when either shape is full), and the search reads cells within p_reach + 1 steps: when every cell
+    -- below that diamond is a full block no hole exists, every slope distance is 1000 and the searches are skipped (the common case: a flow over a floor).
+    <<scan>>
+    for dx in -rr .. rr loop
+        for dz in -(rr - abs(dx)) .. (rr - abs(dx)) loop
+            ns := mc.dyn_at(p_secs, p_gm, x + dx, y - 1, z + dz);
+            if coalesce(p_sk[p_co[ns + 1] + 1], 1) <> 1 then nohole := false; exit scan; end if;
+        end loop;
+    end loop;
     foreach d in array dirs loop
         nx := x + mc.dyn_dx(d); nz := z + mc.dyn_dz(d);
         ns := mc.dyn_at(p_secs, p_gm, nx, y, nz);
         if not mc.dyn_maybe_pass(p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, me, d, ns) then continue; end if;
+        -- with no hole around every distance is 1000, so a direction only matters when its block can be replaced; water cannot be replaced sideways (FluidState.canBeReplacedWith: DOWN only)
+        if nohole and (p_fl[ns + 1] & 8) <> 0 then continue; end if;
         nl := mc.dyn_new_liquid(p_secs, p_gm, p_fl, p_fa, p_co, p_sk, p_oc, p_ns, nx, y, nz, p_family, p_conv, p_drop);
         if not mc.dyn_hold_specific(p_fl, ns, mc.dyn_ftype(nl)) then continue; end if;       -- (an empty type is -1: only plain blocks hold it)
-        if mc.dyn_is_hole(p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, ns, mc.dyn_at(p_secs, p_gm, nx, y - 1, nz)) then dist := 0;
+        if nohole then dist := 1000;
+        elsif mc.dyn_is_hole(p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, ns, mc.dyn_at(p_secs, p_gm, nx, y - 1, nz)) then dist := 0;
         else dist := mc.dyn_slope(p_secs, p_gm, p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, p_reach, nx, y, nz, 1, mc.dyn_opp(d), ns); end if;
         if dist < best then ncode := array[-1, -1, -1, -1, -1, -1]; end if;                    -- map.clear()
         if dist <= best then
@@ -156,11 +162,9 @@ end $$;
 --   empty fluid state: true        water (flowing or still): dir = DOWN and the incoming fluid is not water
 --   lava: its height (own amount / 9, or 1 with the same fluid above) is at least 0.44444445 and the incoming fluid is water
 create or replace function mc.dyn_replaceable_by(p_fl int4[], p_f int, p_s int, p_other int, p_dir int, x int, y int, z int, p_secs int4[], p_gm int4[])
-returns boolean language plpgsql immutable parallel safe as $$
-begin
-    if p_f < 0 then return true; end if;
-    if (p_f >> 4) = 0 then return p_dir = 0 and not (p_other >= 0 and (p_other >> 4) = 0); end if;
-    if not (p_other >= 0 and (p_other >> 4) = 0) then return false; end if;
-    -- lava: FlowingFluid.getHeight = (the same fluid above ? 1 : amount / 9) >= 0.44444445f, a float that 4 / 9 rounds to: so an amount of 4 or more, or lava above
-    return (p_fl[mc.dyn_at(p_secs, p_gm, x, y + 1, z) + 1] & 16) <> 0 or mc.dyn_famount(p_f) >= 4;
-end $$;
+returns boolean language sql immutable parallel safe as $$
+  select case when p_f < 0 then true
+              when (p_f >> 4) = 0 then p_dir = 0 and not (p_other >= 0 and (p_other >> 4) = 0)
+              when not (p_other >= 0 and (p_other >> 4) = 0) then false
+              -- lava: FlowingFluid.getHeight = (the same fluid above ? 1 : amount / 9) >= 0.44444445f, a float that 4 / 9 rounds to: so an amount of 4 or more, or lava above
+              else (p_fl[mc.dyn_at(p_secs, p_gm, x, y + 1, z) + 1] & 16) <> 0 or mc.dyn_famount(p_f) >= 4 end $$;

@@ -96,7 +96,7 @@ begin
 end $$;
 
 create or replace function mc.dyn_step(p_cur bigint) returns void language plpgsql volatile as $$
-declare mx int := coalesce(mc.prop_int('dbcraft.dynamics-max-ticks'), 500);
+declare mx int := coalesce(mc.prop_int('dbcraft.dynamics-max-ticks'), 65536);
 begin
     -- idle test in ONE statement (no tick due, nothing late, nobody to random-tick for): the whole step is about this
     if not (select coalesce((select value <> 'off' from mc.server_property where key = 'dbcraft.dynamics'), true) and exists (select 1 from mc.dyn_vec)
@@ -159,8 +159,15 @@ declare
     xs int[] := '{}'; ys int[] := '{}'; zs int[] := '{}'; auxs int[] := '{}'; kinds int[] := '{}'; n int := 0; pos int[]; p int; cx0 int; sy int; cz0 int; ci int;
     dirs int[][] := array[[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]]; interesting int := 4 | 8 | 4096 | 65536 | 262144; dims text;
 begin
-    if coalesce(current_setting('mc.dyn_busy', true), 'off') = 'on' then return null; end if;
     if not mc.dyn_enabled() then return null; end if;
+    -- the random-tick lists (sql/887) of the chunks a change touches, and of the neighbours when it is within 4 cells of them (water reaches farmland, dirt grass, over a chunk border)
+    insert into mc.dyn_rt_dirty (dimension, cx, cz)
+    select ne.dimension, (ne.x >> 4) + dx.v, (ne.z >> 4) + dz.v
+      from new_ev ne, (values (0), (-1), (1)) dx(v), (values (0), (-1), (1)) dz(v)
+     where (dx.v = 0 or ne.kind <> 'block' or (dx.v = -1 and (ne.x & 15) < 4) or (dx.v = 1 and (ne.x & 15) >= 12))
+       and (dz.v = 0 or ne.kind <> 'block' or (dz.v = -1 and (ne.z & 15) < 4) or (dz.v = 1 and (ne.z & 15) >= 12))
+    on conflict do nothing;
+    if coalesce(current_setting('mc.dyn_busy', true), 'off') = 'on' then return null; end if;
     select * into v from mc.dyn_vec;
     select game_time into cur from mc.game_state;
     select count(*) > 64 into many from new_ev where kind = 'block';
