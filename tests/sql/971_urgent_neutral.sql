@@ -6,20 +6,54 @@
 --      the clock, the errors) and send every connection the same set of frames (the order inside a recipient's stream may differ: the chat comes first now, it came after the
 --      tick's movement and block packets before; it still comes in the order of its sender's chats and in the order of arrival between chats);
 --   3. real traffic: several kinds from several players ahead of several chats, mixed (what a client in play really sends in 50 ms), same comparison;
---   4. mutation check of the test itself: a deliberately dependent kind (a stand-in handler that changes the sender's name before the chat is built) IS detected.
+--   4. mutation checks of the test itself: a deliberately dependent kind (a stand-in handler that changes the sender's name before the chat is built) IS detected, and so is a tracker that
+--      starts one tick apart in the two paths (the harness itself once built the second path on the clock the first had left behind: the tracker's start tick is the clock + 1, sql/900);
+--   5. the comparisons of 2 and 3 run in six settings of the player visibility layer (sql/900-910): the classic broadcast (dbcraft.vanilla-tracker = false), the tracker at the first tick of
+--      a join (first synchronisation: entity data, attributes, waypoints), the tracker settled (awake: vis_wake in the future), settled and asleep, and with two players teleported that
+--      wait for their accept_teleportation (the tracker's teleport handling: tp_ground_tick, vis_wake, a full position sync), and with two players at an open chest (the containers' part of the
+--      tick: container_click, container_close, player_input, use_item_on) -- with items in the hotbar so
+--      that the kinds the tracker reads (player_command, punch, client_information, set_carried_item, player_input) really make it send frames, which is proved too.
+create temp table un_cfg (phase text not null);
+insert into un_cfg values ('fresh');
+-- the blocks the bodies below act on (player_action and use_item_on at 5 69 5, the placement above it) and the chest of the setting 'menu': put back before every build, or the second path
+-- of a comparison would find the world the first one left (a block already broken, a block already placed, a chest from an earlier setting)
+create temp table un_world (x int, y int, z int, state text);
+insert into un_world select 5, y, 5, coalesce(mc.get_block('minecraft:overworld', 5, y, 5), 'minecraft:air') from generate_series(68, 71) y;
 create or replace function t.un_build(p_n int) returns void language plpgsql as $$
+declare ph text := (select phase from un_cfg); i int;
 begin
+  perform mc.set_block('minecraft:overworld', x, y, z, state) from un_world where coalesce(mc.get_block('minecraft:overworld', x, y, z), 'minecraft:air') is distinct from state;
+  update mc.server_property set value = (ph <> 'classic')::text where key = 'dbcraft.vanilla-tracker';
   truncate net.conn_ctl, net.conn, net.inbox, net.outbox, net.play_inbox, net.batch, mc.play_out, mc.play_in, mc.play_in_work, mc.visible, mc.kick, mc.pending_ack, mc.block_actor,
-           mc.block_event, mc.chunk_wanted, net.auth_result, net.join_parked, mc.server_tick_log, mc.tick_log, mc.error_log, mc.chat_log;
+           mc.block_event, mc.chunk_wanted, net.auth_result, net.join_parked, mc.server_tick_log, mc.tick_log, mc.error_log, mc.chat_log,
+           mc.vtrk, mc.wp, mc.menu_slot, mc.menu_state;               -- (what the tracker, the locator bar and the containers keep per player: a leftover of the first path would make the second one send less)
   delete from mc.player;
+  -- the clock BEFORE the rows are made: the tracker's trigger starts a joining player at clock + 1 (sql/900), so both paths of a comparison must be built on the same clock
+  update mc.game_state set game_time = case when ph in ('settled', 'asleep', 'teleported', 'menu') then 98 else 100 end;
   perform setseed(0.41);
   insert into mc.player (uuid, name, conn_id, entity_id, x, y, z, yaw, pitch, chunk_x, chunk_z, sent_qx, sent_qy, sent_qz, sent_yaw, sent_pitch, vis_dirty, last_sent_tick, gamemode, keepalive_sent_tick)
-  select md5(g::text)::uuid, 'talker' || g, g, g, px, 70, pz, 0, 0, floor(px / 16)::int, floor(pz / 16)::int, mc.quant(px), mc.quant(70), mc.quant(pz), 0, 0, true, 0, 1, 0
+  select md5(g::text)::uuid, 'talker' || g, g, g, px, 70, pz, 0, 0, floor(px / 16)::int, floor(pz / 16)::int, mc.quant(px), mc.quant(70), mc.quant(pz), 0, 0, true, 0, 1, 98
     from (select g, random() * 30 as px, random() * 30 as pz from generate_series(1, p_n) g) q;
   insert into net.conn (conn_id, state, name, uuid, compression, entity_id, view_cx, view_cz, gamemode)
   select conn_id, 'play', name, uuid, case when conn_id = 3 then 256 else -1 end, entity_id, chunk_x, chunk_z, gamemode from mc.player;
+  insert into mc.inventory_slot (player, slot, item, count) select uuid, 36, 'minecraft:stone', 1 from mc.player;                    -- hotbar 0 (held) ...
+  insert into mc.inventory_slot (player, slot, item, count) select uuid, 39, 'minecraft:diamond_sword', 1 from mc.player;           -- ... and hotbar 3 (what set_carried_item 3 picks)
   perform mc.refresh_visibility();
-  truncate mc.play_out;
+  if ph = 'menu' then                                                         -- two players stand at a chest with its menu open (the containers' part of the tick: sql/864)
+    perform mc.set_block('minecraft:overworld', 5, 69, 5, 'minecraft:chest');
+    update mc.player set x = 5.5 + conn_id * 0.1, y = 70, z = 7.5, chunk_x = 0, chunk_z = 0 where conn_id in (1, 2);
+    perform mc.menu_open(uuid, 'minecraft:overworld', 5, 69, 5) from mc.player where conn_id in (1, 2);
+  end if;
+  if ph in ('settled', 'asleep', 'teleported', 'menu') then
+    for i in 1 .. 2 loop perform mc.server_tick(); end loop;                  -- 99, 100: the first synchronisation is over; the players are awake (vis_wake = join + 8) ...
+    if ph = 'asleep' then update mc.player set vis_wake = 50; end if;         -- ... or asleep
+    if ph = 'teleported' then                                                 -- ... or two of them were teleported (a command, a plugin) and wait for the client's accept_teleportation (id 7, the body t.un_body sends)
+      update mc.player set x = x + 20, chunk_x = floor((x + 20) / 16)::int where conn_id in (1, 2);
+      update net.conn set teleport_id = 7, teleport_ok = false where conn_id in (1, 2, 3);
+      perform mc.sync_entity_position(uuid) from mc.player where conn_id in (1, 2);
+    end if;
+  end if;
+  truncate net.outbox, net.inbox, net.play_inbox, mc.play_out, mc.server_tick_log, mc.tick_log, mc.error_log, mc.chat_log;
   update mc.game_state set game_time = 100;
   update mc.player set keepalive_sent_tick = 100;
 end $$;
@@ -51,6 +85,7 @@ begin
     when 'move_player_status_only' then '\x01'
     when 'custom_payload' then proto.string('minecraft:brand') || proto.string('vanilla')
     when 'container_close' then '\x00'
+    when 'container_click' then proto.varint(1) || proto.varint(1) || '\x0036' || '\x00' || proto.varint(0) || proto.varint(0) || '\x00'      -- a left click on hotbar 0 (the stone) of the chest menu of the setting 'menu'
     when 'pong' then '\x00000007'
     else '\x0000' end;
 end $$;
@@ -59,6 +94,8 @@ create or replace function t.un_digest() returns text language sql as $$
           || '#' || coalesce((select string_agg((((to_jsonb(c) - 'connected_at') - 'last_activity') - 'keepalive_sent')::text, '|' order by conn_id) from net.conn c), '')
           || '#' || coalesce((select string_agg(sender_name || ':' || message, '|' order by id) from mc.chat_log), '')
           || '#' || coalesce((select string_agg(conn_id::text, ',' order by conn_id) from mc.kick), '')
+          || '#' || coalesce((select string_agg(to_jsonb(v)::text, '|' order by entity_id) from mc.vtrk v), '') || '#' || coalesce((select string_agg(to_jsonb(w)::text, '|' order by rcv, src) from mc.wp w), '')
+          || '#' || coalesce((select string_agg(to_jsonb(m)::text, '|' order by to_jsonb(m)::text) from mc.menu_state m), '')
           || '#' || (select game_time from mc.game_state) || '#' || (select count(*) from mc.error_log)) $$;
 create or replace function t.un_frames(b bytea) returns setof bytea language plpgsql as $$
 declare o int := 0; v int; n int;
@@ -99,9 +136,17 @@ begin
   perform t.un_collect('B');
   digest := t.un_digest();
 end $$;
+create or replace function t.un_diff() returns text language sql as $$
+  with fr as (select conn_id, side, f from (select u.conn_id, u.path side, string_agg(u.data, ''::bytea order by u.ctid) d from un_out u group by 1, 2) z cross join lateral t.un_frames(z.d) f),
+       a as (select conn_id, md5(f) h, count(*) c, (array_agg(f))[1] f from fr where side = 'A' group by 1, 2),
+       b as (select conn_id, md5(f) h, count(*) c, (array_agg(f))[1] f from fr where side = 'B' group by 1, 2),
+       d as (select coalesce(a.conn_id, b.conn_id) conn_id, coalesce(a.c, 0) - coalesce(b.c, 0) n, (proto.varint_read(coalesce(a.f, b.f), (proto.varint_read(coalesce(a.f, b.f), 0)).nxt)).val pid
+               from a full join b on a.conn_id = b.conn_id and a.h = b.h where coalesce(a.c, 0) <> coalesce(b.c, 0))
+  select coalesce(string_agg('conn ' || conn_id || ' packet id ' || pid || ' x' || n, ', ' order by conn_id, pid), 'none') from d $$;
 create or replace function t.un_compare(p_name text) returns void language plpgsql as $$
 declare da text; r record; sa text; sb text;
 begin
+  p_name := p_name || ' [' || (select phase from un_cfg) || ']';
   delete from un_out;
   perform t.un_build(6);
   da := t.un_tick_path();
@@ -110,7 +155,7 @@ begin
   sa := t.un_sets('A'); sb := t.un_sets('B');
   if sa = '' then raise exception 'FAIL % : the tick sent nothing (empty comparison)', p_name; end if;
   if r.unhandled is distinct from '{}'::int[] then raise exception 'FAIL % : the lane handed back %', p_name, r.unhandled; end if;
-  if sa <> sb then raise exception 'FAIL % : the frames differ (tick % lane %)', p_name, sa, sb; end if;
+  if sa <> sb then raise exception 'FAIL % : the frames differ (per connection: only in the tick / only in the lane: %)', p_name, t.un_diff(); end if;
   if da <> r.digest then raise exception 'FAIL % : the state differs', p_name; end if;
   raise notice 'ok   %', p_name;
 end $$;
@@ -151,7 +196,12 @@ begin
   o := o + 1; insert into un_frames values (o, 3, t.un_chat('from the compressing connection'));
   perform t.un_compare('neutral kind ' || p_name || ': tick and lane agree (state and frames)');
 end $$;
-select t.un_one_kind(name) from un_kinds where class = 'neutral' order by name;
+do $$ declare ph text; k text; begin
+  foreach ph in array array['fresh', 'classic', 'settled', 'asleep', 'teleported', 'menu'] loop
+    update un_cfg set phase = ph;
+    for k in select name from un_kinds where class = 'neutral' order by name loop perform t.un_one_kind(k); end loop;
+  end loop;
+end $$;
 
 ------------------------------------------------------------------------------------------------ 3. mixed traffic
 create or replace function t.un_mixed(p_seed int) returns void language plpgsql as $$
@@ -170,7 +220,34 @@ begin
   end loop;
   perform t.un_compare('mixed traffic, seed ' || p_seed || ': tick and lane agree');
 end $$;
-select t.un_mixed(s) from generate_series(1, 8) s;
+do $$ declare ph text; s int; begin
+  foreach ph in array array['fresh', 'classic', 'settled', 'asleep', 'teleported', 'menu'] loop
+    update un_cfg set phase = ph;
+    for s in 1 .. case when ph = 'fresh' then 8 else 3 end loop perform t.un_mixed(s); end loop;
+  end loop;
+end $$;
+
+-- the tracker really sends frames for what the neutral kinds carry (entity data after the shift key, an animation after a swing, equipment after a held slot change, skin layers):
+-- otherwise the comparisons above would prove nothing about it
+create or replace function t.un_tracker_frames(p_phase text) returns int language plpgsql as $$
+declare n int;
+begin
+  update un_cfg set phase = p_phase; delete from un_out; delete from un_frames;
+  insert into un_frames values (1, 1, t.un_pid('player_command') || t.un_body('player_command', 2)), (2, 1, t.un_pid('punch') || t.un_body('punch', 2)),
+                               (3, 2, t.un_pid('client_information') || t.un_body('client_information', 2)), (4, 2, t.un_pid('set_carried_item') || t.un_body('set_carried_item', 2)),
+                               (5, 3, t.un_pid('player_input') || t.un_body('player_input', 2));
+  perform t.un_build(6);
+  perform t.un_tick_path();
+  select count(*) into n from un_out u cross join lateral t.un_frames(u.data) f
+   where u.conn_id in (1, 2)
+     and (proto.varint_read(f, (proto.varint_read(f, 0)).nxt)).val in (select protocol_id from ref.packet where state = 'play' and direction = 'clientbound'
+           and name in ('minecraft:set_entity_data', 'minecraft:update_attributes', 'minecraft:set_equipment', 'minecraft:animate', 'minecraft:waypoint'));
+  return n;
+end $$;
+select t.is_true('the tracker sends entity data, equipment, attributes or animations in the first tick of a join', t.un_tracker_frames('fresh') > 0);
+select t.is_true('... and when settled and awake', t.un_tracker_frames('settled') > 0);
+select t.is_true('... and when settled and asleep (the kinds themselves wake it)', t.un_tracker_frames('asleep') > 0);
+select t.is_true('... and for players that wait for their accept_teleportation', t.un_tracker_frames('teleported') > 0);
 
 ------------------------------------------------------------------------------------------------ 4. the test can fail: a kind that DOES change what the chat does
 -- a stand-in for a future handler: after the tick's movement the sender is renamed; the chat of the same window is built after that in the tick and before it in the lane
@@ -192,3 +269,17 @@ begin
   return case when sa <> sb or da <> db then 'detected' else 'MISSED' end;
 end $$;
 select t.eq('a kind that changes the sender before its chat is built makes the two paths differ (the comparison can fail)', t.un_dependent_kind(), 'detected');
+
+-- the same for the tracker: the lane path of the first-join phase with the clock one tick off (what the harness once did by accident) sends other frames
+create or replace function t.un_stale_tracker() returns text language plpgsql as $$
+declare da text; db text; sa text; sb text;
+begin
+  update un_cfg set phase = 'fresh'; delete from un_out; delete from un_frames;
+  insert into un_frames values (1, 1, t.un_pid('player_input') || '\x41'), (2, 1, t.un_chat('who am i')), (3, 2, t.un_chat('and you'));
+  perform t.un_build(6); da := t.un_tick_path(); sa := t.un_sets('A');
+  perform t.un_build(6);
+  update mc.player set trk_start = trk_start + 1, vis_wake = vis_wake + 1;
+  db := (t.un_lane_path()).digest; sb := t.un_sets('B');
+  return case when sa <> sb or da <> db then 'detected' else 'MISSED' end;
+end $$;
+select t.eq('a tracker that starts one tick apart in the two paths makes them differ (the comparison sees the tracker)', t.un_stale_tracker(), 'detected');

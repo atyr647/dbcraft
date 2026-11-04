@@ -16,7 +16,8 @@
 --     order with the other main-thread work (every handler except chat, custom_payload, ping_request, sign_update, edit_book, command suggestions and configuration_acknowledged
 --     is queued the same way): there is no ordering between a chat and a neighbour that does not touch chat state to preserve.
 --   * the dbcraft half: tests/sql/971_urgent_neutral.sql sends every kind in this list (with an empty body, a short body and a body of the right shape where the tick parses one) ahead
---     of a chat, once through the tick and once through the lane, and compares the players' state and every connection's frames.
+--     of a chat, once through the tick and once through the lane, and compares the players' state and every connection's frames.  It does so with the classic broadcast, with the player-visibility tracker (first
+--     synchronisation, settled, asleep, players waiting for a teleport) and with players at an open chest, so that a kind a later module reacts to (a tracker, a container) fails there.
 --
 -- What is NOT in the list, on purpose: the commands (a barrier for every connection), chat_ack and chat_session_update (chat protocol), command_suggestion, the commands in disguise
 -- (change_game_mode, change_difficulty, lock_difficulty, set_game_rule), edit_book / sign_update / the block-entity editors (text input), configuration_acknowledged (a state change), and the
