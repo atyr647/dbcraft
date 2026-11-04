@@ -1,18 +1,18 @@
--- Opt-in compression of section rows (docs/PERF-SCALE.md).
+-- Compression of section rows (docs/PERF-SCALE.md, docs/PERF-DISK.md).
 --
--- sql/200 sets toast_tuple_target = 8160 on mc.chunk_section, so a section row is compressed only when the whole row exceeds 8,160 bytes: almost none do (flat sections
--- are ~4 KB, real terrain ~2.9 KB on average), and sections are stored raw.  With the default target (2,032) every row above 2 KB is compressed inline (storage MAIN keeps
--- it in the row).  Measured on 5,105 real terrain chunks (122,520 sections): the section table shrinks from 345 MB to 143 MB (40 KB of every 95 KB dense chunk)
--- with no measurable change in get_block, set_block, chunk rebuild or join latency.  It is OFF by default: it changes how every later write is stored, and any function that
--- reads a palette or data value many times per section pays a decompression per read.  The one place that did that, mc.section_blocks (below), reads them once now.
+-- Until sql/950 this was opt-in: sql/200 set toast_tuple_target = 8160 on mc.chunk_section, so a section row was compressed only when the whole row exceeded 8,160 bytes: almost
+-- none did, and sections were stored raw.  Measured on 5,105 real terrain chunks (122,520 sections): the section table shrinks from 345 MB to 143 MB with no measurable change in
+-- get_block, set_block, chunk rebuild or join latency (re-measured for sql/950 in docs/PERF-DISK.md: set_block +4 to 10%).  sql/950 now makes compression the DEFAULT (the "compact"
+-- storage profile) and this switch selects the profile:
 --
---   select mc.set_section_compression(true);      -- rows written from now on are compressed when above 2 KB
+--   select mc.set_section_compression(true);      -- the compact profile (compressed sections, fillfactor 90-100); rows written from now on
 --   select mc.rewrite_sections();                 -- compress the rows already stored (rewrites the table: heavy WAL; follow with VACUUM FULL mc.chunk_section)
---   select mc.set_section_compression(false);     -- back to the original behaviour for new writes
+--   select mc.set_section_compression(false);     -- the legacy profile: raw sections, fillfactor 70 (the original behaviour)
+-- (mc.compact_world_storage() in sql/950 rewrites all four world tables.)  Any function that reads a palette or data value many times per section pays a decompression per read; the one
+-- place that did that, mc.section_blocks (below), reads them once now.
 create or replace function mc.set_section_compression(p_on boolean) returns void language plpgsql volatile as $$
 begin
-  if p_on then execute 'alter table mc.chunk_section reset (toast_tuple_target)';
-  else execute 'alter table mc.chunk_section set (toast_tuple_target = 8160)'; end if;
+    perform mc.set_world_storage(case when p_on then 'compact' else 'legacy' end);      -- sql/950; late-bound, so this file may run first
 end $$;
 
 create or replace function mc.rewrite_sections() returns bigint language plpgsql volatile as $$

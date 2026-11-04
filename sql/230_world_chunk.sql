@@ -82,6 +82,9 @@ declare
     vpl  int := 64 / bits;
     w1 bytea; w2 bytea; w3 bytea;
 begin
+    -- sql/950: the heightmaps of a chunk row are stored compressed and a compressed value stays compressed in a parameter: every one of the 768 subscripts below would
+    -- decompress it again.  Once here.
+    hm_mb := array_cat(hm_mb, '{}'::smallint[]); hm_nl := array_cat(hm_nl, '{}'::smallint[]); hm_ws := array_cat(hm_ws, '{}'::smallint[]);
     select string_agg(int8send(a), ''::bytea order by n), string_agg(int8send(b), ''::bytea order by n), string_agg(int8send(c), ''::bytea order by n)
       into w1, w2, w3
       from (select k / vpl as n,
