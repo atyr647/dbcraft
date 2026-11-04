@@ -89,7 +89,8 @@ vanilla mob AI and pathfinding, redstone, leaf decay and tree growth, shape-prop
 
 **Performance, honestly:** the tick is one transaction on one core.  Against the real vanilla 26.3 on the same quiet machine ([docs/SCOREBOARD.md](docs/SCOREBOARD.md), [one-page summary](docs/SCOREBOARD-SUMMARY.md)) dbcraft
 uses 7-8 times less memory, 1.6-3 times less CPU with players online, joins a player 3-6 times faster, generates and saves worlds 12-90 times faster in 4 times less disk, and keeps a 1-second-old edit across `kill -9`;
-but with the shipped defaults (survival, vanilla tracker, dynamics) it saturates its core at 200 walking players (99 ms mean tick), cannot admit 500 players (most runs lost 70-240 of 500 clients), has a worse chat round trip than vanilla at 50 players
+but with the shipped defaults (survival, vanilla tracker, dynamics) it saturates its core at 200 walking players (99 ms mean tick in the campaign; 58-63 ms after [docs/PERF-CAPACITY.md](docs/PERF-CAPACITY.md)), could not admit 500 players (the campaign lost 70-240 of 500 clients to a missing
+configuration-state keep-alive: fixed, nobody lost in six runs afterwards; the 500-player tick is still 130-210 ms sparse and 780-890 ms crowded against vanilla's 135 ms crowded), had a worse chat round trip than vanilla at 50 players (now 41-43 against 51 ms on a shared machine)
 and a worse login-storm tail.  Details, and what was tried and rejected, in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and `docs/PERF-*.md` (older sessions' numbers).
 
 ## How it fits together
