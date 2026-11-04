@@ -3,6 +3,7 @@
 --      transaction, mc.tick_quiet()" says not quiet.  Every step is its own top-level statement (\gexec): the gate only exists between transactions.
 --   2. the same with a SECOND SESSION (dblink): a change committed between two ticks, a change in flight while a tick runs and committed after it, one that is rolled back; and a
 --      transaction of the ticking session that has written before the tick (the gate is not used inside it).
+--   (Cluster-wide ids: a transaction of another database disarms the gate, so "armed" is asserted as armed-or-disturbed, see t.armed_ok below; "never hides a change" is unconditional.)
 --   3. the gate is armed when it should be (an idle session: tick after tick, one probe round per arming, not one per tick) and the mark is cleared when the tick is not quiet.
 --   4. net.gateway_pending: 0 right after a quiet tick of the same statement, used up after that, the real probes otherwise; bit 4 for chunk requests.
 --   5. mc.run_generator_until_idle generates what is requested, returns after the idle time, and obeys the stop flag.
@@ -18,19 +19,63 @@ begin
   perform set_config('dbcraft.quiet_mark', '', false);
   perform set_config('dbcraft.quiet_xid', '', false);
 end $$;
--- transaction ids are numbered for the whole cluster: another test running in another database of this cluster (tests/sql/prun.sh runs several at once) completes transactions all the
--- time, and every one of them disarms the gate (correctly: it cannot know the transaction belongs to another database).  Wait until the other databases are quiet (at most 15 minutes).
+-- Transaction ids are numbered for the whole cluster: a test running in another database of this cluster (tests/sql/prun.sh runs several at once), an autovacuum run or another agent's
+-- session completes transactions all the time, and every one of them disarms the gate (correctly: it cannot know that the transaction belongs to another database; a gate that sometimes
+-- does not skip is only slower, one that skipped a probe it should have run would be a bug).  So this test never depends on the cluster being quiet:
+--   * every "the gate is armed" assertion is t.armed_ok(): the mark is set, OR the tick that should have set it SAW a foreign transaction.  A tick sets the mark exactly when its snapshot
+--     has xmin = xmax = its own id (sql/800).  t.tick() / t.quiet_obs() take a snapshot before and one after the tick in the same statement (a snapshot's xmax only grows, and an id
+--     below the tick's own that was running at the tick's snapshot would be running at one of the two): when both are (id, id) the tick's own snapshot was too, the mark MUST be set --
+--     that case is asserted without an excuse; otherwise the tick was disturbed by a foreign transaction and the missing mark is excused (and counted: see the note at the end);
+--   * everything that must hold whether or not the gate is armed (a change is never hidden, the in-flight cases, the same-transaction case, the hook) is asserted as before, unconditionally;
+--   * the number of probe rounds of 100 idle ticks is bounded by 3 plus two per tick that was disturbed.
+-- Before it starts the test waits (at most 10 s) for the other databases to be idle, only to make the gate more likely to be exercised.
 create or replace function t.wait_quiet(p_max_s int) returns int language plpgsql as $$
 declare t0 timestamptz := clock_timestamp(); n int;
 begin
   loop
     select count(*) into n from pg_stat_activity where datname is not null and datname <> current_database() and state = 'active' and backend_type = 'client backend' and pid <> pg_backend_pid();
     exit when n = 0 or clock_timestamp() - t0 > make_interval(secs => p_max_s);
-    perform pg_sleep(0.5);
+    perform pg_sleep(0.2);
   end loop;
   return n;
 end $$;
-select t.wait_quiet(900);
+-- what a tick (or tick_quiet) saw around it; session settings only: writing a row would give the transaction an id and the gate is not used by a transaction that has one
+create or replace function t.note_tick(p_m bigint, p_clean boolean) returns void language plpgsql as $$
+declare prev text := nullif(current_setting('t.prev_m', true), '');
+begin
+  perform set_config('t.clean', p_clean::text, false);
+  if not p_clean or prev is null or p_m <> prev::bigint + 1 then
+    perform set_config('t.disturbed_n', (coalesce(nullif(current_setting('t.disturbed_n', true), ''), '0')::int + 1)::text, false);
+  end if;
+  perform set_config('t.prev_m', p_m::text, false);
+end $$;
+create or replace function t.tick() returns bigint language plpgsql volatile as $$
+declare sn0 pg_snapshot := pg_current_snapshot(); tk bigint; m bigint; sn1 pg_snapshot;
+begin
+  tk := mc.server_tick();
+  m := pg_current_xact_id()::text::bigint; sn1 := pg_current_snapshot();
+  perform t.note_tick(m, pg_snapshot_xmin(sn0)::text::bigint = m and pg_snapshot_xmax(sn0)::text::bigint = m and pg_snapshot_xmin(sn1)::text::bigint = m and pg_snapshot_xmax(sn1)::text::bigint = m);
+  return tk;
+end $$;
+create or replace function t.quiet_obs() returns boolean language plpgsql volatile as $$
+declare sn0 pg_snapshot := pg_current_snapshot(); q boolean; m bigint; sn1 pg_snapshot;
+begin
+  q := mc.tick_quiet();
+  m := pg_current_xact_id()::text::bigint; sn1 := pg_current_snapshot();
+  perform t.note_tick(m, pg_snapshot_xmin(sn0)::text::bigint = m and pg_snapshot_xmax(sn0)::text::bigint = m and pg_snapshot_xmin(sn1)::text::bigint = m and pg_snapshot_xmax(sn1)::text::bigint = m);
+  return q;
+end $$;
+-- the mark is set, or the last tick was disturbed by a foreign transaction
+create or replace function t.armed_ok() returns boolean language plpgsql volatile as $$
+declare armed boolean := current_setting('dbcraft.quiet_mark') <> '';
+begin
+  perform set_config(case when armed then 't.armed_n' else 't.excused_n' end, (coalesce(nullif(current_setting(case when armed then 't.armed_n' else 't.excused_n' end, true), ''), '0')::int + 1)::text, false);
+  return armed or coalesce(current_setting('t.clean', true), '') = 'false';
+end $$;
+create or replace function t.quiet_and_armed() returns boolean language plpgsql volatile as $$
+declare q boolean := t.quiet_obs();
+begin return q and t.armed_ok(); end $$;
+select t.wait_quiet(10);
 select t.gate_reset();
 
 ------------------------------------------------------------------------------------------------ 1. every probed table, from another transaction
@@ -54,36 +99,36 @@ insert into gate_cases (name, stmt, clean) values
   ('a chunk request', 'insert into mc.chunk_request (dimension, cx, cz, prio) values (''minecraft:overworld'', 0, 0, 0)', 'truncate mc.chunk_request'),
   ('entities switched on', 'update mc.server_property set value = ''inline'' where key = ''dbcraft.entity-mode''', 'update mc.server_property set value = ''off'' where key = ''dbcraft.entity-mode'''),
   ('the switch', 'select set_config(''dbcraft.quiet_tick'', ''off'', false)', 'select set_config(''dbcraft.quiet_tick'', ''on'', false)');
-select mc.server_tick();
-select mc.server_tick();
-select t.is_true('the gate is armed after quiet ticks on an empty server (each tick its own transaction)', (select count(*) from gate_cases) = 18 and current_setting('dbcraft.quiet_mark') <> '');
+select t.tick();
+select t.tick();
+select t.is_true('the gate is armed after quiet ticks on an empty server (each tick its own transaction)', (select count(*) from gate_cases) = 18 and t.armed_ok());
 -- (three ticks arm the gate: background work of the server -- an autovacuum run takes a transaction id -- may spoil one arming, not three in a row)
 select s from gate_cases c, lateral (values
-    (1, 'select mc.server_tick()'),
-    (2, 'select mc.server_tick()'),
-    (3, 'select mc.server_tick()'),
-    (4, format('select t.is_true(%L, current_setting(''dbcraft.quiet_mark'') <> '''')', c.name || ': the gate is armed before the change')),
+    (1, 'select t.tick()'),
+    (2, 'select t.tick()'),
+    (3, 'select t.tick()'),
+    (4, format('select t.is_true(%L, t.armed_ok())', c.name || ': the gate is armed before the change (or a foreign transaction disturbed the last tick)')),
     (5, c.stmt),
     (6, format('select t.is_true(%L, not mc.tick_quiet())', c.name || ': the gate does not hide it')),
     (7, c.clean),
-    (8, 'select mc.server_tick()'),
-    (9, 'select mc.server_tick()'),
-    (10, 'select mc.server_tick()'),
-    (11, format('select t.is_true(%L, mc.tick_quiet() and current_setting(''dbcraft.quiet_mark'') <> '''')', c.name || ': quiet again after the clean-up, gate armed again'))) v(k, s)
+    (8, 'select t.tick()'),
+    (9, 'select t.tick()'),
+    (10, 'select t.tick()'),
+    (11, format('select t.is_true(%L, t.quiet_and_armed())', c.name || ': quiet again after the clean-up, gate armed again'))) v(k, s)
  order by c.id, v.k \gexec
 
 ------------------------------------------------------------------------------------------------ 2. a second session
 select t.gate_reset();
 select dblink_connect('b', format('dbname=%s port=%s host=%s', current_database(), current_setting('port'), (select split_part(setting, ',', 1) from pg_settings where name = 'unix_socket_directories')));
-select mc.server_tick();
-select mc.server_tick();
-select t.is_true('armed', current_setting('dbcraft.quiet_mark') <> '');
+select t.tick();
+select t.tick();
+select t.is_true('armed', t.armed_ok());
 select dblink_exec('b', 'insert into net.inbox (conn_id, payload) values (1, ''\x00'')');
 select t.is_true('a row committed by another session between two ticks: not quiet', not mc.tick_quiet());
 select dblink_exec('b', 'truncate net.inbox');
-select mc.server_tick();
-select mc.server_tick();
-select t.is_true('armed again', current_setting('dbcraft.quiet_mark') <> '');
+select t.tick();
+select t.tick();
+select t.is_true('armed again', t.armed_ok());
 -- in flight while the tick runs, committed after it
 select dblink_exec('b', 'begin');
 select dblink_exec('b', 'insert into net.inbox (conn_id, payload) values (1, ''\x00'')');
@@ -91,38 +136,38 @@ select t.is_true('a transaction in flight (its row is invisible): the tick is qu
 select dblink_exec('b', 'commit');
 select t.is_true('...and once it commits the next tick sees the row', not mc.tick_quiet());
 select dblink_exec('b', 'truncate net.inbox');
-select mc.server_tick();
-select mc.server_tick();
+select t.tick();
+select t.tick();
 -- the hole an xmax-only gate would have: B holds an id F, another transaction G > F completes (so the newest completed id is above F), a tick runs (xmax = its own id), and B commits LATER:
 -- the commit of B does not raise the newest completed id, but its row is new.  The tick must not arm the gate while F is running (the snapshot's xmin is F).
 select dblink_exec('b', 'begin');
 select dblink_exec('b', 'insert into net.inbox (conn_id, payload) values (1, ''\x00'')');
 insert into mc.error_log (tick, step, message) values (1, 'gate test', 'a transaction that completes while b is in flight');
 select t.is_true('b in flight below a completed id: the tick is quiet by the probes, the gate is NOT armed (xmin is the running id)', mc.tick_quiet() and current_setting('dbcraft.quiet_mark') = '');
-select mc.server_tick();
+select t.tick();
 select dblink_exec('b', 'commit');
 select t.is_true('...and the row of b is seen at the next tick (the commit raised nothing: only the probes can see it)', not mc.tick_quiet());
 select dblink_exec('b', 'truncate net.inbox');
-select mc.server_tick();
-select mc.server_tick();
+select t.tick();
+select t.tick();
 -- a transaction that began after the tick's id and commits later: the gate was armed, the commit raises the newest completed id
-select t.is_true('armed once more', current_setting('dbcraft.quiet_mark') <> '');
+select t.is_true('armed once more', t.armed_ok());
 select dblink_exec('b', 'begin');
 select dblink_exec('b', 'insert into mc.kick (conn_id, reason_nbt) values (1, ''\x00'')');
 select t.is_true('in flight after an armed tick: the tick still says quiet (nothing visible)', mc.tick_quiet());
 select dblink_exec('b', 'commit');
 select t.is_true('...and not after the commit', not mc.tick_quiet());
 select dblink_exec('b', 'truncate mc.kick');
-select mc.server_tick();
-select mc.server_tick();
+select t.tick();
+select t.tick();
 -- rolled back: nothing to see, the gate recovers
 select dblink_exec('b', 'begin');
 select dblink_exec('b', 'insert into net.inbox (conn_id, payload) values (1, ''\x00'')');
 select dblink_exec('b', 'rollback');
 select t.is_true('a rolled-back transaction: still quiet', mc.tick_quiet());
-select mc.server_tick();
-select mc.server_tick();
-select t.is_true('...and the gate arms again', current_setting('dbcraft.quiet_mark') <> '');
+select t.tick();
+select t.tick();
+select t.is_true('...and the gate arms again', t.armed_ok());
 select dblink_disconnect('b');
 
 -- a transaction that has written before the tick does not use the gate (it may have written to a probed table itself)
@@ -136,32 +181,32 @@ begin
   return not q1 and q2;
 end $$;
 select t.gate_reset();
-select mc.server_tick();
-select mc.server_tick();
-select t.is_true('(armed before the same-transaction test, no DDL in between)', current_setting('dbcraft.quiet_mark') <> '');
+select t.tick();
+select t.tick();
+select t.is_true('(armed before the same-transaction test, no DDL in between)', t.armed_ok());
 select t.is_true('a write in the same transaction before the tick: not quiet (and quiet again once it is deleted, by the probes)', t.gate_same_txn());
 select t.eq('...and that transaction did not arm the gate for the next one', current_setting('dbcraft.quiet_mark'), '');
 
 -- the hook is asked on every tick, gate or not (it may depend on anything: a clock, a setting)
 create or replace function mc.tick_extra_pending() returns boolean language sql volatile as $$ select coalesce(current_setting('dbcraft.test_hook', true), '') = 'on' $$;
-select mc.server_tick();
-select mc.server_tick();
-select t.is_true('the hook is armed-gate-proof: armed', current_setting('dbcraft.quiet_mark') <> '');
+select t.tick();
+select t.tick();
+select t.is_true('the hook is armed-gate-proof: armed', t.armed_ok());
 select set_config('dbcraft.test_hook', 'on', false);
 select t.is_true('the hook says yes: not quiet although nothing was written (the gate does not decide)', not mc.tick_quiet() and current_setting('dbcraft.quiet_mark') = '');
 select set_config('dbcraft.test_hook', 'off', false);
-select mc.server_tick();
-select mc.server_tick();
-select t.is_true('the hook says no again: quiet and armed', current_setting('dbcraft.quiet_mark') <> '');
+select t.tick();
+select t.tick();
+select t.is_true('the hook says no again: quiet and armed', t.armed_ok());
 create or replace function mc.tick_extra_pending() returns boolean language sql immutable parallel safe as $$ select false $$;
 
 ------------------------------------------------------------------------------------------------ 3. when it is armed
 select t.gate_reset();
-select mc.server_tick() as t0 \gset
-select mc.server_tick();
-select mc.server_tick();
-select mc.server_tick();
-select t.is_true('after a quiet tick the mark is the next transaction id', current_setting('dbcraft.quiet_mark')::bigint = current_setting('dbcraft.quiet_xid')::bigint + 1);
+select t.tick() as t0 \gset
+select t.tick();
+select t.tick();
+select t.tick();
+select t.is_true('after a quiet tick the mark is the next transaction id (or a foreign transaction disturbed the tick)', case when current_setting('dbcraft.quiet_mark') <> '' then current_setting('dbcraft.quiet_mark')::bigint = current_setting('dbcraft.quiet_xid')::bigint + 1 else current_setting('t.clean', true) = 'false' end);
 insert into net.inbox (conn_id, payload) values (1, '\x00');
 select t.is_true('a tick with a frame in the inbox is not quiet', not mc.tick_quiet() and current_setting('dbcraft.quiet_mark') = '');
 truncate net.inbox;
@@ -169,29 +214,31 @@ truncate net.inbox;
 select pg_stat_force_next_flush();
 select coalesce(sum(seq_scan + coalesce(idx_scan, 0)), 0)::bigint as scans0 from pg_stat_user_tables where schemaname = 'net' and relname = 'conn' \gset
 select count(mc.server_tick()) from generate_series(1, 1) \gset
-select 'select mc.server_tick();' from generate_series(1, 100) \gexec
+select set_config('t.disturbed_n', '0', false);
+select 'select t.tick();' from generate_series(1, 100) \gexec
 select pg_stat_force_next_flush();
 select coalesce(sum(seq_scan + coalesce(idx_scan, 0)), 0)::bigint as scans1 from pg_stat_user_tables where schemaname = 'net' and relname = 'conn' \gset
-select t.is_true('100 idle ticks of one session probe at most 3 times (' || (:scans1 - :scans0) || ' probe rounds)', :scans1 - :scans0 <= 3);
+select t.is_true('100 idle ticks of one session probe at most 3 times, plus twice for each tick a foreign transaction disturbed (' || (:scans1 - :scans0) || ' probe rounds, ' || coalesce(nullif(current_setting('t.disturbed_n', true), ''), '0') || ' disturbed ticks)',
+                 :scans1 - :scans0 <= 3 + 2 * coalesce(nullif(current_setting('t.disturbed_n', true), ''), '0')::int);
 
 ------------------------------------------------------------------------------------------------ 4. net.gateway_pending
 select t.gate_reset();
-select mc.server_tick();
-select mc.server_tick();
+select t.tick();
+select t.tick();
 select t.eq('a quiet tick and the probe in one statement: nothing to hand over', (select p from (select mc.server_tick() as tk, net.gateway_pending(0) as p) q), 0);
 select t.is_true('...the shortcut is used up by the call', current_setting('dbcraft.quiet_xid') = '');
 insert into net.outbox (conn_id, data) values (5, '\x01');
 select t.eq('bytes in the outbox: the tick is not quiet, the probe says bit 1', (select p from (select mc.server_tick() as tk, net.gateway_pending(0) as p) q), 1);
 truncate net.outbox;
-select mc.server_tick();
+select t.tick();
 insert into mc.chunk_request (dimension, cx, cz, prio) values ('minecraft:overworld', 0, 0, 0);
 select t.eq('a chunk request is bit 4 (and makes the tick not quiet)', (select p from (select mc.server_tick() as tk, net.gateway_pending(0) as p) q), 4);
 insert into net.conn (conn_id, state, compression) values (77, 'play', -1);
 select t.eq('a control row and a chunk request: bits 2 and 4', net.gateway_pending(0), 6);
 delete from net.conn;
 truncate mc.chunk_request;
-select mc.server_tick();
-select mc.server_tick();
+select t.tick();
+select t.tick();
 -- two calls in one transaction: the second probes (something may have been written since the tick)
 create or replace function t.pending_twice() returns text language plpgsql as $$
 declare a int; b int; tk bigint;
@@ -247,3 +294,8 @@ select t.is_true('with the default bound a small queue is not (the file stays)',
 select t.is_true('...and a queue bigger than the bound is', (select t.trunc_probe('1')));
 update mc.server_property set value = '262144' where key = 'dbcraft.tick-truncate-bytes';
 
+-- how often the gate was really exercised in this run (the rest was excused by a foreign transaction the tick saw)
+do $$ begin
+  raise notice 'gate armed in % of % armed-assertions; % excused by foreign transactions seen around the tick', coalesce(nullif(current_setting('t.armed_n', true), ''), '0'),
+    coalesce(nullif(current_setting('t.armed_n', true), ''), '0')::int + coalesce(nullif(current_setting('t.excused_n', true), ''), '0')::int, coalesce(nullif(current_setting('t.excused_n', true), ''), '0');
+end $$;
