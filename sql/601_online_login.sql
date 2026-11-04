@@ -87,8 +87,10 @@ end $$;
 ------------------------------------------------------------------------------------------------ verdicts
 -- Applied once per tick, before the game tick.  One failing connection never affects the others (its own subtransaction, then closed).
 create or replace function net.apply_auth_results() returns int language plpgsql as $$
-declare r record; n int := 0; thr int := net.setting('compression_threshold')::int; chk record; sid uuid; c net.conn; prop jsonb; i int := 0;
+declare r record; n int := 0; thr int; chk record; sid uuid; c net.conn; prop jsonb; i int := 0;
 begin
+    if not exists (select 1 from net.auth_result) then return 0; end if;                    -- sql/800: nothing to apply (offline mode: always)
+    thr := net.setting('compression_threshold')::int;
     for r in with q as (delete from net.auth_result returning *) select * from q order by seq loop
         select * into c from net.conn where conn_id = r.conn_id and auth_pending and not closing;
         if not found then continue; end if;

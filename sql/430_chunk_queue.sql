@@ -83,15 +83,26 @@ end $$;
 
 -- The generator loop: run it from its own connection (`call mc.run_generator();`), as many of them as you have cores to spare.  Commits after every batch.
 -- Stops when mc.generator_control.stop is set, or after p_max_seconds.
-create or replace procedure mc.run_generator(p_batch int default 64, p_idle_ms int default 5, p_max_seconds int default null) language plpgsql as $$
-declare n int; t0 timestamptz := clock_timestamp();
+-- Polling cost (sql/800, docs/PERF-IDLE.md): the poll is one EXISTS (the full request/delete statements only run when a request exists), and after p_idle_polls empty polls in a row the
+-- sleep doubles with every further empty poll up to p_idle_max_ms, so an idle server's generators wake about 20 times a second instead of 200 (two connections used 0.07 of the 0.15
+-- cores an empty server burnt).  A request waits at most p_idle_max_ms for a generator that has backed off; the first poll after work starts again at p_idle_ms.
+drop procedure if exists mc.run_generator(int, int, int);
+create or replace procedure mc.run_generator(p_batch int default 64, p_idle_ms int default 5, p_max_seconds int default null, p_idle_max_ms int default 50, p_idle_polls int default 20) language plpgsql as $$
+declare n int; t0 timestamptz := clock_timestamp(); idle int := 0; sleep_ms float8;
 begin
     loop
-        n := mc.generate_pending(p_batch);
+        n := 0;
+        if exists (select 1 from mc.chunk_request) then n := mc.generate_pending(p_batch); end if;
         commit;
         exit when (select stop from mc.generator_control);
         exit when p_max_seconds is not null and clock_timestamp() - t0 > make_interval(secs => p_max_seconds);
-        if n = 0 then perform pg_sleep(p_idle_ms / 1000.0); end if;
+        if n = 0 then
+            idle := least(idle + 1, 1000);
+            sleep_ms := case when idle <= p_idle_polls then p_idle_ms else least(p_idle_max_ms, p_idle_ms * power(2, least(idle - p_idle_polls, 20))) end;
+            perform pg_sleep(sleep_ms / 1000.0);
+        else
+            idle := 0;
+        end if;
         commit;
     end loop;
 end $$;

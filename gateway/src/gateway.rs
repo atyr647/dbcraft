@@ -16,7 +16,7 @@ use crate::mojang::{Outcome, PoolConfig, SessionPool, Verdict};
 use crate::reader::{Await, Item, Reader, ReaderLimits};
 use crate::wq::WriteQueue;
 use dbcraft_gateway_core::hash::server_hash;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Shutdown, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
@@ -54,6 +54,74 @@ struct Stats {
     bytes_out: u64,
     rejected: u64,
     errors: u64,
+    lean_ticks: u64,
+    urgent_runs: u64,
+    urgent_frames: u64,
+}
+
+/// Packet ids (serverbound, play) the urgent chat lane needs to classify a frame without parsing it.
+#[derive(Clone, Copy)]
+struct UrgentIds {
+    chat: u32,
+    cmd: [u32; 2],
+    /// frames that may stand ahead of a chat frame of the same connection without making it wait: client_tick_end and the movement packets
+    neutral: [u32; 5],
+}
+
+/// The packet id of a frame (first VarInt), or None when it is not a plain id below 2^21.
+fn frame_pid(payload: &[u8]) -> Option<u32> {
+    let mut v: u32 = 0;
+    for (i, b) in payload.iter().take(3).enumerate() {
+        v |= ((b & 0x7f) as u32) << (7 * i);
+        if b & 0x80 == 0 {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// Removes the client_tick_end frames of play connections that have fewer than two position packets in `frames`: the database ignores them (sql/800 has the argument).
+fn drop_idle_tick_ends(frames: &mut Vec<(u64, Vec<u8>)>, ids: &UrgentIds, is_play: &dyn Fn(u64) -> bool) {
+    let (tick_end, pos, pos_rot) = (ids.neutral[0], ids.neutral[1], ids.neutral[2]);
+    if !frames.iter().any(|(_, p)| frame_pid(p) == Some(tick_end)) {
+        return;
+    }
+    let mut positions: HashMap<u64, u32> = HashMap::new();
+    for (cid, p) in frames.iter() {
+        let pid = frame_pid(p);
+        if pid == Some(pos) || pid == Some(pos_rot) {
+            *positions.entry(*cid).or_insert(0) += 1;
+        }
+    }
+    frames.retain(|(cid, p)| !(frame_pid(p) == Some(tick_end) && positions.get(cid).copied().unwrap_or(0) < 2 && is_play(*cid)));
+}
+
+/// Which frames of `frames` (in arrival order) may be handled urgently: chat frames of play connections such that no frame ahead of them (any connection) is a command and no
+/// frame ahead of them from the same connection is anything but chat, client_tick_end or a movement packet.  Returns indices into `frames`.
+fn urgent_candidates(frames: &[(u64, Vec<u8>)], ids: &UrgentIds, is_play: &dyn Fn(u64) -> bool) -> Vec<usize> {
+    let mut taken = Vec::new();
+    let mut blocked: HashSet<u64> = HashSet::new();
+    for (i, (cid, payload)) in frames.iter().enumerate() {
+        let pid = match frame_pid(payload) {
+            Some(p) => p,
+            None => {
+                blocked.insert(*cid);
+                continue;
+            }
+        };
+        if ids.cmd.contains(&pid) {
+            break; // a command: it and everything after it waits for the tick, so commands and chat keep their arrival order
+        } else if pid == ids.chat {
+            if !blocked.contains(cid) && is_play(*cid) {
+                taken.push(i);
+            } else {
+                blocked.insert(*cid);
+            }
+        } else if !ids.neutral.contains(&pid) {
+            blocked.insert(*cid);
+        }
+    }
+    taken
 }
 
 struct DrainRow {
@@ -107,6 +175,15 @@ pub struct Gateway {
     stats_window: Stats,
     stop: bool,
     start: Instant,
+    /// packet ids for the urgent chat lane and the client_tick_end filter (None: both disabled or the ids are not available)
+    urgent: Option<UrgentIds>,
+    /// the urgent chat lane itself is on (config, and net.urgent_chat exists)
+    urgent_on: bool,
+    urgent_want: bool,
+    urgent_runs: u32,
+    urgent_cost_ms: f64,
+    /// ticks that ran lean since the control row was last written: (count, late, max ms, last ms)
+    lean_pending: (u32, u32, f64, f64),
 }
 
 fn log(start: Instant, msg: &str) {
@@ -173,6 +250,25 @@ impl Gateway {
             PoolConfig { base_url: cfg.session_url.clone(), timeout_ms: cfg.session_timeout_ms, workers: cfg.session_workers, retries: cfg.session_retries },
             Arc::clone(&wake),
         )?;
+        let mut urgent_on = false;
+        let urgent = if cfg.urgent_chat || cfg.skip_tick_end {
+            let ids = db
+                .exec("select mc.sid('chat'), mc.sid('chat_command'), mc.sid('chat_command_signed'), mc.sid('client_tick_end'), mc.sid('move_player_pos'), mc.sid('move_player_pos_rot'), mc.sid('move_player_rot'), mc.sid('move_player_status_only'), to_regprocedure('net.urgent_chat(bigint[],bytea[])') is not null")
+                .ok();
+            ids.and_then(|r| {
+                let g = |i: usize| r.int(0, i).map(|v| v as u32);
+                let have_fn = r.boolean(0, 8).unwrap_or(false);
+                urgent_on = cfg.urgent_chat && have_fn;
+                match (g(0), g(1), g(2), g(3), g(4), g(5), g(6), g(7)) {
+                    (Some(chat), Some(c1), Some(c2), Some(n1), Some(n2), Some(n3), Some(n4), Some(n5)) => {
+                        Some(UrgentIds { chat, cmd: [c1, c2], neutral: [n1, n2, n3, n4, n5] })
+                    }
+                    _ => None,
+                }
+            })
+        } else {
+            None
+        };
         let limits = Limits::new(LimitConfig {
             max_connections: cfg.max_connections,
             max_per_ip: cfg.max_connections_per_ip,
@@ -182,8 +278,9 @@ impl Gateway {
         log(
             start,
             &format!(
-                "listening on {} (tick {} ms, {}, inbox via {}, session server {}, {} stale connections cleaned)",
-                cfg.listen, cfg.tick_ms, cfg.tick_fn, cfg.inbox_mode, cfg.session_url, cleaned
+                "listening on {} (tick {} ms, {}, inbox via {}, session server {}, {} stale connections cleaned, lean ticks {}, urgent chat {}, tick_end filter {})",
+                cfg.listen, cfg.tick_ms, cfg.tick_fn, cfg.inbox_mode, cfg.session_url, cleaned, cfg.lean_ticks, if urgent_on { "on" } else { "off" },
+                if cfg.skip_tick_end && urgent.is_some() { "on" } else { "off" }
             ),
         );
         let maint = if cfg.maintenance_s > 0 { Some(Maintenance::spawn(&cfg.database_url, cfg.maintenance_s, &cfg.maintenance_tables)) } else { None };
@@ -216,6 +313,12 @@ impl Gateway {
             stats_window: Stats::default(),
             stop: false,
             start,
+            urgent,
+            urgent_on,
+            urgent_want: false,
+            urgent_runs: 0,
+            urgent_cost_ms: 2.0,
+            lean_pending: (0, 0, 0.0, 0.0),
         })
     }
 
@@ -251,6 +354,10 @@ impl Gateway {
                         }
                     }
                 }
+            }
+            if self.urgent_want {
+                self.urgent_want = false;
+                self.run_urgent(sched);
             }
             let now = Instant::now();
             if now >= sched {
@@ -391,6 +498,11 @@ impl Gateway {
                         c.last_frame = Instant::now();
                     }
                     self.stats.frames_in += 1;
+                    if let Some(u) = &self.urgent {
+                        if self.urgent_on && frame_pid(&payload) == Some(u.chat) {
+                            self.urgent_want = true;
+                        }
+                    }
                     self.inbound.push((id, payload));
                 }
                 Some(Item::Key(body)) => self.handle_key(id, &body)?,
@@ -525,10 +637,20 @@ impl Gateway {
 
     fn run_tick(&mut self, late: bool) {
         let t0 = Instant::now();
+        self.urgent_runs = 0;
         self.verdicts.extend(self.pool.take());
-        let inbound = std::mem::take(&mut self.inbound);
+        let mut inbound = std::mem::take(&mut self.inbound);
         let frames = inbound.len();
-        match self.tick_db(&inbound, late, t0) {
+        if self.cfg.skip_tick_end {
+            if let Some(ids) = self.urgent {
+                let conns = &self.conns;
+                drop_idle_tick_ends(&mut inbound, &ids, &|cid| conns.get(&cid).map_or(false, |c| c.reader.in_play()));
+            }
+        }
+        // nothing for the database but the tick itself (docs/PERF-IDLE.md): no transaction, no COPY, no apply/drain/control statements unless the probe says so
+        let lean = self.cfg.lean_ticks && inbound.is_empty() && self.accepted.is_empty() && self.begun.is_empty() && self.dropped.is_empty() && self.verdicts.is_empty();
+        let res = if lean { self.tick_lean(late, t0) } else { self.tick_db(&inbound, late, t0) };
+        match res {
             Ok((out, db_ms)) => {
                 self.accepted.clear();
                 self.begun.clear();
@@ -538,6 +660,7 @@ impl Gateway {
                 let ms = t0.elapsed().as_secs_f64() * 1000.0;
                 for s in [&mut self.stats, &mut self.stats_window] {
                     s.ticks += 1;
+                    s.lean_ticks += lean as u64;
                     s.late += late as u64;
                     s.tick_ms_sum += ms;
                     s.tick_ms_max = s.tick_ms_max.max(ms);
@@ -638,6 +761,82 @@ impl Gateway {
             self.db.query("select net.on_disconnect(c) from unnest($1::bigint[]) as u(c)", &[Param::bin(pq::OID_INT8_ARRAY, &a)], false)?;
         }
         // 7. the outbox
+        let drain = self.read_drain()?;
+        // 8. control rows
+        let ctl = self.read_ctl()?;
+        let db_ms = db_start.elapsed().as_secs_f64() * 1000.0;
+        // 9. statistics and the stop flag of the control table (present when the development gateway's SQL is installed)
+        let mut stop = false;
+        if self.has_control {
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            self.note_tick(ms, late);
+            stop = self.control_update(ms)?;
+        }
+        Ok((TickOut { drain, ctl, stop }, db_ms))
+    }
+
+    fn note_tick(&mut self, ms: f64, late: bool) {
+        let p = &mut self.lean_pending;
+        p.0 += 1;
+        p.1 += late as u32;
+        p.2 = p.2.max(ms);
+        p.3 = ms;
+    }
+
+    /// Writes the control row (statistics of the development gateway's table and the stop flag), counting the lean ticks since the last write too.  Returns the stop flag.
+    fn control_update(&mut self, ms: f64) -> Result<bool, PgError> {
+        let (n, l, mx, _) = self.lean_pending;
+        let ticks = (n as i32).to_be_bytes();
+        let ms_last = ms.to_be_bytes();
+        let ms_max = mx.to_be_bytes();
+        let late_i = (l as i32).to_be_bytes();
+        let conns = (self.conns.len() as i32).to_be_bytes();
+        let r = self.db.query(
+            "update net.gateway_control set ticks = ticks + $4, last_tick_ms = $1, max_tick_ms = greatest(coalesce(max_tick_ms, 0), $5), late_ticks = late_ticks + $2, connections = $3 returning stop",
+            &[
+                Param::bin(pq::OID_FLOAT8, &ms_last),
+                Param::bin(pq::OID_INT4, &late_i),
+                Param::bin(pq::OID_INT4, &conns),
+                Param::bin(pq::OID_INT4, &ticks),
+                Param::bin(pq::OID_FLOAT8, &ms_max),
+            ],
+            true,
+        )?;
+        self.lean_pending = (0, 0, 0.0, 0.0);
+        Ok(r.boolean(0, 0).unwrap_or(false))
+    }
+
+    /// The tick when the gateway has nothing to give the database: the tick function (its own transaction), then one probe; the outbox is drained and the control rows
+    /// are read only when the probe says there is something.  The control row is written every 10th lean tick (the stop flag is looked at then: a stop request is acted on within 0.5 s).
+    fn tick_lean(&mut self, late: bool, t0: Instant) -> Result<(TickOut, f64), PgError> {
+        let db_start = Instant::now();
+        let tick_sql = format!("select {}", self.cfg.tick_fn);
+        self.db.exec(&tick_sql)?;
+        let after = self.last_ctl.to_be_bytes();
+        let r = self.db.query("select net.gateway_pending($1)", &[Param::bin(pq::OID_INT8, &after)], true)?;
+        let pending = r.int(0, 0).unwrap_or(3);
+        drop(r);
+        let mut drain = Vec::new();
+        let mut ctl = Vec::new();
+        if pending & 1 != 0 {
+            drain = self.read_drain()?;
+        }
+        if pending & 2 != 0 {
+            ctl = self.read_ctl()?;
+        }
+        let db_ms = db_start.elapsed().as_secs_f64() * 1000.0;
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let mut stop = false;
+        if self.has_control {
+            self.note_tick(ms, late);
+            if self.lean_pending.0 >= 10 || pending != 0 {
+                stop = self.control_update(ms)?;
+            }
+        }
+        Ok((TickOut { drain, ctl, stop }, db_ms))
+    }
+
+    fn read_drain(&mut self) -> Result<Vec<DrainRow>, PgError> {
         let r = self.db.query("select conn_id, data, close from net.drain_outbox()", &[], true)?;
         let mut drain = Vec::with_capacity(r.rows());
         for i in 0..r.rows() {
@@ -647,8 +846,10 @@ impl Gateway {
             }
             drain.push(DrainRow { conn_id: conn_id as u64, data: r.bytes(i, 1).map(|b| b.to_vec()).unwrap_or_default(), close: r.boolean(i, 2).unwrap_or(false) });
         }
-        drop(r);
-        // 8. control rows
+        Ok(drain)
+    }
+
+    fn read_ctl(&mut self) -> Result<Vec<CtlRow>, PgError> {
         let after = self.last_ctl.to_be_bytes();
         let r = self.db.query(
             "select conn_id, ctl_seq, state, compression, await_key, name, verify_token from net.gateway_ctl($1)",
@@ -671,22 +872,89 @@ impl Gateway {
             };
             ctl.push(CtlRow { conn_id, seq, state: r.text(i, 2).unwrap_or_default(), compression: r.int(i, 3).map(|v| v as i32), await_key });
         }
-        drop(r);
-        let db_ms = db_start.elapsed().as_secs_f64() * 1000.0;
-        // 9. statistics and the stop flag of the control table (present when the development gateway's SQL is installed)
-        let mut stop = false;
-        if self.has_control {
-            let ms = (t0.elapsed().as_secs_f64() * 1000.0).to_be_bytes();
-            let late_i = (late as i32).to_be_bytes();
-            let conns = (self.conns.len() as i32).to_be_bytes();
-            let r = self.db.query(
-                "update net.gateway_control set ticks = ticks + 1, last_tick_ms = $1, max_tick_ms = greatest(coalesce(max_tick_ms, 0), $1), late_ticks = late_ticks + $2, connections = $3 returning stop",
-                &[Param::bin(pq::OID_FLOAT8, &ms), Param::bin(pq::OID_INT4, &late_i), Param::bin(pq::OID_INT4, &conns)],
-                true,
-            )?;
-            stop = r.boolean(0, 0).unwrap_or(false);
+        Ok(ctl)
+    }
+
+    /// The urgent chat lane: chat frames that arrived since the last tick are handled now (net.urgent_chat, then the outbox is drained, one transaction) when the next
+    /// tick is far enough away.  The frames it takes leave `inbound`; the others, and everything when the run fails, wait for the tick as before.
+    fn run_urgent(&mut self, sched: Instant) {
+        let ids = match self.urgent {
+            Some(u) if self.urgent_on => u,
+            _ => return,
+        };
+        if self.urgent_runs >= self.cfg.urgent_max_per_tick {
+            return;
         }
-        Ok((TickOut { drain, ctl, stop }, db_ms))
+        let now = Instant::now();
+        let reserve = Duration::from_secs_f64((self.urgent_cost_ms + self.cfg.urgent_reserve_ms as f64) / 1000.0);
+        if now + reserve > sched {
+            return; // the tick is due soon: it takes the frames
+        }
+        let taken = {
+            let conns = &self.conns;
+            urgent_candidates(&self.inbound, &ids, &|cid| conns.get(&cid).map_or(false, |c| c.reader.in_play()))
+        };
+        if taken.is_empty() {
+            return;
+        }
+        let t = Instant::now();
+        match self.urgent_db(&taken) {
+            Ok((drain, unhandled)) => {
+                let handled: HashSet<usize> = taken.iter().enumerate().filter(|(k, _)| !unhandled.contains(&(*k as i64 + 1))).map(|(_, i)| *i).collect();
+                let mut i = 0usize;
+                self.inbound.retain(|_| {
+                    let keep = !handled.contains(&i);
+                    i += 1;
+                    keep
+                });
+                self.urgent_runs += 1;
+                let ms = t.elapsed().as_secs_f64() * 1000.0;
+                self.urgent_cost_ms = 0.7 * self.urgent_cost_ms + 0.3 * ms;
+                for s in [&mut self.stats, &mut self.stats_window] {
+                    s.urgent_runs += 1;
+                    s.urgent_frames += handled.len() as u64;
+                }
+                self.apply_tick(TickOut { drain, ctl: Vec::new(), stop: false });
+            }
+            Err(e) => {
+                self.stats.errors += 1;
+                self.urgent_runs = self.cfg.urgent_max_per_tick; // no more tries before the next tick: the tick takes the frames
+                log(self.start, &format!("urgent chat run failed and was rolled back: {e}"));
+                if !self.db.is_ok() {
+                    if self.db.reset() {
+                        log(self.start, "database connection re-established");
+                    }
+                }
+            }
+        }
+    }
+
+    fn urgent_db(&mut self, taken: &[usize]) -> Result<(Vec<DrainRow>, Vec<i64>), PgError> {
+        self.db.exec("begin")?;
+        let r = (|| -> Result<(Vec<DrainRow>, Vec<i64>), PgError> {
+            let ids: Vec<i64> = taken.iter().map(|i| self.inbound[*i].0 as i64).collect();
+            let payloads: Vec<&[u8]> = taken.iter().map(|i| self.inbound[*i].1.as_slice()).collect();
+            let (a, b) = (pq::encode_array_i64(&ids), pq::encode_array_bytea(&payloads));
+            let res = self.db.query(
+                "select coalesce(array_to_string(net.urgent_chat($1::bigint[], $2::bytea[]), ','), '')",
+                &[Param::bin(pq::OID_INT8_ARRAY, &a), Param::bin(pq::OID_BYTEA_ARRAY, &b)],
+                false,
+            )?;
+            let unhandled: Vec<i64> = res.text(0, 0).unwrap_or_default().split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            drop(res);
+            let drain = self.read_drain()?;
+            Ok((drain, unhandled))
+        })();
+        match r {
+            Ok(v) => {
+                self.db.exec("commit")?;
+                Ok(v)
+            }
+            Err(e) => {
+                let _ = self.db.exec("rollback");
+                Err(e)
+            }
+        }
     }
 
     fn apply_tick(&mut self, out: TickOut) {
@@ -744,6 +1012,7 @@ impl Gateway {
             (cur.rejected - prev.rejected).to_string(),
             (cur.errors - prev.errors).to_string(),
         ];
+        let _ = (w.lean_ticks, w.urgent_runs, w.urgent_frames); // reported in the log line below (the statistics table has no column for them)
         let params: Vec<Param> = vals.iter().map(|v| Param::text(0, v)).collect();
         let sql = "insert into net.gateway_stats (ticks, late_ticks, tick_ms_avg, tick_ms_max, db_ms_avg, frames_in, bytes_in, frames_out, bytes_out, connections, rejected, errors) \
                    values ($1::int, $2::int, $3::float8, $4::float8, $5::float8, $6::bigint, $7::bigint, $8::bigint, $9::bigint, $10::int, $11::int, $12::int) on conflict (ts) do nothing";
@@ -768,6 +1037,73 @@ impl Gateway {
             let (passes, errors) = m.stop();
             log(self.start, &format!("maintenance thread stopped after {passes} vacuum passes, {errors} errors"));
         }
-        log(self.start, "stopped");
+        log(
+            self.start,
+            &format!(
+                "stopped ({} ticks, {} lean, {} late; urgent chat: {} runs took {} frames; {} errors)",
+                self.stats.ticks, self.stats.lean_ticks, self.stats.late, self.stats.urgent_runs, self.stats.urgent_frames, self.stats.errors
+            ),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const IDS: UrgentIds = UrgentIds { chat: 7, cmd: [6, 5], neutral: [12, 30, 31, 29, 28] };
+
+    fn f(conn: u64, pid: u8) -> (u64, Vec<u8>) {
+        (conn, vec![pid, 1, 2, 3])
+    }
+
+    fn play(_: u64) -> bool {
+        true
+    }
+
+    #[test]
+    fn packet_ids_are_read_from_the_first_varint() {
+        assert_eq!(frame_pid(&[7, 9]), Some(7));
+        assert_eq!(frame_pid(&[0x81, 0x01]), Some(129));
+        assert_eq!(frame_pid(&[]), None);
+        assert_eq!(frame_pid(&[0x80, 0x80, 0x80, 0x80]), None);
+    }
+
+    #[test]
+    fn tick_end_frames_are_dropped_unless_the_connection_sent_two_positions() {
+        // ids: tick_end 12, pos 30, pos_rot 31
+        let mut frames = vec![f(1, 12), f(2, 30), f(2, 12), f(3, 30), f(3, 31), f(3, 12), f(4, 12), f(5, 7)];
+        drop_idle_tick_ends(&mut frames, &IDS, &|c| c != 4);
+        let kept: Vec<(u64, u8)> = frames.iter().map(|(c, p)| (*c, p[0])).collect();
+        // connection 1: only a tick_end: dropped; 2: one position: its tick_end dropped; 3: two positions: kept; 4 is not in play: kept; chat untouched
+        assert_eq!(kept, vec![(2, 30), (3, 30), (3, 31), (3, 12), (4, 12), (5, 7)]);
+    }
+
+    #[test]
+    fn chat_after_neutral_frames_of_its_own_connection_is_urgent() {
+        let frames = vec![f(1, 12), f(1, 30), f(1, 7), f(2, 7)];
+        assert_eq!(urgent_candidates(&frames, &IDS, &play), vec![2, 3]);
+    }
+
+    #[test]
+    fn a_frame_of_another_kind_ahead_of_a_chat_blocks_that_connection_only() {
+        // connection 1 sent a block action (id 44) before its chat; connection 2's chat is unaffected
+        let frames = vec![f(1, 44), f(1, 7), f(2, 7), f(1, 7)];
+        assert_eq!(urgent_candidates(&frames, &IDS, &play), vec![2]);
+    }
+
+    #[test]
+    fn a_command_stops_everything_behind_it_whoever_sent_it() {
+        let frames = vec![f(1, 7), f(2, 6), f(3, 7), f(1, 7)];
+        assert_eq!(urgent_candidates(&frames, &IDS, &play), vec![0]);
+        let frames = vec![f(2, 5), f(1, 7)];
+        assert!(urgent_candidates(&frames, &IDS, &play).is_empty());
+    }
+
+    #[test]
+    fn only_play_connections_are_candidates_and_a_refused_chat_blocks_the_next() {
+        let not_one = |c: u64| c != 1;
+        let frames = vec![f(1, 7), f(1, 7), f(2, 7)];
+        assert_eq!(urgent_candidates(&frames, &IDS, &not_one), vec![2]);
     }
 }

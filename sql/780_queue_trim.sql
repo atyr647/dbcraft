@@ -59,6 +59,11 @@ end $$;
 -- What the gateway asks for each tick (sql/100): all pending bytes per connection, in order, and whether to close afterwards.  Unchanged except for the last line.
 create or replace function net.drain_outbox() returns table(conn_id bigint, data bytea, close boolean) language plpgsql as $$
 begin
+    -- sql/800: nothing to hand over (an idle server): no statement but the probe; the queues' size check, which this tick's rows cannot have changed, runs once a second
+    if not exists (select 1 from net.outbox) and not exists (select 1 from net.conn where closing) then
+        if (select game_time from mc.game_state) % 20 = 0 then perform net.trim_queues(); end if;
+        return;
+    end if;
     return query
     with out as (delete from net.outbox returning net.outbox.conn_id, net.outbox.seq, net.outbox.data),
          agg as (select o.conn_id, string_agg(o.data, ''::bytea order by o.seq) as data from out o group by o.conn_id),

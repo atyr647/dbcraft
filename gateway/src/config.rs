@@ -30,6 +30,18 @@ pub struct Config {
     pub maintenance_s: u64,
     /// schema-qualified tables, separated by commas or spaces: the tables that grow by DELETE/UPDATE and that autovacuum is too slow for (default: see below)
     pub maintenance_tables: String,
+    /// a tick that has no input for the database (no new socket, no inbound frame, no key response, no verdict, no closed socket) runs the tick function and one probe
+    /// (net.gateway_pending) instead of the full statement set, and writes the statistics row every 10th tick instead of every tick.  docs/PERF-IDLE.md
+    pub lean_ticks: bool,
+    /// serverbound chat frames are handled between ticks (net.urgent_chat) when the next tick is far enough away; false = they wait for the tick like every other frame
+    pub urgent_chat: bool,
+    /// client_tick_end frames of a play connection that sent fewer than two position packets in the tick are not given to the database (they cannot change anything there:
+    /// they only separate two position packets of one tick, see sql/800); an idle server then has an empty inbound queue and its ticks run lean
+    pub skip_tick_end: bool,
+    /// milliseconds that must remain before the next tick, on top of the measured cost of the last urgent run, for an urgent run to start
+    pub urgent_reserve_ms: u64,
+    /// at most this many urgent runs between two ticks (a chat flood must not starve the tick)
+    pub urgent_max_per_tick: u32,
 }
 
 /// Tables vacuumed by the maintenance thread.  NEVER a table the tick TRUNCATEs (mc.play_out, mc.play_in_work, net.batch, mc.pending_ack, mc.block_actor, mc.play_in): a
@@ -73,6 +85,11 @@ impl Default for Config {
             inbox_mode: "copy".into(),
             maintenance_s: 5,
             maintenance_tables: DEFAULT_MAINTENANCE_TABLES.into(),
+            lean_ticks: true,
+            urgent_chat: true,
+            skip_tick_end: true,
+            urgent_reserve_ms: 4,
+            urgent_max_per_tick: 4,
         }
     }
 }
@@ -127,6 +144,11 @@ impl Config {
                 "inbox_mode" => self.inbox_mode = v.clone(),
                 "maintenance_s" => num!(maintenance_s, k, v),
                 "maintenance_tables" => self.maintenance_tables = v.clone(),
+                "lean_ticks" => num!(lean_ticks, k, v),
+                "urgent_chat" => num!(urgent_chat, k, v),
+                "skip_tick_end" => num!(skip_tick_end, k, v),
+                "urgent_reserve_ms" => num!(urgent_reserve_ms, k, v),
+                "urgent_max_per_tick" => num!(urgent_max_per_tick, k, v),
                 other => return Err(format!("unknown setting {other:?}")),
             }
         }
@@ -172,7 +194,7 @@ impl Config {
         for key in [
             "database_url", "listen", "tick_ms", "tick_fn", "max_connections", "max_connections_per_ip", "new_connections_per_ip_per_sec", "login_attempts_per_ip_per_min",
             "read_timeout_s", "max_pending_bytes", "prelogin_max_frame", "prelogin_max_bytes", "session_url", "session_timeout_ms", "session_workers", "session_retries",
-            "rsa_bits", "inbox_mode", "maintenance_s", "maintenance_tables",
+            "rsa_bits", "inbox_mode", "maintenance_s", "maintenance_tables", "lean_ticks", "urgent_chat", "skip_tick_end", "urgent_reserve_ms", "urgent_max_per_tick",
         ] {
             if let Some(v) = env(&format!("DBCRAFT_GW_{}", key.to_ascii_uppercase())) {
                 over.insert(key.to_string(), v);
@@ -196,6 +218,23 @@ mod tests {
         let c = Config::load(None, &no_env).unwrap();
         assert_eq!(c.tick_ms, 50);
         assert_eq!(c.tick_fn, "mc.server_tick()");
+    }
+
+    #[test]
+    fn idle_and_urgent_settings() {
+        let c = Config::load(None, &no_env).unwrap();
+        assert!(c.lean_ticks && c.urgent_chat && c.skip_tick_end);
+        let env = |k: &str| match k {
+            "DBCRAFT_GW_URGENT_CHAT" => Some("false".to_string()),
+            "DBCRAFT_GW_LEAN_TICKS" => Some("false".to_string()),
+            "DBCRAFT_GW_URGENT_MAX_PER_TICK" => Some("2".to_string()),
+            _ => None,
+        };
+        let c = Config::load(None, &env).unwrap();
+        assert!(!c.lean_ticks && !c.urgent_chat);
+        assert_eq!(c.urgent_max_per_tick, 2);
+        let bad = |k: &str| if k == "DBCRAFT_GW_URGENT_CHAT" { Some("maybe".to_string()) } else { None };
+        assert!(Config::load(None, &bad).is_err());
     }
 
     #[test]
