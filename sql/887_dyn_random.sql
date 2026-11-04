@@ -99,7 +99,7 @@ begin
             on conflict (dimension, cx, cz) do update set version = excluded.version;
             return;
         end if;
-        select dv.flags, dv.famt, dv.k, dv.tagbits, dv.nextp, dv.lightd into fl, fa, kk, tg, npv, ld from mc.dyn_vec dv;
+        select dv.flags, dv.k into fl, kk from mc.dyn_vec dv;                                   -- (the other arrays are read when a class needs them: each is 70 to 280 KB)
         secs := mc.dyn_secs(p_dim, p_cx - 1, p_cx + 1, sy0, sy1, p_cz - 1, p_cz + 1, array(select generate_series(1, 9 * nsy)));
         gm := array[sy0, p_cz - 1, p_cx - 1, 3, 3] || array(select generate_series(2, 9 * nsy + 1));
         for ii in 1 .. cardinality(sys) loop
@@ -112,12 +112,13 @@ begin
             ex_x := '{}'; ex_y := '{}'; ex_z := '{}'; ex_n := 0;
             select exists (select 1 from unnest(cand) c where (fl[secs[rw][c + 1] + 1] & 524288) <> 0) into need_ex;
             if need_ex then
+                if ld is null then select dv.lightd into ld from mc.dyn_vec dv; end if;
                 select array_agg(u.o - 1) into dpos from unnest(secs[rw:rw][1:4096]) with ordinality u(c, o) where u.c = kk[41];
                 for k in 1 .. coalesce(cardinality(dpos), 0) loop
                     i := dpos[k]; lx := i & 15; lz := (i >> 4) & 15; ly := i >> 8;
                     x := p_cx * 16 + lx; y := s * 16 + ly; z := p_cz * 16 + lz;
                     a2 := case when ly < 15 then secs[rw][i + 256 + 1] else mc.dyn_at(secs, gm, x, y + 1, z) end;
-                    if (a2 = kk[50] or not ((fl[a2 + 1] & 8) <> 0 and mc.dyn_famount(mc.dyn_fstate(fl, fa, a2)) = 8 or ld[a2 + 1] >= 15)) and (fl[a2 + 1] & 8) = 0 then
+                    if (a2 = kk[50] or not ((fl[a2 + 1] & 8) <> 0 and (fl[a2 + 1] & (32 | 64)) <> 0 or ld[a2 + 1] >= 15)) and (fl[a2 + 1] & 8) = 0 then
                         ex_n := ex_n + 1; ex_x[ex_n] := x; ex_y[ex_n] := y; ex_z[ex_n] := z;
                     end if;
                 end loop;
@@ -129,7 +130,7 @@ begin
                 hit := false;
                 if (fl[cell + 1] & 524288) <> 0 then
                     ab := mc.dyn_at(secs, gm, x, y + 1, z);
-                    if ab <> kk[50] and ((fl[ab + 1] & 8) <> 0 and mc.dyn_famount(mc.dyn_fstate(fl, fa, ab)) = 8 or ld[ab + 1] >= 15) then hit := true;                  -- it dies
+                    if ab <> kk[50] and ((fl[ab + 1] & 8) <> 0 and (fl[ab + 1] & (32 | 64)) <> 0 or ld[ab + 1] >= 15) then hit := true;                  -- it dies
                     elsif lx = 0 or lx = 15 or lz = 0 or lz = 15 or ly < 3 or ly > 13 then
                         -- the spreading volume reaches into a neighbour section: look at every cell
                         <<vol>>
@@ -138,7 +139,7 @@ begin
                                 for dx in -1 .. 1 loop
                                     if mc.dyn_at(secs, gm, x + dx, y + dy, z + dz) = kk[41] then
                                         m1 := mc.dyn_at(secs, gm, x + dx, y + dy + 1, z + dz);
-                                        if (m1 = kk[50] or not ((fl[m1 + 1] & 8) <> 0 and mc.dyn_famount(mc.dyn_fstate(fl, fa, m1)) = 8 or ld[m1 + 1] >= 15)) and (fl[m1 + 1] & 8) = 0 then hit := true; exit vol; end if;
+                                        if (m1 = kk[50] or not ((fl[m1 + 1] & 8) <> 0 and (fl[m1 + 1] & (32 | 64)) <> 0 or ld[m1 + 1] >= 15)) and (fl[m1 + 1] & 8) = 0 then hit := true; exit vol; end if;
                                     end if;
                                 end loop;
                             end loop;
@@ -149,8 +150,10 @@ begin
                         end loop;
                     end if;
                 elsif (fl[cell + 1] & 1048576) <> 0 or (fl[cell + 1] & 4194304) <> 0 then
+                    if npv is null then select dv.nextp into npv from mc.dyn_vec dv; end if;
                     hit := npv[cell + 1] >= 0;                                                       -- a crop that can age, a sapling at stage 0
                 elsif (fl[cell + 1] & 2097152) <> 0 then
+                    if tg is null then select dv.tagbits into tg from mc.dyn_vec dv; end if;
                     m1 := cell - kk[42];                                                             -- the moisture of this state
                     found := false;
                     <<wat>>

@@ -158,7 +158,7 @@ end $$;
 create or replace function mc.dyn_on_events() returns trigger language plpgsql volatile as $$
 declare
     v mc.dyn_vec%rowtype; e record; cur bigint; dim text; osid int; nsid int; keep boolean; k int; many boolean;
-    xs int[] := '{}'; ys int[] := '{}'; zs int[] := '{}'; auxs int[] := '{}'; kinds int[] := '{}'; n int := 0; pos int[]; p int; cx0 int; sy int; cz0 int; ci int;
+    xs int[] := '{}'; ys int[] := '{}'; zs int[] := '{}'; auxs int[] := '{}'; aux2s int[] := '{}'; kinds int[] := '{}'; n int := 0; pos int[]; p int; cx0 int; sy int; cz0 int; ci int;
     dirs int[][] := array[[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]]; interesting int := 4 | 8 | 4096 | 65536 | 262144; dims text; any_react boolean; any_tick boolean;
 begin
     if not mc.dyn_enabled() then return null; end if;
@@ -208,21 +208,27 @@ begin
                 end loop;
             end if;
             if keep then
-                n := n + 1; kinds[n] := 4; xs[n] := e.x; ys[n] := e.y; zs[n] := e.z; auxs[n] := osid;
+                n := n + 1; kinds[n] := 4; xs[n] := e.x; ys[n] := e.y; zs[n] := e.z; auxs[n] := osid; aux2s[n] := 0;
             end if;
         elsif e.kind = 'cells' then
             select d.sid into nsid from mc.dyn_state d where d.name = e.new_state;
+            select d.sid into osid from mc.dyn_state d where d.name = e.old_state;
             if (v.flags[nsid + 1] & interesting) <> 0 then
                 for p in select unnest(mc.cells_positions(e.cells)) loop
                     exit when n >= 2000;
-                    n := n + 1; kinds[n] := 4; xs[n] := (e.x >> 4) * 16 + ((p >> 8) & 15); ys[n] := (e.y >> 4) * 16 + (p & 15); zs[n] := (e.z >> 4) * 16 + ((p >> 4) & 15); auxs[n] := v.k[1];
+                    n := n + 1; kinds[n] := 9; xs[n] := (e.x >> 4) * 16 + ((p >> 8) & 15); ys[n] := (e.y >> 4) * 16 + (p & 15); zs[n] := (e.z >> 4) * 16 + ((p >> 4) & 15); auxs[n] := coalesce(osid, v.k[1]); aux2s[n] := nsid;
                 end loop;
             end if;
         end if;
     end loop;
+    -- a fill: every block is placed first (kind 9), then the neighbours of every one of them are told, in the same order (kind 10)
+    k := n;
+    for p in 1 .. k loop
+        if kinds[p] = 9 then n := n + 1; kinds[n] := 10; xs[n] := xs[p]; ys[n] := ys[p]; zs[n] := zs[p]; auxs[n] := auxs[p]; aux2s[n] := 0; end if;
+    end loop;
     if n > 0 then
         perform set_config('mc.dyn_nocache', 'on', true);
-        perform mc.dyn_run(dim, cur, kinds, xs, ys, zs, auxs);
+        perform mc.dyn_run(dim, cur, kinds, xs, ys, zs, auxs, false, aux2s);
         perform set_config('mc.dyn_nocache', 'off', true);
     end if;
     return null;
