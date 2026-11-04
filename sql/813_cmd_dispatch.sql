@@ -39,7 +39,7 @@ begin
 end $$;
 
 ------------------------------------------------------------------------------------------------ helpers used by the commands
-create or replace function mc.pkt_entity_event(p_entity_id int, p_event int) returns bytea language sql stable as $$
+create or replace function mc.pkt_entity_event(p_entity_id int, p_event int) returns bytea language sql stable parallel safe as $$
   select mc.cb('entity_event', proto.i32(p_entity_id) || proto.i8(p_event)) $$;
 
 -- the executor's player row, fresh (handlers get the row as it was when the command started)

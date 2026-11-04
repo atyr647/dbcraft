@@ -15,8 +15,7 @@ create or replace function mc.pkt_set_experience(p_progress real, p_level int, p
   select mc.cb('set_experience', proto.f32(p_progress) || proto.varint(p_level) || proto.varint(p_total)) $$;
 create or replace function mc.pkt_damage_event(p_eid int, p_type_id int, p_cause int default null, p_direct int default null) returns bytea language sql stable parallel safe as $$
   select mc.cb('damage_event', proto.varint(p_eid) || proto.varint(p_type_id) || proto.varint(coalesce(p_cause + 1, 0)) || proto.varint(coalesce(p_direct + 1, 0)) || proto.bool(false)) $$;
-create or replace function mc.pkt_entity_event(p_eid int, p_event int) returns bytea language sql stable parallel safe as $$
-  select mc.cb('entity_event', proto.i32(p_eid) || proto.i8(p_event)) $$;
+-- mc.pkt_entity_event(int, int) is defined in sql/813 (the commands use it too)
 create or replace function mc.pkt_data_health(p_eid int, p_health real) returns bytea language sql stable parallel safe as $$
   select mc.cb('set_entity_data', proto.varint(p_eid) || '\x0903'::bytea || proto.f32(p_health) || '\xff'::bytea) $$;
 create or replace function mc.pkt_data_using(p_eid int, p_using boolean) returns bytea language sql stable parallel safe as $$      -- living entity flags: bit 0 = using an item (main hand)
