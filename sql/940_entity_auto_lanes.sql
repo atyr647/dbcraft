@@ -324,3 +324,7 @@ select e.id, e.type, e.dimension,
 create index if not exists entity_lane_legacy_idx on mc.entity_lane (id) where not auto;
 -- dropped items by cell: the pickup scan of every player reads the items of its 3x3 cells, not every mob standing there
 create index if not exists entity_item_cell_idx on mc.entity (cx, cz) where type = 'minecraft:item';
+
+-- an autonomous lane row is rewritten once per segment (every 50 ticks or so): room for the new version in the page keeps those updates HOT (fillfactor 70 gave 31 % HOT updates, the
+-- rest went to the primary-key index as well).  Takes effect for the pages written from now on.
+alter table mc.entity_lane set (fillfactor = 50);
