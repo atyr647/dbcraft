@@ -189,16 +189,23 @@ class Dbcraft:
         pass
 
     def window_end(self):
-        rows = dbq("select ms_total, ms_process, ms_game, ms_blocks, ms_chunks, ms_drain, players from mc.server_tick_log where tick > %d order by tick" % self.t0_tick)
+        rows = dbq("select ms_total, ms_process, ms_game, ms_blocks, ms_chunks, ms_drain, players, tick from mc.server_tick_log where tick > %d order by tick" % self.t0_tick)
         data = [[float(x) if x else 0.0 for x in r.split(",")] for r in rows.splitlines() if r]
         if not data:
             return {}
+        ticks = [int(r[7]) for r in data]
+        data = [r[:7] for r in data]
         tot = [r[0] for r in data]
         d = C.stats(tot)
         out = {"mspt_mean": d["mean"], "mspt_p50": d["p50"], "mspt_p95": d["p95"], "mspt_p99": d["p99"], "mspt_p999": d["p999"], "mspt_max": d["max"],
                "ticks": len(data), "tps": len(data) / max(1e-9, time.time() - self.t0),
                "over50": sum(1 for x in tot if x > 50), "over100": sum(1 for x in tot if x > 100)}
         out["series_avg_ms"] = [round(sum(tot[i:i + 100]) / len(tot[i:i + 100]), 2) for i in range(0, len(tot), 100)]
+        # where the slow ticks are (docs/PERF-IDLE2.md): per position in the 20-tick second, and the ten slowest ticks with their phases and their positions in the second and the keep-alive round
+        out["by_residue"] = [[round(sum(r[0] for r, t in zip(data, ticks) if t % 20 == k) / max(1, sum(1 for t in ticks if t % 20 == k)), 2),
+                              round(max([r[0] for r, t in zip(data, ticks) if t % 20 == k] or [0.0]), 1)] for k in range(20)]
+        out["slowest"] = [[ticks[i], round(data[i][0], 1), round(data[i][1], 1), round(data[i][2], 1), round(data[i][3], 1), round(data[i][4], 1), round(data[i][5], 1), ticks[i] % 20, ticks[i] % 300]
+                          for i in sorted(range(len(data)), key=lambda i: -data[i][0])[:10]]      # tick, total, process, game, blocks, chunks, drain, tick % 20, tick % 300
         for i, k in enumerate(["process", "game", "blocks", "chunks", "drain"], start=1):
             out["phase_" + k + "_mean"] = sum(r[i] for r in data) / len(data)
         try:
