@@ -1016,9 +1016,11 @@ impl Gateway {
         }
         let now = Instant::now();
         let reserve = Duration::from_secs_f64((self.urgent_cost_ms + self.cfg.urgent_reserve_ms as f64) / 1000.0);
-        if now + reserve > sched {
+        if now < sched && now + reserve > sched {
             return; // the tick is due soon: it takes the frames
         }
+        // (docs/PERF-STORM.md) a tick that is already overdue (the previous one ran long, a login storm) is not a reason to leave the chat waiting for the next one: the lane runs
+        // before the late tick starts, at most urgent_max_per_tick times, and costs the tick 2-3 ms; without this the lane never ran while ticks were longer than 50 ms.
         let taken = {
             let conns = &self.conns;
             urgent_candidates(&self.inbound, &ids, &|cid| conns.get(&cid).map_or(false, |c| c.reader.in_play()))

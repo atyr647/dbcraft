@@ -30,13 +30,18 @@ alter table mc.player
 insert into mc.server_property (key, value, default_value, note)
 values ('dbcraft.locator-bar-max-players', '120', '120', 'dbcraft: above this many online players the locator bar (waypoint packets) is switched off; every pair of players costs a row per tick')
 on conflict (key) do nothing;
+insert into mc.server_property (key, value, default_value, note)
+values ('dbcraft.locator-bar-untrack-slice', '1500', '1500', 'dbcraft: when the locator bar is switched off (more players than dbcraft.locator-bar-max-players, or the game rule) at most this many UNTRACK connections are ended per tick, the rest in the following ticks (one tick of 14,000 packets at 120 players took 1.5 s)')
+on conflict (key) do nothing;
 
+-- (sql/920, docs/PERF-STORM.md: written without proto.varint / proto.uuid / proto.string, which are PL/pgSQL calls or a text round trip: 130 us per packet before, 3 us now; the same bytes,
+-- tests/sql/920 compares it with the previous body.  A joiner is sent a packet per transmitting player and the bar's pass builds one per changed pair.)
 create or replace function mc.wp_body(p_op int, p_uuid uuid, p_kind int, p_a int, p_b int, p_c int, p_ang real) returns bytea language sql immutable parallel safe as $$
-  select proto.varint(p_op) || '\x01'::bytea || proto.uuid(p_uuid) || proto.string('minecraft:default') || '\x00'::bytea
-         || case p_kind when 1 then proto.varint(1) || proto.varint(p_a) || proto.varint(p_b) || proto.varint(p_c)
-                        when 2 then proto.varint(2) || proto.varint(p_a) || proto.varint(p_b)
-                        when 3 then proto.varint(3) || proto.f32(p_ang)
-                        else proto.varint(0) end $$;
+  select proto.varint_slow(p_op) || '\x01'::bytea || uuid_send(p_uuid) || '\x116d696e6563726166743a64656661756c7400'::bytea      -- op | 0x01 + uuid | "minecraft:default" | no colour
+         || case p_kind when 1 then '\x01'::bytea || proto.varint_slow(p_a) || proto.varint_slow(p_b) || proto.varint_slow(p_c)
+                        when 2 then '\x02'::bytea || proto.varint_slow(p_a) || proto.varint_slow(p_b)
+                        when 3 then '\x03'::bytea || float4send(p_ang)
+                        else '\x00'::bytea end $$;
 create or replace function mc.pkt_waypoint(p_op int, p_uuid uuid, p_kind int, p_a int, p_b int, p_c int, p_ang real) returns bytea language sql stable parallel safe as $$
   select mc.cb('waypoint', mc.wp_body(p_op, p_uuid, p_kind, p_a, p_b, p_c, p_ang)) $$;
 
@@ -51,15 +56,27 @@ create or replace function mc.wp_state_now(p mc.player) returns int language sql
 drop function if exists mc.vis_wp_pass(bigint, int);
 create or replace function mc.vis_wp_pass(p_cur bigint, p_phase int, p_n int default null) returns void language plpgsql as $$
 declare enabled boolean := mc.rule_bool('locator_bar', true); n int; cap int := coalesce(mc.prop_int('dbcraft.locator-bar-max-players'), 120);
+        slice int := coalesce(mc.prop_int('dbcraft.locator-bar-untrack-slice'), 2000000000); vdsrv int := mc.prop_int('view-distance');      -- (once, not once per player row: 20 us each)
 begin
   n := coalesce(p_n, (select count(*)::int from mc.player where conn_id is not null));
   if n > cap then enabled := false; end if;
   if not enabled and not exists (select 1 from mc.wp) then return; end if;       -- off and nothing connected: nothing to do, not even the bookkeeping (the first pass after it comes back remakes what it needs)
+  if not enabled then
+    -- sql/920 (docs/PERF-STORM.md): the bar is off (over the player cap or the game rule), so every connection is to be ended: no pair needs evaluating, the rows are taken in (receiver, source)
+    -- order, at most dbcraft.locator-bar-untrack-slice of them, and their UNTRACKs go out grouped by receiver in source order, exactly the packets of the general pass below.  (The general pass
+    -- looked at every pair of players for every slice: 14,000 pairs, 450 ms, in each of the ten ticks that ended the 14,000 connections of 120 players.)
+    with e0 as (select w.rcv, w.src from mc.wp w order by w.rcv, w.src limit slice),         -- (the slice first, from the primary key; the players only for those rows: joining all 14,000 first cost 400 ms)
+         del as (delete from mc.wp w using e0 where w.rcv = e0.rcv and w.src = e0.src returning w.rcv, w.src)      -- (a row whose receiver or source is not online any more is dropped without a packet)
+    insert into mc.play_out (conn_id, data)
+    select r.conn_id, string_agg(mc.pkt_waypoint(1, s.uuid, 0, 0, 0, 0, 0), '\x'::bytea order by d.src)
+      from del d join mc.player r on r.entity_id = d.rcv and r.conn_id is not null join mc.player s on s.entity_id = d.src and s.conn_id is not null
+     group by r.conn_id order by r.conn_id;
+  else
   with pl as materialized (
     select p.entity_id as eid, p.conn_id, p.uuid, p.x, p.y, p.z, p.last_move_tick, p.wp_state as old_st, floor(p.x)::int as bx, floor(p.y)::int as by, floor(p.z)::int as bz, p.chunk_x as cx, p.chunk_z as cz,
            p.wp_bx, p.wp_by, p.wp_bz, p.wp_cx, p.wp_cz,
            case when p_phase = 2 then mc.wp_state_now(p) else p.wp_state end as st,
-           coalesce(case when p.view_distance_req is null then 2 else greatest(2, least(p.view_distance_req, mc.prop_int('view-distance'))) end, 2) as vr
+           coalesce(case when p.view_distance_req is null then 2 else greatest(2, least(p.view_distance_req, vdsrv)) end, 2) as vr
       from mc.player p where p.conn_id is not null),
   pr as materialized (
     select r.eid as rcv, r.conn_id as rconn, s.eid as src, s.uuid as suuid, s.bx, s.by, s.bz, s.cx as scx, s.cz as scz,
@@ -71,7 +88,8 @@ begin
            mc.wp_angle(r.x, r.z, s.x, s.z) as ang,
            ((p_phase = 1 and r.last_move_tick = p_cur) or (p_phase = 2 and (s.old_st is null or ((s.st & 1) = 1 and (s.old_st & 1) = 0)))) as may_create,      -- a missing connection is made when the receiver moves (updatePlayer) or when the source starts to transmit (trackWaypoint)
            w.kind as ok, w.ang as oang
-      from pl r join pl s on s.eid <> r.eid left join mc.wp w on w.rcv = r.eid and w.src = s.eid),
+      from pl r join pl s on s.eid <> r.eid and (p_phase = 1 or not enabled or r.st is distinct from r.old_st or s.st is distinct from s.old_st)      -- sql/920: the entity phase (2) only looks at pairs of which one side's transmit state changed (everything else was settled by the movement pass or has nothing to decide)
+                   left join mc.wp w on w.rcv = r.eid and w.src = s.eid),
   dc as materialized (
     select pr.*, case when far then 3 when not vis then 2 else 1 end as nk,
            case when ok is null then null
@@ -99,6 +117,7 @@ begin
            when 'update'  then mc.pkt_waypoint(2, ev.suuid, ev.ok, case ev.ok when 1 then ev.bx else ev.scx end, case ev.ok when 1 then ev.by else ev.scz end, ev.bz, ev.ang)
            else mc.pkt_waypoint(1, ev.suuid, 0, 0, 0, 0, 0) end, '\x'::bytea order by ev.src)
     from ev group by ev.rconn order by ev.rconn;
+  end if;
   if p_phase = 1 then
     update mc.player set wp_bx = floor(x)::int, wp_by = floor(y)::int, wp_bz = floor(z)::int, wp_cx = chunk_x, wp_cz = chunk_z
      where conn_id is not null and (wp_bx is distinct from floor(x)::int or wp_by is distinct from floor(y)::int or wp_bz is distinct from floor(z)::int or wp_cx is distinct from chunk_x or wp_cz is distinct from chunk_z);
@@ -109,13 +128,13 @@ end $$;
 
 -- A joining player is connected to every transmitting player right away (ServerWaypointManager.addPlayer): the rows, and the packets of the entry burst (sql/906).
 create or replace function mc.vis_wp_join(p_eid int) returns void language plpgsql as $$
-declare enabled boolean := mc.rule_bool('locator_bar', true);
+declare enabled boolean := mc.rule_bool('locator_bar', true); vdsrv int := mc.prop_int('view-distance');
 begin
   if not enabled or (select count(*) from mc.player where conn_id is not null) > coalesce(mc.prop_int('dbcraft.locator-bar-max-players'), 120) then return; end if;
   insert into mc.wp (rcv, src, kind, ang)
   select r.entity_id, s.entity_id,
          case when sqrt((r.x - s.x) ^ 2 + (r.y - s.y) ^ 2 + (r.z - s.z) ^ 2)::real > 332::real then 3
-              when abs(s.chunk_x - r.chunk_x) <= coalesce(greatest(2, least(r.view_distance_req, mc.prop_int('view-distance'))), 2) and abs(s.chunk_z - r.chunk_z) <= coalesce(greatest(2, least(r.view_distance_req, mc.prop_int('view-distance'))), 2) then 1 else 2 end,
+              when abs(s.chunk_x - r.chunk_x) <= coalesce(greatest(2, least(r.view_distance_req, vdsrv)), 2) and abs(s.chunk_z - r.chunk_z) <= coalesce(greatest(2, least(r.view_distance_req, vdsrv)), 2) then 1 else 2 end,
          mc.wp_angle(r.x, r.z, s.x, s.z)
     from mc.player r join mc.player s on s.entity_id <> r.entity_id and s.conn_id is not null and s.wp_state is not null and (s.wp_state & 1) = 1 and not ((r.gamemode <> 3) and (s.wp_state & 2) = 2)
    where r.entity_id = p_eid

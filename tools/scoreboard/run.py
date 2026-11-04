@@ -468,6 +468,9 @@ def scenario_storm2(srv, a):
     storm_names = ["Bot%d" % i for i in range(a.n)]
     srv.start(a.vd, n_on + a.n, on_names + storm_names, a.spread)
     pregen_s = srv.pregenerate((a.spread + 15) // 16 + a.vd + 2)
+    if srv.name != "vanilla" and not os.environ.get("SCORE_COLD_CACHE"):
+        # the packets of the pre-generated chunks are encoded now, as the generator does for the chunks it makes (sql/430, docs/PERF-STORM.md); SCORE_COLD_CACHE=1 leaves that to the first player
+        dbq("select count(mc.chunk_packet(dimension, cx, cz)) from mc.chunk", timeout=1800)
     time.sleep(2.0)
     on = LoadGens(srv.port, n_on, 0.0, a.vd, 2.0, a.ready_timeout, 900, procs=1, probe=True, probe_interval=1.0, probes=a.probes, prefix="On")
     storm = None

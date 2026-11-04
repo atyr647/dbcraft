@@ -204,4 +204,157 @@ select t.is_true('connection 71 moved 3 chunks east: nothing it still wants is o
 delete from net.conn where conn_id = 72;
 select mc.deliver_ready_chunks();
 select t.eq('connection 72 disconnected: its wanted rows are gone', (select count(*)::int from mc.chunk_wanted where conn_id = 72), 0);
+
+------------------------------------------------------------------------------------------------ 7. the VarInt / waypoint packet speed-ups, byte for byte (docs/PERF-STORM.md)
+-- the previous bodies, kept here as the reference
+create or replace function proto.varint_slow_general(n int) returns bytea language sql immutable parallel safe as $$
+  select case
+    when u < 128        then set_byte('\x00'::bytea, 0, u::int)
+    when u < 16384      then set_byte(set_byte('\x0000'::bytea, 0, ((u & 127) | 128)::int), 1, (u >> 7)::int)
+    when u < 2097152    then set_byte(set_byte(set_byte('\x000000'::bytea, 0, ((u & 127) | 128)::int), 1, (((u >> 7) & 127) | 128)::int), 2, (u >> 14)::int)
+    when u < 268435456  then set_byte(set_byte(set_byte(set_byte('\x00000000'::bytea, 0, ((u & 127) | 128)::int), 1, (((u >> 7) & 127) | 128)::int), 2, (((u >> 14) & 127) | 128)::int), 3, (u >> 21)::int)
+    else set_byte(set_byte(set_byte(set_byte(set_byte('\x0000000000'::bytea, 0, ((u & 127) | 128)::int), 1, (((u >> 7) & 127) | 128)::int), 2, (((u >> 14) & 127) | 128)::int), 3, (((u >> 21) & 127) | 128)::int), 4, (u >> 28)::int)
+  end
+  from (select n::bigint & 4294967295 as u) s $$;
+create or replace function mc.wp_body_general(p_op int, p_uuid uuid, p_kind int, p_a int, p_b int, p_c int, p_ang real) returns bytea language sql immutable parallel safe as $$
+  select proto.varint(p_op) || '\x01'::bytea || proto.uuid(p_uuid) || proto.string('minecraft:default') || '\x00'::bytea
+         || case p_kind when 1 then proto.varint(1) || proto.varint(p_a) || proto.varint(p_b) || proto.varint(p_c)
+                        when 2 then proto.varint(2) || proto.varint(p_a) || proto.varint(p_b)
+                        when 3 then proto.varint(3) || proto.f32(p_ang)
+                        else proto.varint(0) end $$;
+create or replace function mc.vis_wp_pass_general(p_cur bigint, p_phase int, p_n int default null) returns void language plpgsql as $$
+declare enabled boolean := mc.rule_bool('locator_bar', true); n int; cap int := coalesce(mc.prop_int('dbcraft.locator-bar-max-players'), 120);
+begin
+  n := coalesce(p_n, (select count(*)::int from mc.player where conn_id is not null));
+  if n > cap then enabled := false; end if;
+  if not enabled and not exists (select 1 from mc.wp) then return; end if;       -- off and nothing connected: nothing to do, not even the bookkeeping (the first pass after it comes back remakes what it needs)
+  with pl as materialized (
+    select p.entity_id as eid, p.conn_id, p.uuid, p.x, p.y, p.z, p.last_move_tick, p.wp_state as old_st, floor(p.x)::int as bx, floor(p.y)::int as by, floor(p.z)::int as bz, p.chunk_x as cx, p.chunk_z as cz,
+           p.wp_bx, p.wp_by, p.wp_bz, p.wp_cx, p.wp_cz,
+           case when p_phase = 2 then mc.wp_state_now(p) else p.wp_state end as st,
+           coalesce(case when p.view_distance_req is null then 2 else greatest(2, least(p.view_distance_req, mc.prop_int('view-distance'))) end, 2) as vr
+      from mc.player p where p.conn_id is not null),
+  pr as materialized (
+    select r.eid as rcv, r.conn_id as rconn, s.eid as src, s.uuid as suuid, s.bx, s.by, s.bz, s.cx as scx, s.cz as scz,
+           (enabled and s.st is not null and (s.st & 1) = 1 and not ((coalesce(r.st, 0) & 2) = 0 and (s.st & 2) = 2)) as want,
+           (sqrt((r.x - s.x) ^ 2 + (r.y - s.y) ^ 2 + (r.z - s.z) ^ 2)::real > 332::real) as far,
+           (abs(s.cx - r.cx) <= r.vr and abs(s.cz - r.cz) <= r.vr) as vis,
+           (abs(s.bx - coalesce(s.wp_bx, s.bx)) + abs(s.by - coalesce(s.wp_by, s.by)) + abs(s.bz - coalesce(s.wp_bz, s.bz))) as manh,
+           greatest(abs(s.cx - coalesce(s.wp_cx, s.cx)), abs(s.cz - coalesce(s.wp_cz, s.cz))) as cheb,
+           mc.wp_angle(r.x, r.z, s.x, s.z) as ang,
+           ((p_phase = 1 and r.last_move_tick = p_cur) or (p_phase = 2 and (s.old_st is null or ((s.st & 1) = 1 and (s.old_st & 1) = 0)))) as may_create,      -- a missing connection is made when the receiver moves (updatePlayer) or when the source starts to transmit (trackWaypoint)
+           w.kind as ok, w.ang as oang
+      from pl r join pl s on s.eid <> r.eid left join mc.wp w on w.rcv = r.eid and w.src = s.eid),
+  dc as materialized (
+    select pr.*, case when far then 3 when not vis then 2 else 1 end as nk,
+           case when ok is null then null
+                when not want then 'untrack'
+                when ok = 1 and manh > 1 then 'remake' when ok = 2 and (cheb > 1 or vis) then 'remake' when ok = 3 and (vis or not far) then 'remake'
+                when ok = 1 and manh > 0 then 'update' when ok = 2 and cheb > 0 then 'update' when ok = 3 and abs(ang - oang) > 0.008726646::real then 'update' end as act
+      from pr),
+  ev as materialized (
+    select dc.rcv, dc.rconn, dc.src,
+           case when dc.ok is null then 'track' else dc.act end as what, dc.nk, dc.ok, dc.suuid, dc.bx, dc.by, dc.bz, dc.scx, dc.scz, dc.ang
+      from dc where (dc.ok is null and dc.want and dc.may_create) or dc.act is not null),
+  ins as (
+    insert into mc.wp (rcv, src, kind, ang) select ev.rcv, ev.src, ev.nk, ev.ang from ev where ev.what = 'track'
+    on conflict (rcv, src) do update set kind = excluded.kind, ang = excluded.ang returning 1),
+  rem as (
+    update mc.wp w set kind = ev.nk, ang = ev.ang from ev where ev.what = 'remake' and w.rcv = ev.rcv and w.src = ev.src returning 1),
+  upd as (
+    update mc.wp w set ang = ev.ang from ev where ev.what = 'update' and ev.ok = 3 and w.rcv = ev.rcv and w.src = ev.src returning 1),
+  del as (
+    delete from mc.wp w using ev where ev.what = 'untrack' and w.rcv = ev.rcv and w.src = ev.src returning 1)
+  insert into mc.play_out (conn_id, data)
+  select ev.rconn, string_agg(case ev.what
+           when 'track'   then mc.pkt_waypoint(0, ev.suuid, ev.nk, case ev.nk when 1 then ev.bx else ev.scx end, case ev.nk when 1 then ev.by else ev.scz end, ev.bz, ev.ang)
+           when 'remake'  then mc.pkt_waypoint(0, ev.suuid, ev.nk, case ev.nk when 1 then ev.bx else ev.scx end, case ev.nk when 1 then ev.by else ev.scz end, ev.bz, ev.ang)
+           when 'update'  then mc.pkt_waypoint(2, ev.suuid, ev.ok, case ev.ok when 1 then ev.bx else ev.scx end, case ev.ok when 1 then ev.by else ev.scz end, ev.bz, ev.ang)
+           else mc.pkt_waypoint(1, ev.suuid, 0, 0, 0, 0, 0) end, '\x'::bytea order by ev.src)
+    from ev group by ev.rconn order by ev.rconn;
+  if p_phase = 1 then
+    update mc.player set wp_bx = floor(x)::int, wp_by = floor(y)::int, wp_bz = floor(z)::int, wp_cx = chunk_x, wp_cz = chunk_z
+     where conn_id is not null and (wp_bx is distinct from floor(x)::int or wp_by is distinct from floor(y)::int or wp_bz is distinct from floor(z)::int or wp_cx is distinct from chunk_x or wp_cz is distinct from chunk_z);
+  else
+    update mc.player p set wp_state = mc.wp_state_now(p) where p.conn_id is not null and p.wp_state is distinct from mc.wp_state_now(p);
+  end if;
+end $$;
+
+select t.eq('proto.varint_slow: 400,000 random and edge ints give the bytes of the previous (FROM subselect) body',
+            (select count(*)::int from (select (random() * 4294967295 - 2147483648)::bigint::int v from generate_series(1, 400000)
+                                         union all select x from unnest(array[0, 1, 127, 128, 16383, 16384, 2097151, 2097152, 268435455, 268435456, 2147483647, -1, -128, -129, -2147483648, 141, 143]) x) q
+              where proto.varint_slow(v) is distinct from proto.varint_slow_general(v)), 0);
+select t.eq('mc.wp_body: 100,000 random packets of every kind and sign give the bytes of the previous body',
+            (select count(*)::int from (select (random() * 3)::int op, (random() * 4)::int k, (random() * 4000000000 - 2000000000)::bigint::int a, (random() * 200000 - 100000)::int b,
+                                               (random() * 600 - 300)::int c, (random() * 6.28)::real ang, gen_random_uuid() u from generate_series(1, 100000)) q
+              where mc.wp_body(op, u, k, a, b, c, ang) is distinct from mc.wp_body_general(op, u, k, a, b, c, ang)), 0);
+select t.eq('a waypoint frame (packet id 141, a two-byte VarInt) is framed as before',
+            mc.pkt_waypoint(0, '8c5a0f4e-1111-2222-3333-444455556666', 3, 0, 0, 0, 0.5::real),
+            proto.frame(141, mc.wp_body_general(0, '8c5a0f4e-1111-2222-3333-444455556666', 3, 0, 0, 0, 0.5::real)));
+
+------------------------------------------------------------------------------------------------ 8. the locator bar's entity-phase pass looks at changed pairs only, and ends its connections in slices when it is off
+create or replace function t.wp_build(p_seed float8, p_n int) returns void language plpgsql as $$
+begin
+  perform setseed(p_seed);
+  update mc.game_rule set value = 'true' where name = 'minecraft:locator_bar';
+  update mc.server_property set value = '120' where key = 'dbcraft.locator-bar-max-players';
+  truncate mc.play_out, mc.wp; delete from mc.player;
+  insert into mc.player (uuid, name, conn_id, entity_id, x, y, z, chunk_x, chunk_z, gamemode, last_move_tick)
+  select md5(p_seed::text || i)::uuid, 'w' || i, i, 700 + i, cx * 16 + 8, 64, cz * 16 + 8, cx, cz, 1, 0
+    from (select i, (random() * 40 - 10)::int as cx, (random() * 40 - 10)::int as cz from generate_series(1, p_n) i) g;
+  update mc.player set wp_state = null;
+  perform mc.vis_wp_pass_general(1000, 2, p_n);            -- everybody is new: every pair is connected, the states are remembered
+  perform mc.vis_wp_pass_general(1001, 1, p_n);
+  truncate mc.play_out;
+  -- what changes: some crouch, some become spectators, some hide, a few arrive (state never seen), a few leave
+  update mc.player set pose = 5 where random() < 0.15;
+  update mc.player set gamemode = 3 where random() < 0.1;
+  update mc.player set wp_hidden = true where random() < 0.05;
+  insert into mc.player (uuid, name, conn_id, entity_id, x, y, z, chunk_x, chunk_z, gamemode, last_move_tick)
+  select md5(p_seed::text || 'n' || i)::uuid, 'n' || i, 500 + i, 900 + i, cx * 16 + 8, 64, cz * 16 + 8, cx, cz, 1, 1001
+    from (select i, (random() * 40 - 10)::int as cx, (random() * 40 - 10)::int as cz from generate_series(1, 3) i) g;
+  update mc.player set conn_id = null where entity_id in (select entity_id from mc.player where random() < 0.03 and entity_id < 900);
+end $$;
+create or replace function t.wp_digest() returns jsonb language sql as $$
+  select jsonb_build_object(
+    'out',   (select coalesce(string_agg(conn_id || ':' || md5(d), ',' order by conn_id), '') from (select conn_id, string_agg(encode(data, 'hex'), '|' order by seq) d from mc.play_out group by conn_id) q),
+    'wp',    (select coalesce(string_agg(rcv || '>' || src || '=' || kind || '/' || coalesce(ang::text, ''), ',' order by rcv, src), '') from mc.wp),
+    'state', (select coalesce(string_agg(entity_id || '=' || coalesce(wp_state::text, 'n') || '/' || coalesce(wp_bx::text, 'n'), ',' order by entity_id), '') from mc.player)) $$;
+create or replace function t.wp_compare(p_seed float8, p_n int) returns text language plpgsql as $$
+declare da jsonb; db jsonb; diff text; n int;
+begin
+  perform t.wp_build(p_seed, p_n);
+  drop table if exists t_w_player, t_w_wp; create table t_w_player as select * from mc.player; create table t_w_wp as select * from mc.wp;
+  perform mc.vis_wp_pass_general(1002, 2, p_n + 3); da := t.wp_digest();
+  truncate mc.play_out, mc.wp; delete from mc.player; insert into mc.player select * from t_w_player; insert into mc.wp select * from t_w_wp;
+  perform mc.vis_wp_pass(1002, 2, p_n + 3); db := t.wp_digest();
+  select string_agg(a.key, ',') into diff from jsonb_each_text(da) a join jsonb_each_text(db) b using (key) where a.value is distinct from b.value;
+  if (da->>'out') = '' then return 'scenario sent nothing'; end if;
+  return coalesce('differs in: ' || diff, 'same');
+end $$;
+select t.eq('entity phase over changed pairs only: seed ' || s || ', 40 players, the same packets, connections and remembered states as the pass over every pair', t.wp_compare(s / 10.0, 40), 'same') from generate_series(1, 6) s;
+select t.eq('...and with 12 players', t.wp_compare(0.77, 12), 'same');
+
+-- the bar switched off with 30 connected players: 30 x 29 UNTRACKs, ended 100 per pass; the packets of every receiver, in order, are those of one unsliced pass
+select t.wp_build(0.3, 30);
+update mc.server_property set value = '10' where key = 'dbcraft.locator-bar-max-players';          -- over the cap: the bar is off
+update mc.server_property set value = '2000000000' where key = 'dbcraft.locator-bar-untrack-slice';
+create temp table t_w_before as select * from mc.wp;
+truncate mc.play_out;
+select mc.vis_wp_pass_general(2000, 1, 33);
+create temp table t_w_whole as select conn_id, md5(string_agg(data, ''::bytea order by seq)) h from mc.play_out group by conn_id;
+select t.eq('the general pass (every pair evaluated) ends every connection between players that are online, at once, and leaves the rows of players that left',
+            (select count(*)::int from mc.wp), (select count(*)::int from mc.wp w where not (exists (select 1 from mc.player p where p.entity_id = w.rcv and p.conn_id is not null) and exists (select 1 from mc.player p where p.entity_id = w.src and p.conn_id is not null))));
+truncate mc.wp; insert into mc.wp select * from t_w_before; truncate mc.play_out;
+update mc.server_property set value = '100' where key = 'dbcraft.locator-bar-untrack-slice';
+select mc.vis_wp_pass(2000, 1, 33);
+select t.eq('sliced: the first pass ended exactly 100 connections', (select count(*)::int from t_w_before) - (select count(*)::int from mc.wp), 100);
+create temp table t_w_acc as select seq, conn_id, data from mc.play_out;
+select mc.vis_wp_pass(2001 + g, 1, 33) from generate_series(1, 12) g;
+select t.eq('...the remaining passes end the rest (and drop the rows of players that left)', (select count(*)::int from mc.wp), 0);
+select t.eq('...and every receiver got the bytes of the general pass (every pair evaluated, one pass), in the same order',
+            (select count(*)::int from (select conn_id, md5(string_agg(data, ''::bytea order by seq)) h from mc.play_out group by conn_id) s join t_w_whole w using (conn_id) where s.h = w.h), (select count(*)::int from t_w_whole));
+update mc.server_property set value = '120' where key = 'dbcraft.locator-bar-max-players';
+update mc.server_property set value = '1500' where key = 'dbcraft.locator-bar-untrack-slice';
+truncate mc.play_out, mc.wp; delete from mc.player;
 select t.fresh();
