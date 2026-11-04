@@ -32,6 +32,7 @@ Recordings and captures contain Mojang data and are never committed.
 | `compare_move.py` | set_chunk_cache_center, forget_level_chunk and new chunks while walking |
 | `compare_social.py` | join message, tab list, entity, chat, leave message, for two players |
 | `compare_fill.py` | `block_update` / `section_blocks_update` for 32 steps: sizes 24 .. 4096 around every rehash threshold of vanilla's position set, overlapping fills, no-op fills, batches in one tick; every `section_blocks_update` compared byte for byte (see docs/WORLD.md "Block change packets") |
+| `dyn_probe.py` | world dynamics: fluids, falling blocks, block support, tick by tick (vanilla: `/tick freeze` + `/tick step 1` over RCON and a scripted client; dbcraft: SQL, the clock moved by hand); `compare` requires every tick's packets equal; see docs/WORLD-DYNAMICS.md.  `dyn_probe.py vanilla --port P --rcon R --out v.json`, `dyn_probe.py dbcraft --psql '...' --out o.json`, `dyn_probe.py compare v.json o.json` |
 | `survival_probe.py`, `compare_survival.py`, `survival.sh` | survival (fall, /kill and respawn, the void, eating): two scripted clients against vanilla and dbcraft, the packets the survival rules produce compared in order (docs/SURVIVAL.md); `survival.sh record PORT` records vanilla, `survival.sh compare PORT` replays against dbcraft |
 
 ## What the comparisons allow to differ (and why)
