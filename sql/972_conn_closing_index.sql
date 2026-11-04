@@ -2,3 +2,10 @@
 -- updated by the keep-alive and activity bookkeeping, so the heap carries dead versions between vacuums), 0.1-0.3 ms of every idle tick (docs/PERF-IDLE2.md).  A partial index on the
 -- rows that ARE closing makes the question one index probe; the index only changes when a connection starts closing (the column is not touched by the per-tick updates, which stay HOT).
 create index if not exists conn_closing on net.conn (conn_id) where closing;
+
+-- The tick truncates mc.play_in_work and net.batch (game time 19 mod 20) and mc.play_out (0 mod 20) once a second when they were written (sql/435).  A TRUNCATE invalidates every cached plan that
+-- mentions the table, and the next tick plans them again: with 200 players online the tick after it is 2-3 times the others (docs/PERF-IDLE2.md "The tail of the tick").
+-- dbcraft.tick-truncate-bytes: truncate only when the table is bigger than this many bytes (the heap, no TOAST); 0 (default) is the old behaviour.
+insert into mc.server_property (key, value, default_value, note)
+values ('dbcraft.tick-truncate-bytes', '0', '0', 'dbcraft: the tick truncates its own queues (mc.play_out, mc.play_in_work, net.batch) once a second only when they are bigger than this many bytes; 0 = whenever written (docs/PERF-IDLE2.md)')
+on conflict (key) do nothing;

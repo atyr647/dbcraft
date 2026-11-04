@@ -277,7 +277,7 @@ class Client(asyncio.Protocol):
 
     def send_chat_with_extras(self, token, loop):
         """The probe under --realistic: 1 to 3 extra packets, each 0 to 50 ms before the chat."""
-        kinds = tuple(random.choice(self.EXTRA_KINDS) for _ in range(random.randint(1, 3)))
+        kinds = tuple(random.sample(self.EXTRA_KINDS, random.randint(1, 3)))      # distinct kinds: two position packets without a client_tick_end between them are a kick (sql/340)
         self.extras = kinds
         for k in kinds:
             loop.call_later(random.uniform(0.0, 0.05), lambda k=k: self.alive and self.tr.write(self.extra_packet(k)))
@@ -374,6 +374,7 @@ async def main():
             for c in failed:
                 d["failures"][c.failed] = d["failures"].get(c.failed, 0) + 1
             d["rtt_ms"] = [r for c in clients if c.probe for r in c.rtts]
+            d["probe_failed"] = [c.failed for c in clients if c.probe and c.failed]
             d["rtt_detail"] = [[round(r, 2), list(k)] for c in clients if c.probe for r, k in c.rtt_detail]
             reasons = {}
             for c in failed:

@@ -130,6 +130,7 @@ create or replace function mc.server_tick() returns bigint language plpgsql as $
 declare
     cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz;
     n_in int; n_players int; n_out int; r record; framed_rows mc.drain_row[];
+    trunc_min bigint;                                    -- dbcraft.tick-truncate-bytes (sql/972): the queues are truncated once a second only when they are bigger than this (default 0: whenever written)
     all_phases boolean := current_setting('dbcraft.quiet_tick', true) = 'off';        -- docs/PERF-IDLE2.md: the guards below skip a phase that has nothing to do; the switch of sql/800 runs them all
 begin
     -- sql/800: nothing queued, nobody connected: the whole tick is the clock and a log row (mc.tick_quiet says when; same bytes: there is nothing to send)
@@ -138,8 +139,9 @@ begin
     -- (a queue that was never written since its last truncate has a zero-length file: nothing to empty, and truncating it anyway would create new files for nothing;
     -- an idle server therefore creates no relation file at all)
     if (select game_time from mc.game_state) % 20 = 19 then
-        if pg_relation_size('mc.play_in_work') > 0 then truncate mc.play_in_work; end if;
-        if pg_relation_size('net.batch') > 0 then truncate net.batch; end if;
+        trunc_min := coalesce(nullif(mc.prop('dbcraft.tick-truncate-bytes'), '')::bigint, 0);
+        if pg_relation_size('mc.play_in_work') > trunc_min then truncate mc.play_in_work; end if;
+        if pg_relation_size('net.batch') > trunc_min then truncate net.batch; end if;
     end if;
     -- 1, 2: consume net.inbox; the game's packets land in its work queue directly
     delete from mc.play_in_work;
@@ -211,7 +213,7 @@ begin
     end loop;
     end if;
     -- (split mode: another connection INSERTs into mc.play_out concurrently; TRUNCATE would wait for its transaction and destroy its committed rows, so the queue is only ever DELETEd)
-    if cur % 20 = 0 and pg_relation_size('mc.play_out') > 0 and mc.entity_mode() <> 'split' then truncate mc.play_out; end if;          -- empty after the drain above; see the housekeeping note at the top
+    if cur % 20 = 0 and pg_relation_size('mc.play_out') > coalesce(nullif(mc.prop('dbcraft.tick-truncate-bytes'), '')::bigint, 0) and mc.entity_mode() <> 'split' then truncate mc.play_out; end if;          -- empty after the drain above; see the housekeeping note at the top
     t5 := clock_timestamp();
     select count(*)::int into n_players from mc.player where conn_id is not null;
     insert into mc.server_tick_log (tick, frames_in, players, frames_out, ms_total, ms_process, ms_game, ms_blocks, ms_chunks, ms_drain)
