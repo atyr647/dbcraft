@@ -193,6 +193,13 @@ select t.reset();
 update mc.player set trk_start = (select game_time from mc.game_state) - 58 where conn_id = 102;          -- the next body has tickCount 60
 select t.tick(); select t.tick();
 select t.eq('tickCount % 60 = 0: a zero move is sent (recorded 02 03 02 00 00 00 00 00 00)', t.body(t.out(101), 1), '\x020302000000000000'::bytea);
+-- the sync after 400 bodies without one (teleportDelay > 400): an idle player is pulled back to the exact position, even though nothing moved
+select t.reset();
+update mc.player set trk_start = (select game_time from mc.game_state) - 798, trk_sync = -2 where conn_id = 102;          -- the next body has tickCount 800: (800 + 2) / 2 = 401 > 400
+select t.tick(); select t.tick();
+select t.eq('400 bodies without a sync: entity_position_sync, with nothing moving', t.names(t.out(101)), array['entity_position_sync']);
+select t.reset(); select t.tick(); select t.tick();
+select t.eq('   and not again (trk_sync was reset)', t.names(t.out(101)), '{}'::text[]);
 -- off the ground: a full position sync
 select t.reset();
 update mc.player set on_ground = false, last_move_tick = (select game_time from mc.game_state) + 1 where conn_id = 102;

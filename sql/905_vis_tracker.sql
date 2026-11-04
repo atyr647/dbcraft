@@ -68,9 +68,10 @@ end $$;
 
 -- ONE scan of the online players says who has work this tick, for every step of the tracker (a scan of the wide mc.player costs about a millisecond at 500 players, and the steps used to
 -- scan it one after the other, nine times, to find out that nothing had changed).  Every predicate below is the WHERE condition of the step it gates, evaluated on the same columns.
---   dirty   pairs to re-evaluate (sql/909)                       mv      players the movement step looks at: moved in the last two ticks (the body runs on even ticks, the
+--   dirty   pairs to re-evaluate (sql/909)                       mvn     how many players the movement step looks at (it finds them itself with the same test): moved in the last two ticks (the body runs on even ticks, the
 --   ed      an unsent entity data change (mc.survival_tracker)           head rotation follows a tick later), woken by an event (vis_wake: a join, a teleport, a game mode
 --   eq / att / pose / tpg / first  the steps of the entity phase         change), the 60-tick refresh and the sync after 400 runs
+--           (a move at this tick or the one before changes what a body sends; a move two ticks ago only through the head, which follows the yaw a tick later)
 --   wp1     a player moved or its block position differs from the locator bar's last pass   wp2  a transmit state changed   recheck  a game mode change waits for a movement packet
 -- The answer is also kept for the rest of the tick (a transaction-local setting): mc.refresh_visibility computes it, mc.vis_step reuses it.
 create or replace function mc.vis_find(p_cur bigint) returns mc.vis_work language plpgsql as $$
@@ -79,15 +80,16 @@ begin
   w.cur := p_cur;
   select count(*)::int,
          array_agg(x.eid) filter (where x.dirty),
-         array_agg(x.eid) filter (where x.mv),
+         count(*) filter (where x.mv)::int,
          array_agg(x.eid) filter (where x.ed),
          coalesce(bool_or(x.eq), false), coalesce(bool_or(x.att), false), coalesce(bool_or(x.pose), false), coalesce(bool_or(x.tpg), false), coalesce(bool_or(x.first), false),
          coalesce(bool_or(x.wp1), false), coalesce(bool_or(x.wp2), false), coalesce(bool_or(x.recheck), false)
-    into w.n, w.dirty, w.mv, w.ed, w.eq, w.att, w.pose, w.tpg, w.first, w.wp1, w.wp2, w.recheck
+    into w.n, w.dirty, w.mvn, w.ed, w.eq, w.att, w.pose, w.tpg, w.first, w.wp1, w.wp2, w.recheck
     from (
       select p.entity_id as eid, p.vis_dirty as dirty,
              (p.trk_start is not null and p.trk_start <= p_cur and (p_cur - p.trk_start) % 2 = 0
-              and (all_mv or p.last_move_tick >= p_cur - 2 or p.vis_wake >= p_cur or (p_cur - p.trk_start) % 60 = 0 or p_cur - p.trk_start - p.trk_sync >= 802)) as mv,
+              and (all_mv or p.last_move_tick >= p_cur - 1 or (p.last_move_tick = p_cur - 2 and p.yaw_prev is distinct from p.yaw)
+                   or p.vis_wake >= p_cur or (p_cur - p.trk_start) % 60 = 0 or p_cur - p.trk_start - p.trk_sync >= 802)) as mv,
              (p.sent_health is null or p.sent_eh is distinct from p.health or p.sent_using is distinct from (p.use_slot is not null) or p.sent_score is distinct from p.xp_score
               or (vison and (p.sent_flags is distinct from mc.ed_flags(p.shift, p.sprinting, p.gamemode) or p.sent_pose is distinct from p.pose
                              or p.sent_arm is distinct from p.main_hand or p.sent_skin is distinct from p.skin_parts))) as ed,
@@ -129,7 +131,7 @@ begin
   if mc.vis_input(p_cur) then w := mc.vis_find(p_cur); end if;      -- network phase leftovers (shift key, swings, client information, abilities); something changed: look again
   perform mc.vis_chat_spam(p_cur);                  -- chat and command rate limits (sql/910)
   if w.ed is not null then perform mc.survival_tracker(p_cur, w.ed); end if;      -- tracker pass: the dirty entity data of the players that have some, in one set_entity_data each
-  perform mc.vis_move(p_cur, w.mv);                 --   ... and the movement (sql/907)
+  if w.mvn > 0 then perform mc.vis_move(p_cur); end if;      --   ... and the movement (sql/907)
   if w.first then perform mc.vis_first_tick(p_cur); end if;      -- a new entity's first tick: what became dirty while it was created
   if w.wp2 then perform mc.vis_wp_pass(p_cur, 2, w.n); end if;   -- entity phase: the locator bar follows crouching, the game mode, a new player
   perform mc.vis_entity_phase(p_cur, w);            --   ... pose, equipment, attributes, latency

@@ -77,7 +77,7 @@ create unlogged table if not exists mc.vtrk (
 -- the answer of mc.vis_find (sql/905): who has work this tick.  One scan of the online players computes it; the steps of the tick use it instead of scanning again.
 do $$ begin
     if not exists (select 1 from pg_type where typname = 'vis_work' and typnamespace = 'mc'::regnamespace) then
-        create type mc.vis_work as (cur bigint, n int, nvt int, dirty int[], mv int[], ed int[], eq boolean, att boolean, pose boolean, tpg boolean, first boolean, wp1 boolean, wp2 boolean, recheck boolean);
+        create type mc.vis_work as (cur bigint, n int, nvt int, dirty int[], mvn int, ed int[], eq boolean, att boolean, pose boolean, tpg boolean, first boolean, wp1 boolean, wp2 boolean, recheck boolean);
     end if;
 end $$;
 

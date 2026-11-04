@@ -21,16 +21,15 @@ create or replace function mc.pkt_position_sync(p_eid int, p_x float8, p_y float
                                                                      else '\x00'::bytea || proto.f64(p_x) || proto.f64(p_y) || proto.f64(p_z) end)
                                       || proto.f32(p_yaw) || proto.f32(p_pitch) || proto.bool(p_ground)) $$;
 
--- The movement step for the players in p_ids (mc.vis_find, sql/905: players on an even tick of their age that moved in the last two ticks, were woken by an event, or are due for the
--- 60-tick refresh / the sync after 400 runs).  The tracker's state is the narrow mc.vtrk (HOT updates, one statement per tick); mc.player is written only when a position sync changes the
+-- The movement step for the players on an even tick of their age that moved in the last two ticks, were woken by an event, or are due for the 60-tick refresh / the sync after 400
+-- runs (the test of mc.vis_find, sql/905, which says whether there are any: keep the two in step).  The tracker's state is the narrow mc.vtrk (HOT updates, one statement per tick); mc.player is written only when a position sync changes the
 -- ground flag / the sync counter.  The head follows the yaw one tick later: the head of this tick's body is the yaw the player had at the END of the last tick, which is the yaw
 -- before this tick's movement packet (mc.player.yaw_prev, set by the movement step) when the player moved this tick, and the current yaw otherwise.
-drop function if exists mc.vis_move(bigint);
+drop function if exists mc.vis_move(bigint, int[]);
 drop function if exists mc.vis_head(bigint);
-create or replace function mc.vis_move(p_cur bigint, p_ids int[]) returns void language plpgsql as $$
-declare e int[]; d bytea[];
+create or replace function mc.vis_move(p_cur bigint) returns void language plpgsql as $$
+declare e int[]; d bytea[]; all_mv boolean := coalesce(current_setting('dbcraft.vis_scan_all', true), '') = 'on';       -- (tests: look at everybody)
 begin
-  if p_ids is null then return; end if;
   with a as materialized (
     select p.entity_id as eid, p.x, p.y, p.z, p.yaw, p.pitch, l1.tc, v.base_x, v.base_y, v.base_z, v.sent_yb, v.sent_pb, v.sent_hb, p.trk_sync, p.trk_ground, l1.og, l1.yb, l1.pb, l1.hb,
            l2.pos_changed, l2.rot_changed, l2.dx, l2.dy, l2.dz, l2.sync1, l2.forced, l2.too_big
@@ -46,7 +45,9 @@ begin
                                  (((p.x - v.base_x) ^ 2 + (p.y - v.base_y) ^ 2 + (p.z - v.base_z) ^ 2 >= 7.62939453125E-6) or l1.tc % 60 = 0) as forced,
                                  (l3.dx not between -32768 and 32767 or l3.dy not between -32768 and 32767 or l3.dz not between -32768 and 32767) as too_big,
                                  l3.pos_changed, l3.rot_changed) l2
-     where p.entity_id = any (p_ids) and p.conn_id is not null and p.trk_start is not null and p_cur >= p.trk_start and (p_cur - p.trk_start) % 2 = 0),
+     where p.conn_id is not null and p.trk_start is not null and p_cur >= p.trk_start and (p_cur - p.trk_start) % 2 = 0
+       and (all_mv or p.last_move_tick >= p_cur - 1 or (p.last_move_tick = p_cur - 2 and p.yaw_prev is distinct from p.yaw)
+            or p.vis_wake >= p_cur or (p_cur - p.trk_start) % 60 = 0 or p_cur - p.trk_start - p.trk_sync >= 802)),
   pk as materialized (
     select a.eid, k.kind, a.sync1, a.og, a.yb, a.pb, a.hb, a.x, a.y, a.z, a.tc, a.sent_hb,
            case k.kind
