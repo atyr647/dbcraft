@@ -43,10 +43,11 @@ and it loses (or fails) on login-storm stalls and long runs with 200 moving play
 | 200 players, 20% walking | CPU (cores) | 1.48 | 0.66 | 0.44 | dbcraft |
 | 200 players, all walking | tick mean / p99 (ms) | 46.7 / 149 | 29.1 / 104 | 0.62 / 0.70 | dbcraft |
 | 200 players, all walking | chat round trip p50 / p99 (ms) | **9,424** / 10,881 | 103 / 696 | 0.01 / 0.06 | dbcraft |
-| login storm, 50 joins in 1 s | all joined and all chunks received (s) | 51.7 | 3.5 | 0.07 | dbcraft |
-| login storm, 50 joins in 1 s | worst tick during the storm (ms) | 44.7 | **444** | 9.9 | **vanilla** |
-| login storm, 200 joins in 1 s | all joined and all chunks received (s) | 63.7 | 17.9 | 0.28 | dbcraft |
-| login storm, 200 joins in 1 s | worst tick during the storm (ms) | 53.5 | **5,726** | 107 | **vanilla** |
+| login storm, 50 joins in 1 s ‡ | all joined and all chunks received (s) | 60.8 | 16.9 | 0.28 | dbcraft (machine at load 7-18; 47 against 6.5 s on the quieter day of the first re-measurement) |
+| login storm, 50 joins in 1 s ‡ | worst tick during the storm (ms; vanilla: worst 100-tick window p99, dbcraft: worst tick) | 1,409 | 265 | 0.19 | dbcraft (both noisy: ranges 244-2,269 and 148-368) |
+| login storm, 50 joins in 1 s ‡ | chat round trip of players already online, p99 / max (ms) | 5,064 / 5,085 | 417 / 437 | 0.08 | dbcraft (median round trip 548 against 208 ms; 27 against 108 ms on the quieter day: vanilla wins the median there) |
+| login storm, 200 joins in 1 s (original session, **not re-measured**: the final code could not be run with real clients on a usable machine, see [PERF-STORM.md](PERF-STORM.md)) | all joined and all chunks received (s) | 63.7 | 17.9 | 0.28 | dbcraft |
+| login storm, 200 joins in 1 s (original session, same note; its "worst tick" compared vanilla's worst 100-tick window average with dbcraft's single worst tick, see ‡) | worst tick during the storm (ms) | 53.5 | 5,726 | 107 | not comparable: re-measured vanilla window p99 407 and 1,281 ms, window average 85-130 ms, chat stalls of 2.4-4.3 s for the players online |
 | one joiner, unexplored world | all chunks (s) | 5.2 | 0.68 | 0.13 | dbcraft |
 | one joiner, explored world | all chunks (s) | 1.78 | 0.25 | 0.14 | dbcraft |
 | single block edit (admin path) | latency p50 (ms) / edits per s | 1.01 / 749 | 0.11 / 6,852 | 0.11 | dbcraft (RCON against SQL) |
@@ -60,6 +61,9 @@ and it loses (or fails) on login-storm stalls and long runs with 200 moving play
 | entities (from `docs/ENTITY.md`, not re-run here) | 5,000 resting items (ms) | 53-56 | 4.4 | 0.08 | dbcraft |
 | entities (same) | 2,000 walking mobs (ms) | 44-50 | 106 | 2.2 | **vanilla** |
 | 200 players walking inside the explored area, 10 minutes | whole run | completes (tick 55.7 ms mean, p99 199, GC 364 pauses max 43 ms, tick 50.7 -> 60.9 ms from first to last third) | **all 200 clients timed out about 4 minutes in** | | **vanilla** |
+
+‡ **Re-measured** for [PERF-STORM.md](PERF-STORM.md) with the Rust gateway, with 20 players online (12 idle bots, 8 chat probes) before the storm, view distance 10, vanilla and dbcraft interleaved, 3 repetitions, medians; a machine at load average 7-18 throughout (other agents), vanilla heap 2 GB.
+The old "worst tick" of vanilla (44.7 and 53.5 ms) was the worst 100-tick window average, which hides stalls; the table now uses the window p99 and the chat round trip of the players online, the same on both servers.  dbcraft's number is after the storm work (chunk square spread over ticks, join entry budget, time-scaled chunk cap); the same runs with the previous code measured 854 ms worst tick and a chat p99 of 2,005 ms.
 
 † **Re-measured** for [PERF-IDLE.md](PERF-IDLE.md) on a different day and a quieter machine than the original session, both servers, 2 repetitions of 60 s for vanilla (3 for the empty server) and 3 for dbcraft (PL/Python gateway and batched tick, as in this table; the Rust gateway is in PERF-IDLE.md), after the idle-cost work: medians, ranges and the
 before-the-work numbers on the same machine are there.  The other rows are the original session's, and `SCOREBOARD-table.md` / `scoreboard-results.jsonl.txt` still show it.  The original session's values for the changed rows were: idle tick 0.27 / 1.92 ms, CPU 0.01 / 0.11; 50 idle tick 40.0 / 7.4 ms, CPU 0.84 / 0.20, chat p50 24.7 / 43.1 ms;
@@ -76,9 +80,9 @@ before-the-work numbers on the same machine are there.  The other rows are the o
    connection); the real gateway should remove it.  It is a gateway problem until shown otherwise, but it is what a player would see.
    Reproduce: `tools/scoreboard/run.py pop --n 200 --moving 1.0 --bound 500 --hold 360 --servers dbcraft --dbmode default --tag x`, with
    `tools/scoreboard/diag_poll.sh 600` alongside; the decoded reasons are in the result (`disconnect_reasons`).
-2. **Login storms stall the tick** (0.44 s for 50 joins in 1 s, 5.7 s for 200): the joins are processed inside the one tick.  Vanilla's ticks stay near 50 ms and its
-   joiners just wait longer.  Physics of the design (one transaction per tick); mitigations: admit a few joins per tick, make the entry burst cheaper.  Everyone
-   already online would see a freeze of that length, which is worse than a slow join.
+2. **Login storms stall the tick** (0.44 s for 50 joins in 1 s, 5.7 s for 200, original session): the joins were processed inside the one tick.  **Reduced, not closed** ([PERF-STORM.md](PERF-STORM.md)): the cause was mostly each joiner's 529-chunk square sent inside its own join tick at view distance 10 (80 ms of the 100 ms per join), now spread over ticks;
+   logins enter play at most one or two per tick; the worst tick of a 50-join storm is 265 ms (3 times less, load 7-18), CPU time of the worst tick 140 ms at 50 joins and 230-250 ms at 200 joins into 200 players (before: 4-8 s).  **Not at 55-60 ms.**  Vanilla's real worst tick in a storm is not 45-55 ms either (its window p99 was 200-246 ms at 50 joins and 407-1,281 ms at 200, online players saw chat stalls of up to 0.85 and 4.3 s);
+   the old comparison put its 100-tick average against dbcraft's single worst tick.  The median chat round trip of players online is still higher on dbcraft in a quiet storm (108 ms against 27 ms).
 3. ~~**Idle cost: 7 times the tick time and 11 times the CPU** of an idle vanilla (1.9 ms and 0.11 cores).~~  **Closed** ([PERF-IDLE.md](PERF-IDLE.md)): an empty server's tick is 0.11 ms (a quiet tick: one predicate, the clock, a log row) and it uses 0.022-0.030 cores, of which half was the two chunk generators polling every 5 ms; vanilla's 0.018 cores is
    still slightly lower.  With idle players the SQL tick is 2-3 times shorter (phases with nothing to do are skipped, `client_tick_end` is no longer queued).  Not done: the PL/Python gateway still costs 6.8 ms per tick at 200 idle players (it does not filter `client_tick_end`).
 4. ~~**Chat latency at low load and in the tail**: +18 ms at p50 with 50 idle players, p99 406 ms against 113 ms with 200 idle players.~~  **Closed for idle players and scripted clients** ([PERF-IDLE.md](PERF-IDLE.md)): an urgent lane handles a chat packet between ticks (same function, same bytes, 20 Hz untouched):
