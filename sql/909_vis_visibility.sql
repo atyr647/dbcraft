@@ -25,7 +25,7 @@ create or replace function mc.conn_view_r(p_conn int, p_default int) returns int
 -- the pairs of every player that has to be re-evaluated (vis_dirty), with the exact rule; adds and removes what changed
 create or replace function mc.refresh_visibility_vis() returns table(added int, removed int) language plpgsql as $$
 declare srv int := least(mc.prop_int('view-distance'), 32); trk float8 := ((coalesce(mc.prop_int('entity-broadcast-range-percentage'), 100) * 512) / 100)::float8;
-        d int[]; wv int[]; wt int[]; wc int[]; av int[]; at_ int[]; ac int[]; wk mc.vis_work; gt bigint := (select game_time from mc.game_state); wp_on boolean;
+        d int[]; wv int[]; wt int[]; wc int[]; av int[]; at_ int[]; ac int[]; sv int[]; wk mc.vis_work; gt bigint := (select game_time from mc.game_state); wp_on boolean;
 begin
   added := 0; removed := 0;
   wk := mc.vis_find(gt);                                                    -- one scan of the online players for the whole tick (sql/905)
@@ -53,8 +53,9 @@ begin
                               and (a.x - b.x) ^ 2 + (a.z - b.z) ^ 2 <= a.rng ^ 2
        where a.dirty or b.dirty)
     select coalesce(array_agg(w.v), '{}'), coalesce(array_agg(w.t), '{}'), coalesce(array_agg(w.c), '{}'),
-           coalesce(array_agg(w.v) filter (where not w.stale), '{}'), coalesce(array_agg(w.t) filter (where not w.stale), '{}'), coalesce(array_agg(w.c) filter (where not w.stale), '{}')
-      into wv, wt, wc, av, at_, ac from w;
+           coalesce(array_agg(w.v) filter (where not w.stale), '{}'), coalesce(array_agg(w.t) filter (where not w.stale), '{}'), coalesce(array_agg(w.c) filter (where not w.stale), '{}'),
+           (select coalesce(array_agg(pc.eid), '{}') from pc where pc.stale)
+      into wv, wt, wc, av, at_, ac, sv from w;
 
     -- a viewer that was teleported and whose client is still waiting for the chunks of its new position is shown nobody yet: after /tp vanilla sends the chunks, then the entities (recorded: walk)
     with w as (select * from unnest(av, at_, ac) as w(viewer_eid, target_eid, viewer_conn)),
@@ -74,6 +75,7 @@ begin
     del as (
       delete from mc.visible v
        where (v.viewer_eid = any (d) or v.target_eid = any (d))
+         and not (v.viewer_eid = any (sv))        -- (a teleported viewer that waits for its chunks loses its entities after them too: recorded, view: forgets, then remove_entities)
          and not exists (select 1 from w where w.viewer_eid = v.viewer_eid and w.target_eid = v.target_eid)
       returning v.viewer_conn, v.target_eid),
     q as (
