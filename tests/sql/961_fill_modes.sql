@@ -112,6 +112,11 @@ begin
   insert into net.conn (conn_id, state, compression, closing, view_cx, view_cz) values (1, 'play', -1, false, 21, 21), (2, 'play', -1, false, 61, 21);
 end $$;
 
+-- the first line (and its number) where two texts differ, each cut to 300 characters
+create or replace function t.first_diff(a text, b text) returns text language sql immutable as $$
+  select coalesce((select format('line %s: [%s] against [%s]', n, left(coalesce(x, '(none)'), 300), left(coalesce(y, '(none)'), 300))
+                     from (select n, (string_to_array(a, E'\n'))[n] x, (string_to_array(b, E'\n'))[n] y from generate_series(1, greatest(cardinality(string_to_array(a, E'\n')), cardinality(string_to_array(b, E'\n')))) n) q
+                    where x is distinct from y order by n limit 1), 'none') $$;
 -- one case at a given box: '' when A and B agree, otherwise what differs.  p_late: nobody sees region A while the fill runs (the broadcast builds the packets)
 create or replace function t.case_at(p_mode text, p_filter text, p_block text, x1 int, y1 int, z1 int, x2 int, y2 int, z2 int, p_late boolean) returns text language plpgsql as $$
 declare ra int; rb int; pa text; pb text; diff text := ''; boxd text := format('%s %s %s %s %s %s .. %s %s %s', p_mode, coalesce(p_filter, '-'), p_block, x1, y1, z1, x2, y2, z2);
@@ -127,8 +132,8 @@ begin
   perform mc.broadcast_block_events();
   pb := t.packets(2, 640);
   if ra <> rb then diff := diff || format(' changed %s against %s;', ra, rb); end if;
-  if pa <> pb then diff := diff || format(' packets differ (%s bytes against %s);', length(pa), length(pb)); end if;
-  if t.sigs(20) <> t.sigs(60) then diff := diff || ' blocks or counts differ;'; end if;
+  if pa <> pb then diff := diff || format(' packets differ (%s bytes against %s), first difference: %s;', length(pa), length(pb), t.first_diff(pa, pb)); end if;
+  if t.sigs(20) <> t.sigs(60) then diff := diff || ' blocks or counts differ, first difference: ' || t.first_diff(t.sigs(20), t.sigs(60)) || ';'; end if;
   return case when diff = '' then '' else boxd || ':' || diff end;
 end $$;
 -- a random box inside the generated 3 x 3 chunks (the reference reads NULL outside), some of them thin
@@ -151,6 +156,12 @@ begin
   return case when nbad = 0 then '' else nbad || ' differ:' || bad end;
 end $$;
 
+-- The random cases are reproducible: `psql -v seed=0.123 ...` replays a run (the seed of every run is printed)
+\if :{?seed}
+\else
+select round(random()::numeric, 6)::text as seed \gset
+\endif
+select setseed(:'seed'::float8), 'seed ' || :'seed' as "961 random seed (psql -v seed=...)";
 select t.seed_regions(8);
 select t.eq('a first sanity case: the default mode through mc.fill_mode equals the reference', t.case_('replace', null, 'minecraft:gold_block', false), '');
 select t.eq('replace (no filter), 24 random boxes and blocks: blocks, counts and packets equal the position-by-position reference',
@@ -182,6 +193,21 @@ select t.eq('...keep over the air above: the whole section of air changes',  t.f
 select t.eq('...hollow 5 x 5 x 5 in the air: 125 - 27 = 98 shell blocks, the inside (air) does not change', t.fm(320, -16, 320, 324, -12, 324, 'minecraft:stone', 'hollow', null, 20, -1, 20), 'changed 98, events 1, positions 98 | bits 4, palette minecraft:air;minecraft:stone, blocks 98, fluids 0');
 select t.eq('...hollow again with glass: the shell (98) changes, the inside is air already', t.fm(320, -16, 320, 324, -12, 324, 'minecraft:glass', 'hollow', null, 20, -1, 20), 'changed 98, events 1, positions 98 | bits 4, palette minecraft:air;minecraft:stone;minecraft:glass, blocks 98, fluids 0');
 select t.eq('...outline 5 x 5 x 5 of water over the glass box, the inside stays', t.fm(320, -16, 320, 324, -12, 324, 'minecraft:water[level=0]', 'outline', null, 20, -1, 20), 'changed 98, events 1, positions 98 | bits 4, palette minecraft:air;minecraft:stone;minecraft:glass;minecraft:water[level=0], blocks 98, fluids 98');
+-- A filter over a WHOLE palette section (found by the random cases, intermittently: a box that happens to cover a whole section): the block and fluid counts must follow from the
+-- replaced positions (they were left at their old values when the old air and fluid entries were not counted for whole sections).  Counts are compared with a count of the blocks.
+create or replace function t.cnt(p_cx int, p_sy int, p_cz int) returns text language sql as $$
+  select s.block_count || '/' || s.fluid_count || ' (counted ' || (select count(*) from mc.section_blocks(s)) || '/' || (select count(*) from mc.section_blocks(s) b where mc.has_fluid(b.block)) || ')'
+    from mc.chunk_section s where s.dimension = 'minecraft:overworld' and s.cx = p_cx and s.cz = p_cz and s.sy = p_sy $$;
+select t.seed_regions(0);
+select mc.fill('minecraft:overworld', 320, -32, 320, 330, -20, 330, 'minecraft:dirt');                  -- section (20, -2, 20) is now a palette section: 1,573 dirt, the rest air
+select t.eq('keep over the whole palette section: 2,523 air positions become gold', mc.fill_mode('minecraft:overworld', 320, -32, 320, 335, -17, 335, 'minecraft:gold_block', 'keep'), 2523);
+select t.eq('...the block count is the real one (4,096, it was 1,573)', t.cnt(20, -2, 20), '4096/0 (counted 4096/0)');
+select t.eq('replace <gold> by water over the whole section: the 2,523 positions', mc.fill_mode('minecraft:overworld', 320, -32, 320, 335, -17, 335, 'minecraft:water[level=0]', 'replace', 'minecraft:gold_block'), 2523);
+select t.eq('...the fluid count follows (2,523), the block count stays', t.cnt(20, -2, 20), '4096/2523 (counted 4096/2523)');
+select t.eq('replace <water> by air over the whole section: counts follow', mc.fill_mode('minecraft:overworld', 320, -32, 320, 335, -17, 335, 'minecraft:air', 'replace', 'minecraft:water'), 2523);
+select t.eq('...the fluid count 0, the block count 1,573', t.cnt(20, -2, 20), '1573/0 (counted 1573/0)');
+select t.seed_regions(0);
+
 -- a global palette (more than 256 states in one section): the position-by-position way
 select t.seed_regions(0);
 do $$                                                         -- one block at a time: mc.set_block grows a palette past 256 states into the global palette (mc.set_blocks keeps a long palette)
