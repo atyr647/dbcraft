@@ -86,7 +86,7 @@ begin
     into w.n, w.dirty, w.mv, w.ed, w.eq, w.att, w.pose, w.tpg, w.first, w.wp1, w.wp2, w.recheck
     from (
       select p.entity_id as eid, p.vis_dirty as dirty,
-             (p.trk_start is not null and p.trk_start <= p_cur
+             (p.trk_start is not null and p.trk_start <= p_cur and (p_cur - p.trk_start) % 2 = 0
               and (all_mv or p.last_move_tick >= p_cur - 2 or p.vis_wake >= p_cur or (p_cur - p.trk_start) % 60 = 0 or p_cur - p.trk_start - p.trk_sync >= 802)) as mv,
              (p.sent_health is null or p.sent_eh is distinct from p.health or p.sent_using is distinct from (p.use_slot is not null) or p.sent_score is distinct from p.xp_score
               or (vison and (p.sent_flags is distinct from mc.ed_flags(p.shift, p.sprinting, p.gamemode) or p.sent_pose is distinct from p.pose
@@ -138,8 +138,8 @@ end $$;
 -- a player row that went online without the triggers: the tracker starts for it now (a tracker row, and the sent_* state of what it has been told counts as the current one)
 create or replace function mc.vis_init_missing(p_cur bigint) returns void language plpgsql as $$
 begin
-  insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb, head_yaw)
-  select p.entity_id, p.x, p.y, p.z, mc.angle_byte(p.yaw), mc.angle_byte(p.pitch), mc.angle_byte(p.yaw), p.yaw
+  insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb)
+  select p.entity_id, p.x, p.y, p.z, mc.angle_byte(p.yaw), mc.angle_byte(p.pitch), mc.angle_byte(p.yaw)
     from mc.player p where p.conn_id is not null and p.entity_id is not null and not exists (select 1 from mc.vtrk v where v.entity_id = p.entity_id)
   on conflict (entity_id) do nothing;
   update mc.player p set trk_start = coalesce(p.trk_start, p_cur), vis_x = coalesce(p.vis_x, p.x), vis_z = coalesce(p.vis_z, p.z), vis_wake = p_cur + 8,

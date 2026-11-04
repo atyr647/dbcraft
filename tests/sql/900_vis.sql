@@ -207,7 +207,6 @@ select t.tick(); select t.tick();
 select t.eq('a delta that does not fit in a short (9 blocks): a position sync, not a move', t.names(t.out(101)), array['entity_position_sync']);
 select t.reset();
 update mc.player set yaw = 90, last_move_tick = (select game_time from mc.game_state) + 1 where conn_id = 102;
-update mc.vtrk set head_yaw = 0 where entity_id = 2;
 select t.tick(); select t.tick();
 select t.eq('only the rotation changed: move_entity_rot (on ground, yaw byte 0x40, pitch 0), then the head', t.names(t.out(101)), array['move_entity_rot', 'rotate_head']);
 select t.eq('   move_entity_rot body', t.body(t.out(101), 1), '\x02014000'::bytea);
@@ -334,9 +333,9 @@ begin
     for k in 1 .. 5 loop
       n := floor(random() * 100);
       if n < 40 then
-        update mc.player set x = x + (random() - 0.5) * 0.9, z = z + (random() - 0.5) * 0.9, last_move_tick = gt where conn_id = 200 + k;
+        update mc.player set x = x + (random() - 0.5) * 0.9, z = z + (random() - 0.5) * 0.9, yaw_prev = yaw, last_move_tick = gt where conn_id = 200 + k;
       elsif n < 55 then
-        update mc.player set yaw = (yaw + 7 + random() * 40)::real, last_move_tick = gt where conn_id = 200 + k;
+        update mc.player set yaw_prev = yaw, yaw = (yaw + 7 + random() * 40)::real, last_move_tick = gt where conn_id = 200 + k;
       elsif n < 60 then
         update mc.player set on_ground = not on_ground, last_move_tick = gt where conn_id = 200 + k;
       elsif n < 62 then
@@ -354,7 +353,7 @@ begin
     end loop;
     perform t.reset();
   end loop;
-  digest := digest || (select string_agg(entity_id || ':' || base_x || ',' || base_z || ',' || sent_yb || ',' || sent_hb || ',' || head_yaw, ';' order by entity_id) from mc.vtrk);
+  digest := digest || (select string_agg(entity_id || ':' || base_x || ',' || base_z || ',' || sent_yb || ',' || sent_hb, ';' order by entity_id) from mc.vtrk);
   return md5(digest);
 end $$;
 

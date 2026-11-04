@@ -61,6 +61,7 @@ alter table mc.player
     add column if not exists vis_recheck boolean not null default false,    -- something that decides who may see this player changed (game mode): its pairs are re-evaluated when it or a viewer sends a movement packet (ChunkMap.move)
     add column if not exists tp_ground_tick bigint,                         -- the tick of the entity phase that puts a player moved by the server back on the ground
     add column if not exists vis_wake bigint,                               -- the tracker looks at this player on every tick up to this one whether it moved or not (a teleport, a game mode change, a join: things that change what a body is)
+    add column if not exists yaw_prev real,                                 -- the yaw before this tick's movement packet (set with last_move_tick by the movement step): the head of the tracker's body
     add column if not exists last_move_tick bigint,                         -- the tick of the last movement packet (any of the four kinds)
     add column if not exists swing_tick bigint;                             -- the tick of the last arm swing that was broadcast (LivingEntity.swing ignores a second one in the first half of the animation)
 
@@ -70,8 +71,7 @@ alter table mc.player
 create unlogged table if not exists mc.vtrk (
     entity_id int primary key,
     base_x float8, base_y float8, base_z float8,                  -- VecDeltaCodec.base: the exact position last sent
-    sent_yb smallint, sent_pb smallint, sent_hb smallint,         -- lastSentYRot / XRot / YHeadRot (Mth.packDegrees, 0-255)
-    head_yaw real                                                 -- yHeadRot: follows the yaw one tick later
+    sent_yb smallint, sent_pb smallint, sent_hb smallint          -- lastSentYRot / XRot / YHeadRot (Mth.packDegrees, 0-255)
 ) with (fillfactor = 50);
 
 -- the answer of mc.vis_find (sql/905): who has work this tick.  One scan of the online players computes it; the steps of the tick use it instead of scanning again.
@@ -95,12 +95,12 @@ begin
   new.trk_start := gt + 1; new.vis_wake := gt + 8;
   new.wp_state := null; new.wp_bx := floor(new.x)::int; new.wp_by := floor(new.y)::int; new.wp_bz := floor(new.z)::int; new.wp_cx := new.chunk_x; new.wp_cz := new.chunk_z;       -- (sql/908: the locator bar)
   new.vis_x := new.x; new.vis_z := new.z;
-  new.trk_sync := -2; new.trk_ground := new.on_ground;
+  new.trk_sync := -2; new.trk_ground := new.on_ground; new.yaw_prev := new.yaw;
   new.view_distance_req := null; new.sim_distance_req := null;
   if new.entity_id is not null then
-    insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb, head_yaw)
-    values (new.entity_id, new.x, new.y, new.z, mc.angle_byte(new.yaw), mc.angle_byte(new.pitch), mc.angle_byte(new.yaw), new.yaw)
-    on conflict (entity_id) do update set base_x = excluded.base_x, base_y = excluded.base_y, base_z = excluded.base_z, sent_yb = excluded.sent_yb, sent_pb = excluded.sent_pb, sent_hb = excluded.sent_hb, head_yaw = excluded.head_yaw;
+    insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb)
+    values (new.entity_id, new.x, new.y, new.z, mc.angle_byte(new.yaw), mc.angle_byte(new.pitch), mc.angle_byte(new.yaw))
+    on conflict (entity_id) do update set base_x = excluded.base_x, base_y = excluded.base_y, base_z = excluded.base_z, sent_yb = excluded.sent_yb, sent_pb = excluded.sent_pb, sent_hb = excluded.sent_hb;
   end if;
   return new;
 end $$;

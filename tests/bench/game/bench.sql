@@ -21,9 +21,9 @@ begin
            view_distance_req = 10, vis_x = x, vis_z = z, wp_state = 1, wp_bx = floor(x)::int, wp_by = floor(y)::int, wp_bz = floor(z)::int, wp_cx = chunk_x, wp_cz = chunk_z,
            attr_seen = mc.attr_std_seen(), attr_gm = gamemode, attr_spr = false, sent_equip = array['', '', '', '', '', ''], sent_held = 0, equip_dirty = false
      where conn_id is not null;
-    insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb, head_yaw)
-    select entity_id, x, y, z, mc.angle_byte(yaw), 0, mc.angle_byte(yaw), yaw from mc.player where conn_id is not null
-    on conflict (entity_id) do update set base_x = excluded.base_x, base_y = excluded.base_y, base_z = excluded.base_z, sent_yb = excluded.sent_yb, sent_pb = 0, sent_hb = excluded.sent_hb, head_yaw = excluded.head_yaw;
+    insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb)
+    select entity_id, x, y, z, mc.angle_byte(yaw), 0, mc.angle_byte(yaw) from mc.player where conn_id is not null
+    on conflict (entity_id) do update set base_x = excluded.base_x, base_y = excluded.base_y, base_z = excluded.base_z, sent_yb = excluded.sent_yb, sent_pb = 0, sent_hb = excluded.sent_hb;
   end if;
 end $$;
 

@@ -21,53 +21,50 @@ create or replace function mc.pkt_position_sync(p_eid int, p_x float8, p_y float
                                                                      else '\x00'::bytea || proto.f64(p_x) || proto.f64(p_y) || proto.f64(p_z) end)
                                       || proto.f32(p_yaw) || proto.f32(p_pitch) || proto.bool(p_ground)) $$;
 
--- The movement step for the players in p_ids (mc.vis_find, sql/905: moved within the last two ticks, woken by an event, or due for the 60-tick refresh / the 400-run sync).  The step
--- itself runs only on the even ticks of a player's age; on the others the row only gets its head rotation.  The tracker's state is the narrow mc.vtrk (HOT updates, one statement
--- per tick); mc.player is written only when a position sync changes the ground flag / the sync counter.  The head follows the yaw one tick later: this tick's body uses the head
--- the row had at the end of the last tick, then the row takes the yaw.
+-- The movement step for the players in p_ids (mc.vis_find, sql/905: players on an even tick of their age that moved in the last two ticks, were woken by an event, or are due for the
+-- 60-tick refresh / the sync after 400 runs).  The tracker's state is the narrow mc.vtrk (HOT updates, one statement per tick); mc.player is written only when a position sync changes the
+-- ground flag / the sync counter.  The head follows the yaw one tick later: the head of this tick's body is the yaw the player had at the END of the last tick, which is the yaw
+-- before this tick's movement packet (mc.player.yaw_prev, set by the movement step) when the player moved this tick, and the current yaw otherwise.
 drop function if exists mc.vis_move(bigint);
 drop function if exists mc.vis_head(bigint);
 create or replace function mc.vis_move(p_cur bigint, p_ids int[]) returns void language plpgsql as $$
 declare e int[]; d bytea[];
 begin
   if p_ids is null then return; end if;
-  with tr as materialized (
-    select p.entity_id as eid, p.x, p.y, p.z, p.yaw, p.pitch, p_cur - p.trk_start as tc, v.base_x, v.base_y, v.base_z, v.sent_yb, v.sent_pb, v.sent_hb, v.head_yaw as hy, p.trk_sync, p.trk_ground,
-           ((p_cur - p.trk_start) % 2 = 0) as even,
-           case when coalesce((p.wp_state & 2) = 2, false) then false                                           -- a spectator is never on the ground (Player.tick, so from the entity phase of the tick it became one)
-                when p.fresh_join and p_cur - p.trk_start < 1 then false else p.on_ground end as og,        -- a first-time player is not on the ground yet when it is created
-           mc.angle_byte(p.yaw) as yb, mc.angle_byte(p.pitch) as pb, mc.angle_byte(v.head_yaw) as hb
+  with a as materialized (
+    select p.entity_id as eid, p.x, p.y, p.z, p.yaw, p.pitch, l1.tc, v.base_x, v.base_y, v.base_z, v.sent_yb, v.sent_pb, v.sent_hb, p.trk_sync, p.trk_ground, l1.og, l1.yb, l1.pb, l1.hb,
+           l2.pos_changed, l2.rot_changed, l2.dx, l2.dy, l2.dz, l2.sync1, l2.forced, l2.too_big
       from mc.player p join mc.vtrk v on v.entity_id = p.entity_id
-     where p.entity_id = any (p_ids) and p.conn_id is not null and p.trk_start is not null and p_cur >= p.trk_start),
-  a as materialized (
-    select tr.*, (even and (x - base_x) ^ 2 + (y - base_y) ^ 2 + (z - base_z) ^ 2 >= 7.62939453125E-6) as pos_changed, (even and (yb <> sent_yb or pb <> sent_pb)) as rot_changed,
-           mc.quant(x) - mc.quant(base_x) as dx, mc.quant(y) - mc.quant(base_y) as dy, mc.quant(z) - mc.quant(base_z) as dz, (tc - trk_sync) / 2 as tp1, (even and trk_ground is distinct from og) as gdiff
-      from tr),
-  b as materialized (
-    select a.*, (gdiff or (even and tp1 > 400)) as sync1, (pos_changed or (even and tc % 60 = 0)) as forced,
-           (dx not between -32768 and 32767 or dy not between -32768 and 32767 or dz not between -32768 and 32767) as too_big
-      from a),
-  c as materialized (
-    select b.*, case when sync1 then 1 when forced and too_big then 1 when forced then case when rot_changed then 3 else 2 end when rot_changed then 4 else 0 end as kind from b),
+      cross join lateral (select p_cur - p.trk_start as tc,
+                                 case when coalesce((p.wp_state & 2) = 2, false) then false                                           -- a spectator is never on the ground (Player.tick, so from the entity phase of the tick it became one)
+                                      when p.fresh_join and p_cur - p.trk_start < 1 then false else p.on_ground end as og,        -- a first-time player is not on the ground yet when it is created
+                                 mc.angle_byte(p.yaw) as yb, mc.angle_byte(p.pitch) as pb, mc.angle_byte(case when p.last_move_tick = p_cur then p.yaw_prev else p.yaw end) as hb) l1
+      cross join lateral (select ((p.x - v.base_x) ^ 2 + (p.y - v.base_y) ^ 2 + (p.z - v.base_z) ^ 2 >= 7.62939453125E-6) as pos_changed, (l1.yb <> v.sent_yb or l1.pb <> v.sent_pb) as rot_changed,
+                                 mc.quant(p.x) - mc.quant(v.base_x) as dx, mc.quant(p.y) - mc.quant(v.base_y) as dy, mc.quant(p.z) - mc.quant(v.base_z) as dz,
+                                 (p.trk_ground is distinct from l1.og or (l1.tc - p.trk_sync) / 2 > 400) as sync1) l3
+      cross join lateral (select l3.sync1, l3.dx, l3.dy, l3.dz,
+                                 (((p.x - v.base_x) ^ 2 + (p.y - v.base_y) ^ 2 + (p.z - v.base_z) ^ 2 >= 7.62939453125E-6) or l1.tc % 60 = 0) as forced,
+                                 (l3.dx not between -32768 and 32767 or l3.dy not between -32768 and 32767 or l3.dz not between -32768 and 32767) as too_big,
+                                 l3.pos_changed, l3.rot_changed) l2
+     where p.entity_id = any (p_ids) and p.conn_id is not null and p.trk_start is not null and p_cur >= p.trk_start and (p_cur - p.trk_start) % 2 = 0),
   pk as materialized (
-    select c.eid, c.kind, c.sync1, c.og, c.yb, c.pb, c.hb, c.x, c.y, c.z, c.yaw, c.pitch, c.tc, c.even, c.hy, c.sent_hb,
-           case c.kind
-             when 1 then mc.pkt_position_sync(c.eid, c.x, c.y, c.z, c.tc >= 2, 2, c.yaw, c.pitch, c.og)
-             when 2 then mc.cb('move_entity_pos', proto.varint(c.eid) || proto.varint((case when c.og then 1 else 0 end) | (case when c.tc >= 2 then 2 else 0 end))
-                                || case when c.tc >= 2 then proto.varint(2) else '\x'::bytea end || proto.i16(c.dx::int) || proto.i16(c.dy::int) || proto.i16(c.dz::int))
-             when 3 then mc.cb('move_entity_pos_rot', proto.varint(c.eid) || proto.varint((case when c.og then 1 else 0 end) | (case when c.tc >= 2 then 2 else 0 end))
-                                || case when c.tc >= 2 then proto.varint(2) else '\x'::bytea end || proto.i16(c.dx::int) || proto.i16(c.dy::int) || proto.i16(c.dz::int)
-                                || proto.i8(c.yb) || proto.i8(c.pb))
-             when 4 then mc.cb('move_entity_rot', proto.varint(c.eid) || proto.bool(c.og) || proto.i8(c.yb) || proto.i8(c.pb))
+    select a.eid, k.kind, a.sync1, a.og, a.yb, a.pb, a.hb, a.x, a.y, a.z, a.tc, a.sent_hb,
+           case k.kind
+             when 1 then mc.pkt_position_sync(a.eid, a.x, a.y, a.z, a.tc >= 2, 2, a.yaw, a.pitch, a.og)
+             when 2 then mc.cb('move_entity_pos', proto.varint(a.eid) || proto.varint((case when a.og then 1 else 0 end) | (case when a.tc >= 2 then 2 else 0 end))
+                                || case when a.tc >= 2 then proto.varint(2) else '\x'::bytea end || proto.i16(a.dx::int) || proto.i16(a.dy::int) || proto.i16(a.dz::int))
+             when 3 then mc.cb('move_entity_pos_rot', proto.varint(a.eid) || proto.varint((case when a.og then 1 else 0 end) | (case when a.tc >= 2 then 2 else 0 end))
+                                || case when a.tc >= 2 then proto.varint(2) else '\x'::bytea end || proto.i16(a.dx::int) || proto.i16(a.dy::int) || proto.i16(a.dz::int)
+                                || proto.i8(a.yb) || proto.i8(a.pb))
+             when 4 then mc.cb('move_entity_rot', proto.varint(a.eid) || proto.bool(a.og) || proto.i8(a.yb) || proto.i8(a.pb))
              else '\x'::bytea end
-           || case when c.even and c.hb <> c.sent_hb then mc.cb('rotate_head', proto.varint(c.eid) || proto.i8(c.hb)) else '\x'::bytea end as data
-      from c),
+           || case when a.hb <> a.sent_hb then mc.cb('rotate_head', proto.varint(a.eid) || proto.i8(a.hb)) else '\x'::bytea end as data
+      from a cross join lateral (select case when a.sync1 then 1 when a.forced and a.too_big then 1 when a.forced then case when a.rot_changed then 3 else 2 end when a.rot_changed then 4 else 0 end as kind) k),
   u as (
     update mc.vtrk v set
         base_x = case when pk.kind in (1, 2, 3) then pk.x else v.base_x end, base_y = case when pk.kind in (1, 2, 3) then pk.y else v.base_y end, base_z = case when pk.kind in (1, 2, 3) then pk.z else v.base_z end,
-        sent_yb = case when pk.kind in (1, 3, 4) then pk.yb else v.sent_yb end, sent_pb = case when pk.kind in (1, 3, 4) then pk.pb else v.sent_pb end,
-        sent_hb = case when pk.even then pk.hb else v.sent_hb end, head_yaw = pk.yaw
-      from pk where v.entity_id = pk.eid and (pk.kind <> 0 or (pk.even and pk.hb <> v.sent_hb) or v.head_yaw is distinct from pk.yaw)
+        sent_yb = case when pk.kind in (1, 3, 4) then pk.yb else v.sent_yb end, sent_pb = case when pk.kind in (1, 3, 4) then pk.pb else v.sent_pb end, sent_hb = pk.hb
+      from pk where v.entity_id = pk.eid and (pk.kind <> 0 or pk.hb <> v.sent_hb)
     returning 1),
   sy as (
     update mc.player p set trk_sync = pk.tc, trk_ground = pk.og from pk where p.entity_id = pk.eid and pk.sync1 returning 1)

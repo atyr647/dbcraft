@@ -46,12 +46,19 @@ begin
              (p.entity_id = any (d)) as dirty,
              p.tp_ground_tick is not null and coalesce((c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z), false) as stale     -- a teleported client has not been sent the chunks of its new position yet (net.stream_chunks runs after this); a walking one is paired at once (recorded: range)
         from mc.player p left join net.conn c on c.conn_id = p.conn_id where p.conn_id is not null),
-    w as (
+    w as (       -- the pairs with a dirty player in them: (dirty viewer, anybody), then (clean viewer, dirty target).  Written as two joins so that each filters first: one join with
+                 -- "a.dirty or b.dirty" is a nested loop over all N x N pairs
       select a.eid as v, b.eid as t, a.conn as c, a.stale
         from pc a join pc b on b.eid <> a.eid and (not b.spec or a.spec)
                               and abs(a.cx - b.cx) <= a.vd + 1 and abs(a.cz - b.cz) <= a.vd + 1
                               and (a.x - b.x) ^ 2 + (a.z - b.z) ^ 2 <= a.rng ^ 2
-       where a.dirty or b.dirty)
+       where a.dirty
+      union all
+      select a.eid, b.eid, a.conn, a.stale
+        from pc a join pc b on b.eid <> a.eid and (not b.spec or a.spec)
+                              and abs(a.cx - b.cx) <= a.vd + 1 and abs(a.cz - b.cz) <= a.vd + 1
+                              and (a.x - b.x) ^ 2 + (a.z - b.z) ^ 2 <= a.rng ^ 2
+       where b.dirty and not a.dirty)
     select coalesce(array_agg(w.v), '{}'), coalesce(array_agg(w.t), '{}'), coalesce(array_agg(w.c), '{}'),
            coalesce(array_agg(w.v) filter (where not w.stale), '{}'), coalesce(array_agg(w.t) filter (where not w.stale), '{}'), coalesce(array_agg(w.c) filter (where not w.stale), '{}'),
            (select coalesce(array_agg(pc.eid), '{}') from pc where pc.stale)

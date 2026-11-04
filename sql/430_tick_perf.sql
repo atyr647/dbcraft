@@ -153,10 +153,14 @@ begin
 end $$;
 
 create or replace function mc.tick() returns bigint language plpgsql as $$
+declare n_vis int;
 begin
   delete from mc.play_in_work;
   -- claim this tick's input atomically; anything inserted from now on waits for the next tick
-  with c as (delete from mc.play_in returning seq, conn_id, packet_id, body) insert into mc.play_in_work (seq, conn_id, packet_id, body) select seq, conn_id, packet_id, body from c;
+  with c as (delete from mc.play_in returning seq, conn_id, packet_id, body),
+       i as (insert into mc.play_in_work (seq, conn_id, packet_id, body) select seq, conn_id, packet_id, body from c returning packet_id)
+  select count(*) filter (where packet_id = any (array[mc.sid('player_input'), mc.sid('punch'), mc.sid('client_information'), mc.sid('player_abilities')])) into n_vis from i;
+  perform set_config('dbcraft.vis_in', case when n_vis > 0 then '1' else '0' end, true);       -- sql/904: a packet the visibility layer reads arrived (as in net.process_fast)
   return mc.tick_core();
 end $$;
 

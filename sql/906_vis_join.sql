@@ -61,7 +61,7 @@ begin
       attr_sent = (select jsonb_object_agg(a.id::text, a.entry) from mc.attr_now(p.uuid, p.held_slot, p.gamemode, false, mc.attr_std_seen()) a),
       sent_equip = mc.equip_now(p.uuid, p.held_slot), sent_held = p.held_slot, equip_dirty = false
    where p.uuid = p_uuid;
-  insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb, head_yaw)
-  select p.entity_id, p.x, p.y, p.z, mc.angle_byte(p.yaw), mc.angle_byte(p.pitch), mc.angle_byte(p.yaw), p.yaw from mc.player p where p.uuid = p_uuid and p.entity_id is not null
-  on conflict (entity_id) do update set base_x = excluded.base_x, base_y = excluded.base_y, base_z = excluded.base_z, sent_yb = excluded.sent_yb, sent_pb = excluded.sent_pb, sent_hb = excluded.sent_hb, head_yaw = excluded.head_yaw;
+  insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb)
+  select p.entity_id, p.x, p.y, p.z, mc.angle_byte(p.yaw), mc.angle_byte(p.pitch), mc.angle_byte(p.yaw) from mc.player p where p.uuid = p_uuid and p.entity_id is not null
+  on conflict (entity_id) do update set base_x = excluded.base_x, base_y = excluded.base_y, base_z = excluded.base_z, sent_yb = excluded.sent_yb, sent_pb = excluded.sent_pb, sent_hb = excluded.sent_hb;
 end $$;
