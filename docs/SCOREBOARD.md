@@ -7,7 +7,7 @@ Everything that produced the numbers is in `tools/scoreboard/`; the full generat
 `docs/scoreboard-results.jsonl.txt`.
 
 **Short answer: dbcraft does not beat vanilla across the board.**  It wins most of the scenarios here, but several of those wins come from doing less work,
-and it loses (or fails) on login-storm stalls and long runs with 200 moving players (large fills were a loss until the box fill, item 5 below).  (Idle cost and chat latency at low load were losses in the original session and are closed since [PERF-IDLE.md](PERF-IDLE.md): re-measured rows are marked with a dagger below.)  Details below.
+and it loses (or fails) on login-storm stalls and long runs with 200 moving players (large fills were a loss until the box fill, item 5 below).  (Idle cost and chat latency at low load were losses in the original session and are closed since [PERF-IDLE.md](PERF-IDLE.md) and [PERF-IDLE2.md](PERF-IDLE2.md): re-measured rows are marked with a dagger (PL/Python gateway) or a double dagger (Rust gateway) below.)  Details below.
 
 ## How to read the numbers
 
@@ -61,6 +61,20 @@ and it loses (or fails) on login-storm stalls and long runs with 200 moving play
 | entities (same) | 2,000 walking mobs (ms) | 44-50 | 106 | 2.2 | **vanilla** |
 | 200 players walking inside the explored area, 10 minutes | whole run | completes (tick 55.7 ms mean, p99 199, GC 364 pauses max 43 ms, tick 50.7 -> 60.9 ms from first to last third) | **all 200 clients timed out about 4 minutes in** | | **vanilla** |
 
+‡ **Rust gateway, re-measured for [PERF-IDLE2.md](PERF-IDLE2.md)**, vanilla and both builds of dbcraft (`046d1e2` = before, this branch = after) alternating, 3 repetitions of 60 s, medians [min-max], on a machine shared with eight other jobs (load average 2-11, so vanilla's own numbers are 1.5-4 times those of the quiet-machine rows above), CPU = cluster **plus the gateway process** (PERF-IDLE.md's Rust rows left the gateway out):
+
+| Scenario | Metric | vanilla | dbcraft before | dbcraft after | winner |
+|---|---|---|---|---|---|
+| idle, 0 players ‡ | CPU (cores) | 0.017 [0.017-0.018] | 0.030 [0.028-0.033] | 0.015 [0.012-0.017] | tie to dbcraft (ranges touch at 0.017) |
+| idle, 0 players ‡ | tick mean / p99 (ms) | 0.40 / 4.0 | 0.14 / 0.5 | 0.09 / 0.1 | dbcraft |
+| 50 players, idle ‡ | CPU (cores) | 1.14 [1.00-1.15] | 0.113 [0.112-0.135] | 0.098 [0.097-0.124] | dbcraft |
+| 50 players, idle ‡ | tick mean / p99 (ms) | 56.7 / 108 | 4.4 / 24 | 4.4 / 25 | dbcraft |
+| 50 players, idle ‡ | chat round trip p50 / p99 (ms) | 30 / 90 | 16 / 40 | 17 / 53 | dbcraft |
+| 200 players, idle ‡ | CPU (cores) | 0.97 [0.59-1.31] | 0.205 [0.194-0.216] | 0.177 [0.154-0.197] | dbcraft |
+| 200 players, idle ‡ | tick mean / p99 (ms) | 149 / 284 | 6.2 / 25 | 5.3 / 20 | dbcraft |
+| 200 players, idle ‡ | chat round trip p50 / p99 (ms) | 100 / 130 | 25 / 73 | 19 / 52 | dbcraft |
+| 50 players, idle, chat from a client that also sends player_input / punch / ... ‡ | chat round trip p50 / p99 (ms), 360 chats each | not run | 31 / 73 | 20 / 76 | before 31 -> after 20 ms (p99 unchanged) |
+
 † **Re-measured** for [PERF-IDLE.md](PERF-IDLE.md) on a different day and a quieter machine than the original session, both servers, 2 repetitions of 60 s for vanilla (3 for the empty server) and 3 for dbcraft (PL/Python gateway and batched tick, as in this table; the Rust gateway is in PERF-IDLE.md), after the idle-cost work: medians, ranges and the
 before-the-work numbers on the same machine are there.  The other rows are the original session's, and `SCOREBOARD-table.md` / `scoreboard-results.jsonl.txt` still show it.  The original session's values for the changed rows were: idle tick 0.27 / 1.92 ms, CPU 0.01 / 0.11; 50 idle tick 40.0 / 7.4 ms, CPU 0.84 / 0.20, chat p50 24.7 / 43.1 ms;
 200 idle tick 71.7 / 22.7 ms, chat 46 / 74 ms p50 and 113 / 406 ms p99 (vanilla / dbcraft).  Chat percentiles rest on about 60 round trips per run.
@@ -80,9 +94,9 @@ before-the-work numbers on the same machine are there.  The other rows are the o
    joiners just wait longer.  Physics of the design (one transaction per tick); mitigations: admit a few joins per tick, make the entry burst cheaper.  Everyone
    already online would see a freeze of that length, which is worse than a slow join.
 3. ~~**Idle cost: 7 times the tick time and 11 times the CPU** of an idle vanilla (1.9 ms and 0.11 cores).~~  **Closed** ([PERF-IDLE.md](PERF-IDLE.md)): an empty server's tick is 0.11 ms (a quiet tick: one predicate, the clock, a log row) and it uses 0.022-0.030 cores, of which half was the two chunk generators polling every 5 ms; vanilla's 0.018 cores is
-   still slightly lower.  With idle players the SQL tick is 2-3 times shorter (phases with nothing to do are skipped, `client_tick_end` is no longer queued).  Not done: the PL/Python gateway still costs 6.8 ms per tick at 200 idle players (it does not filter `client_tick_end`).
+   still slightly lower (**[PERF-IDLE2.md](PERF-IDLE2.md): with the Rust gateway 0.015 [0.012-0.017] against 0.017 [0.017-0.018] re-measured in the same session: a tie to a small win, half of the 0.030 it was**).  With idle players the SQL tick is 2-3 times shorter (phases with nothing to do are skipped, `client_tick_end` is no longer queued).  The PL/Python gateway now filters `client_tick_end` too (PERF-IDLE2.md; its 200-player cost was not re-measured).
 4. ~~**Chat latency at low load and in the tail**: +18 ms at p50 with 50 idle players, p99 406 ms against 113 ms with 200 idle players.~~  **Closed for idle players and scripted clients** ([PERF-IDLE.md](PERF-IDLE.md)): an urgent lane handles a chat packet between ticks (same function, same bytes, 20 Hz untouched):
-   p50 4-6 ms at 50 and 9-10 ms at 200 idle players, p99 16 and 28-41 ms.  Not measured: chat from real clients, whose other packets in the same 50 ms window make the lane step aside (the message then waits for the tick, as before); the tail during a long tick (login storm, keep-alive round) is still the length of that tick.
+   p50 4-6 ms at 50 and 9-10 ms at 200 idle players, p99 16 and 28-41 ms.  Chat from a client that also sends `player_input`, `punch`, `player_command`, ... is measured in PERF-IDLE2.md: the lane now takes a chat whatever standing ahead of it cannot change what the chat does (a list decided from the vanilla jar and tested against the tick path), p50 31 -> 20 ms with 50 idle players, p99 unchanged (73 -> 76 ms); the tail during a long tick (login storm) is still the length of that tick, and the commonest long tick of idle players with players online, the one after the once-a-second `TRUNCATE`, is gone (p99 of the tick at 200 idle players 30.5 -> 19.4 ms as the gateway sees it).
 5. **Large fills (fixed afterwards, see below)**: 100,000 blocks took 535 ms against 201 ms (5.3 against 2.0 microseconds per block) because every block was rewritten and queued as
    its own event row.  After the box fill (`mc.fill_section`, docs/WORLD.md "Large fills") the same statements take **42.8 ms** (median of five repetitions; each repetition's p50 was
    41.3 to 56.0 ms, single calls 39.5 to 79.7 ms) and 1,000 blocks take 1.43 ms (was 11.77).  Measured with `tools/scoreboard/fill_dbcraft.py` on the shared dev cluster against
