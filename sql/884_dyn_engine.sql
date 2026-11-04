@@ -394,6 +394,7 @@ begin
         perform mc.set_blocks(p_dim, ch_x, ch_y, ch_z, array(select s.name from unnest(ch_new) with ordinality t(sid, o) join mc.dyn_state s on s.sid = t.sid order by t.o));
         perform set_config('mc.dyn_busy', 'off', false);
         -- the sections written are decoded already (the engine's private copy): store them in the cache under the chunks' new versions instead of decoding them again on the next tick
+        if coalesce(current_setting('mc.dyn_nocache', true), 'off') <> 'on' then
         for cr in select (u.x >> 4) as cx, (u.y >> 4) as sy, (u.z >> 4) as cz, array_agg((((u.y & 15) << 8) | ((u.z & 15) << 4) | (u.x & 15)) order by u.o) as ixs, array_agg(u.sid order by u.o) as news
                     from unnest(ch_x, ch_y, ch_z, ch_new) with ordinality u(x, y, z, sid, o) group by 1, 2, 3 loop
             cc := null;
@@ -407,6 +408,7 @@ begin
         update mc.dyn_sec_ver k set version = c.version
           from unnest(dcx, dcz, dver) d(cx, cz, v) join mc.chunk c on c.dimension = p_dim and c.cx = d.cx and c.cz = d.cz
          where k.dimension = p_dim and k.cx = d.cx and k.cz = d.cz and k.version = d.v;
+        end if;
         -- vanilla's setBlock sends no break effect (level_event 2001); only destroyBlock does.  dbcraft's broadcast sends it for every 'block' event that turns a block into air,
         -- so the changes that are not destructions are re-recorded as one-position 'cells' events, which never get it (same set order, same packets otherwise)
         update mc.block_event e set kind = 'cells', x = (e.x >> 4) * 16, y = (e.y >> 4) * 16, z = (e.z >> 4) * 16,

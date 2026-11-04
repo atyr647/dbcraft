@@ -56,6 +56,9 @@ SCEN = {
                        ("set", 8, -61, 0, "air"), ("step", 2), ("set", -2, -60, 0, "air"), ("step", 2), ("set", -4, -60, 0, "air"), ("step", 2), ("set", -6, -60, 0, "air"), ("step", 2),
                        ("set", 0, -60, 4, "air"), ("step", 2), ("set", 2, -60, 4, "air"), ("step", 3),
                        ("set", 4, -59, 0, "air"), ("step", 3)],
+    # a layer of 16 x 16 water sources (one chunk: a /fill across chunks schedules its ticks chunk by chunk, vanilla in one sweep) dropped 5 blocks onto the floor: hundreds of fluid ticks in
+    # one tick, falling columns, a sheet that spreads 7 blocks over the neighbouring chunks (the burst the cost numbers use)
+    "water_layer": [("fill", *AIR_BOX, "air"), ("step", 3), ("rec",), ("fill", 0, -55, 0, 15, -55, 15, "water"), ("step", 60)],
     "sand_support_removed": [("fill", *AIR_BOX, "air"), ("fill", -3, -61, -3, 3, -61, 3, "stone"), ("fill", 0, -60, 0, 0, -56, 0, "sand"), ("set", 0, -60, 1, "stone"), ("step", 5), ("rec",),
                              ("set", 0, -60, 0, "air"), ("step", 60)],
 }

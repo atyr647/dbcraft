@@ -215,6 +215,13 @@ select t.is_true('... and farmland next to water stays wet', (select count(*) fr
 update mc.server_property set value = '4' where key = 'dbcraft.random-tick-interval';
 update mc.server_property set value = '6' where key = 'dbcraft.random-tick-max-hits';
 
+-- a fill across four chunks: every chunk's sources get their fluid tick (the statement trigger reads the sections fresh, not from the cache of an earlier tick) ------------------------
+select pg_temp.reset();
+select pg_temp.tk(2);                                                                                                                      -- (the sections are in the cache now)
+select mc.fill('minecraft:overworld', -10, -55, -10, 10, -55, 10, 'minecraft:water');
+select t.eq('a water layer over four chunks schedules one fluid tick per source (441), in every chunk',
+            (select concat_ws('|', count(*), count(distinct (x >> 4, z >> 4))) from mc.block_tick where kind = 'f'), '441|4');
+
 -- the lists of active cells (sql/887): a cell that is not on its section's list must never change under a random tick, wherever it is (chunk borders included) ---------------------------
 select pg_temp.reset();
 delete from mc.game_rule; insert into mc.game_rule values ('minecraft:random_tick_speed', '3');

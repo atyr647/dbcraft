@@ -35,6 +35,9 @@ declare
     f_bar int4[]; f_air int4[]; f_void int4[];
     res  int4[];
     ncx  int := cx1 - cx0 + 1; ncz int := cz1 - cz0 + 1;
+    -- mc.dyn_nocache = on: decode every section from the stored rows and leave the cache alone (the statement trigger of sql/885 runs while a fill is still writing: a chunk's version
+    -- is bumped after its events are recorded, so a cached section can be older than the rows)
+    use_cache boolean := coalesce(current_setting('mc.dyn_nocache', true), 'off') <> 'on';
 begin
     select n, k[1], k[2] into vn, vk1, vk2 from mc.dyn_vec;                       -- (only these: the other arrays are large)
     select * into d from mc.dimension where name = p_dim;
@@ -48,8 +51,9 @@ begin
                case when c.cx is null then f_bar
                     when t.sy < smin or t.sy > smax then f_void
                     when s.sy is null then f_air
-                    when kv.version = c.version and k.cells is not null then k.cells
-                    else mc.dyn_decode_cached(p_dim, t.cx, t.sy, t.cz, c.version, s.bits, s.data, s.palette) end
+                    when use_cache and kv.version = c.version and k.cells is not null then k.cells
+                    when use_cache then mc.dyn_decode_cached(p_dim, t.cx, t.sy, t.cz, c.version, s.bits, s.data, s.palette)
+                    else mc.dyn_decode_plain(s.bits, s.data, s.palette) end
           from unnest(p_need) with ordinality n(slot, i)
           cross join lateral (select sy0 + (n.slot - 1) / (ncz * ncx) as sy, cz0 + ((n.slot - 1) / ncx) % ncz as cz, cx0 + (n.slot - 1) % ncx as cx) t
           left join mc.chunk c on c.dimension = p_dim and c.cx = t.cx and c.cz = t.cz
@@ -64,11 +68,14 @@ create unlogged table if not exists mc.dyn_sec_ver (dimension text not null, cx 
 alter table mc.dyn_sec_cache alter column cells set storage external;       -- no compression: reading and writing 16 KB rows should not cost a pglz pass
 
 -- decode a section and remember it (the section row's palette names become state ids)
+create or replace function mc.dyn_decode_plain(p_bits int, p_data bytea, p_palette text[]) returns int4[] language sql stable as $$
+  select mc.dyn_decode(p_bits, p_data, case when cardinality(p_palette) = 0 then '{}'::int4[]
+                                             else array(select b.state_id from unnest(p_palette) with ordinality p(nm, o) join ref.block_state b on b.name = p.nm order by o) end) $$;
+
 create or replace function mc.dyn_decode_cached(p_dim text, p_cx int, p_sy int, p_cz int, p_version bigint, p_bits int, p_data bytea, p_palette text[]) returns int4[] language plpgsql volatile as $$
 declare cells int4[];
 begin
-    cells := mc.dyn_decode(p_bits, p_data, case when cardinality(p_palette) = 0 then '{}'::int4[]
-                                                  else array(select b.state_id from unnest(p_palette) with ordinality p(nm, o) join ref.block_state b on b.name = p.nm order by o) end);
+    cells := mc.dyn_decode_plain(p_bits, p_data, p_palette);
     insert into mc.dyn_sec_cache (dimension, cx, sy, cz, version, cells) values (p_dim, p_cx, p_sy, p_cz, p_version, cells)
     on conflict (dimension, cx, cz, sy) do update set version = excluded.version, cells = excluded.cells;
     insert into mc.dyn_sec_ver (dimension, cx, sy, cz, version) values (p_dim, p_cx, p_sy, p_cz, p_version)

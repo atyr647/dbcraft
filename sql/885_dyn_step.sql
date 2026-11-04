@@ -199,7 +199,11 @@ begin
             end if;
         end if;
     end loop;
-    if n > 0 then perform mc.dyn_run(dim, cur, kinds, xs, ys, zs, auxs); end if;
+    if n > 0 then
+        perform set_config('mc.dyn_nocache', 'on', true);
+        perform mc.dyn_run(dim, cur, kinds, xs, ys, zs, auxs);
+        perform set_config('mc.dyn_nocache', 'off', true);
+    end if;
     return null;
 end $$;
 
