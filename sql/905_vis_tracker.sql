@@ -7,17 +7,23 @@
 --                      attributes are compared and update_attributes sent (an equipment change shows in the attributes one tick later), PlayerList.tick: the latency broadcast
 -- mc.vis_step does the packet-phase leftovers (sql/904), the tracker's entity-data flush (mc.survival_tracker, sql/833, which also carries health, item use and score) and the entity phase.
 
-create or replace function mc.vis_entity_phase(p_cur bigint) returns void language plpgsql as $$
+drop function if exists mc.vis_entity_phase(bigint);
+create or replace function mc.vis_entity_phase(p_cur bigint, w mc.vis_work default null) returns void language plpgsql as $$
 declare e_eq int[]; d_eq bytea[]; e_at int[]; d_at bytea[]; n int;
 begin
+  if w is null then w := mc.vis_find(p_cur); end if;
   -- a player moved by the server (/tp) was not on the ground for a tick (mc.sync_entity_position); the entity phase of the next tick finds the ground again
-  update mc.player set on_ground = true, tp_ground_tick = null where conn_id is not null and tp_ground_tick is not null and tp_ground_tick <= p_cur;
+  if w.tpg then
+    update mc.player set on_ground = true, tp_ground_tick = null, vis_wake = p_cur + 4 where conn_id is not null and tp_ground_tick is not null and tp_ground_tick <= p_cur;
+  end if;
   -- the pose: crouching while the shift key is down and the player is not flying (Player.updatePlayerPose)
-  update mc.player p set pose = case when p.shift and not p.flying then 5 else 0 end
-   where p.conn_id is not null and p.pose is distinct from (case when p.shift and not p.flying then 5 else 0 end);
+  if w.pose then
+    update mc.player p set pose = case when p.shift and not p.flying then 5 else 0 end
+     where p.conn_id is not null and p.pose is distinct from (case when p.shift and not p.flying then 5 else 0 end);
+  end if;
 
   -- equipment: the six visible slots compared with what the viewers were last sent; only the changed slots are broadcast (to the viewers, not to the player)
-  if exists (select 1 from mc.player p where p.conn_id is not null and (p.equip_dirty or p.sent_held is distinct from p.held_slot)) then
+  if w.eq then
     with c as (
       select p.entity_id as eid, p.uuid, p.held_slot, p.sent_equip, mc.equip_now(p.uuid, p.held_slot) as cur
         from mc.player p where p.conn_id is not null and (p.equip_dirty or p.sent_held is distinct from p.held_slot)),
@@ -34,7 +40,7 @@ begin
   end if;
 
   -- attributes: a game mode change is picked up here and shows one tick later; sprinting shows at once; an equipment change was scheduled for the tick after it
-  if exists (select 1 from mc.player p where p.conn_id is not null and (p.attr_gm is distinct from p.gamemode or p.attr_spr is distinct from p.sprinting or (p.attr_due is not null and p.attr_due <= p_cur))) then
+  if w.att then
     update mc.player p set attr_gm = p.gamemode, attr_due = coalesce(p.attr_due, p_cur + 1)
      where p.conn_id is not null and p.attr_gm is distinct from p.gamemode;
     with c as (
@@ -60,23 +66,85 @@ begin
   end if;
 end $$;
 
--- a player row that went online without mc.vis_join (the layer was switched on while it played, a test or a tool inserted it with a connection id): the tracker starts for it now
-create or replace function mc.vis_init_rows(p_cur bigint) returns void language sql as $$
-  update mc.player set trk_start = p_cur, base_x = x, base_y = y, base_z = z, sent_yb = mc.angle_byte(yaw), sent_pb = mc.angle_byte(pitch), sent_hb = mc.angle_byte(yaw), head_yaw = yaw,
-         trk_sync = -2, trk_ground = on_ground, vis_x = x, vis_z = z, sent_equip = coalesce(sent_equip, mc.equip_now(uuid, held_slot)), sent_held = coalesce(sent_held, held_slot), equip_dirty = false,
-         attr_seen = case when attr_seen = 0 then mc.attr_std_seen() else attr_seen end, attr_gm = coalesce(attr_gm, gamemode), attr_spr = coalesce(attr_spr, sprinting)
-   where conn_id is not null and trk_start is null $$;
+-- ONE scan of the online players says who has work this tick, for every step of the tracker (a scan of the wide mc.player costs about a millisecond at 500 players, and the steps used to
+-- scan it one after the other, nine times, to find out that nothing had changed).  Every predicate below is the WHERE condition of the step it gates, evaluated on the same columns.
+--   dirty   pairs to re-evaluate (sql/909)                       mv      players the movement step looks at: moved in the last two ticks (the body runs on even ticks, the
+--   ed      an unsent entity data change (mc.survival_tracker)           head rotation follows a tick later), woken by an event (vis_wake: a join, a teleport, a game mode
+--   eq / att / pose / tpg / first  the steps of the entity phase         change), the 60-tick refresh and the sync after 400 runs
+--   wp1     a player moved or its block position differs from the locator bar's last pass   wp2  a transmit state changed   recheck  a game mode change waits for a movement packet
+-- The answer is also kept for the rest of the tick (a transaction-local setting): mc.refresh_visibility computes it, mc.vis_step reuses it.
+create or replace function mc.vis_find(p_cur bigint) returns mc.vis_work language plpgsql as $$
+declare w mc.vis_work; vison boolean := mc.vis_on(); all_mv boolean := coalesce(current_setting('dbcraft.vis_scan_all', true), '') = 'on';       -- (tests: look at everybody)
+begin
+  w.cur := p_cur;
+  select count(*)::int,
+         array_agg(x.eid) filter (where x.dirty),
+         array_agg(x.eid) filter (where x.mv),
+         array_agg(x.eid) filter (where x.ed),
+         coalesce(bool_or(x.eq), false), coalesce(bool_or(x.att), false), coalesce(bool_or(x.pose), false), coalesce(bool_or(x.tpg), false), coalesce(bool_or(x.first), false),
+         coalesce(bool_or(x.wp1), false), coalesce(bool_or(x.wp2), false), coalesce(bool_or(x.recheck), false)
+    into w.n, w.dirty, w.mv, w.ed, w.eq, w.att, w.pose, w.tpg, w.first, w.wp1, w.wp2, w.recheck
+    from (
+      select p.entity_id as eid, p.vis_dirty as dirty,
+             (p.trk_start is not null and p.trk_start <= p_cur
+              and (all_mv or p.last_move_tick >= p_cur - 2 or p.vis_wake >= p_cur or (p_cur - p.trk_start) % 60 = 0 or p_cur - p.trk_start - p.trk_sync >= 802)) as mv,
+             (p.sent_health is null or p.sent_eh is distinct from p.health or p.sent_using is distinct from (p.use_slot is not null) or p.sent_score is distinct from p.xp_score
+              or (vison and (p.sent_flags is distinct from mc.ed_flags(p.shift, p.sprinting, p.gamemode) or p.sent_pose is distinct from p.pose
+                             or p.sent_arm is distinct from p.main_hand or p.sent_skin is distinct from p.skin_parts))) as ed,
+             (p.equip_dirty or p.sent_held is distinct from p.held_slot) as eq,
+             (p.attr_gm is distinct from p.gamemode or p.attr_spr is distinct from p.sprinting or (p.attr_due is not null and p.attr_due <= p_cur)) as att,
+             (p.pose is distinct from (case when p.shift and not p.flying then 5 else 0 end)) as pose,
+             (p.tp_ground_tick is not null and p.tp_ground_tick <= p_cur) as tpg,
+             p.trk_first as first,
+             (p.last_move_tick = p_cur or p.wp_bx is distinct from floor(p.x)::int or p.wp_by is distinct from floor(p.y)::int or p.wp_bz is distinct from floor(p.z)::int
+              or p.wp_cx is distinct from p.chunk_x or p.wp_cz is distinct from p.chunk_z) as wp1,
+             (p.wp_state is distinct from ((case when p.pose <> 5 and not p.wp_hidden then 1 else 0 end) | (case when p.gamemode = 3 then 2 else 0 end))) as wp2,
+             (p.vis_recheck and exists (select 1 from mc.player m where m.last_move_tick = p_cur and m.conn_id is not null)) as recheck
+        from mc.player p where p.conn_id is not null) x;
+  select count(*)::int into w.nvt from mc.vtrk;
+  perform set_config('dbcraft.vis_work', w::text, true);
+  return w;
+end $$;
+
+-- the answer computed earlier in this tick (by mc.refresh_visibility), or a new one
+create or replace function mc.vis_work_now(p_cur bigint) returns mc.vis_work language plpgsql as $$
+declare w mc.vis_work; s text := current_setting('dbcraft.vis_work', true);
+begin
+  if s is not null and s <> '' then
+    w := s::mc.vis_work;
+    if w.cur = p_cur then return w; end if;
+  end if;
+  return mc.vis_find(p_cur);
+end $$;
 
 create or replace function mc.vis_step(p_cur bigint) returns void language plpgsql as $$
+declare w mc.vis_work;
 begin
   if not mc.vis_on() then return; end if;
-  perform mc.vis_init_rows(p_cur);
-  perform mc.vis_input(p_cur);                      -- network phase leftovers (shift key, swings, client information, abilities)
+  w := mc.vis_work_now(p_cur);
+  if w.n > coalesce(w.nvt, 0) then                  -- an online player without its tracker row (the unlogged table was emptied by a crash, a row inserted by a tool that bypassed the triggers)
+    perform mc.vis_init_missing(p_cur);
+    w := mc.vis_find(p_cur);
+  end if;
+  if mc.vis_input(p_cur) then w := mc.vis_find(p_cur); end if;      -- network phase leftovers (shift key, swings, client information, abilities); something changed: look again
   perform mc.vis_chat_spam(p_cur);                  -- chat and command rate limits (sql/910)
-  perform mc.survival_tracker(p_cur, null);         -- tracker pass: the dirty entity data of every player in one set_entity_data
-  perform mc.vis_move(p_cur);                       --   ... and the movement (sql/907)
-  perform mc.vis_first_tick(p_cur);                 -- a new entity's first tick: what became dirty while it was created
-  perform mc.vis_wp_pass(p_cur, 2);                 -- entity phase: the locator bar follows crouching, the game mode, a new player
-  perform mc.vis_entity_phase(p_cur);               --   ... pose, equipment, attributes, latency
-  perform mc.vis_head(p_cur);                       --   ... and the head rotation follows the yaw
+  if w.ed is not null then perform mc.survival_tracker(p_cur, w.ed); end if;      -- tracker pass: the dirty entity data of the players that have some, in one set_entity_data each
+  perform mc.vis_move(p_cur, w.mv);                 --   ... and the movement (sql/907)
+  if w.first then perform mc.vis_first_tick(p_cur); end if;      -- a new entity's first tick: what became dirty while it was created
+  if w.wp2 then perform mc.vis_wp_pass(p_cur, 2, w.n); end if;   -- entity phase: the locator bar follows crouching, the game mode, a new player
+  perform mc.vis_entity_phase(p_cur, w);            --   ... pose, equipment, attributes, latency
+end $$;
+
+-- a player row that went online without the triggers: the tracker starts for it now (a tracker row, and the sent_* state of what it has been told counts as the current one)
+create or replace function mc.vis_init_missing(p_cur bigint) returns void language plpgsql as $$
+begin
+  insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb, head_yaw)
+  select p.entity_id, p.x, p.y, p.z, mc.angle_byte(p.yaw), mc.angle_byte(p.pitch), mc.angle_byte(p.yaw), p.yaw
+    from mc.player p where p.conn_id is not null and p.entity_id is not null and not exists (select 1 from mc.vtrk v where v.entity_id = p.entity_id)
+  on conflict (entity_id) do nothing;
+  update mc.player p set trk_start = coalesce(p.trk_start, p_cur), vis_x = coalesce(p.vis_x, p.x), vis_z = coalesce(p.vis_z, p.z), vis_wake = p_cur + 8,
+         sent_equip = coalesce(p.sent_equip, mc.equip_now(p.uuid, p.held_slot)), sent_held = coalesce(p.sent_held, p.held_slot), equip_dirty = false,
+         attr_seen = case when p.attr_seen = 0 then mc.attr_std_seen() else p.attr_seen end, attr_gm = coalesce(p.attr_gm, p.gamemode), attr_spr = coalesce(p.attr_spr, p.sprinting),
+         trk_ground = coalesce(p.trk_ground, p.on_ground)
+   where p.conn_id is not null and p.trk_start is null;
 end $$;

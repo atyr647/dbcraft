@@ -75,7 +75,7 @@ begin
   -- dbcraft.vanilla-tracker (sql/907): the tracker sends what vanilla sends after a teleport -- the connection of the locator bar is remade and the next movement step is a
   -- full position sync (the jump is too big for a delta), the player is off the ground until the entity phase of the next tick -- so nothing is sent here
   if mc.vis_on() then
-    update mc.player set on_ground = false, tp_ground_tick = (select game_time from mc.game_state) + 1 where uuid = p_uuid;
+    update mc.player set on_ground = false, tp_ground_tick = (select game_time from mc.game_state) + 1, vis_wake = (select game_time from mc.game_state) + 6 where uuid = p_uuid;
     return;
   end if;
   -- Only a jump that vanilla's entity tracker sends as a TELEPORT (a delta that does not fit in a short, more than 8 blocks: the movement step's own test) is

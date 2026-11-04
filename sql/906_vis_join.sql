@@ -55,10 +55,13 @@ begin
   if not mc.vis_on() then return; end if;
   update mc.player p set
       shift = false, flying = (p.gamemode = 3), pose = 0, sent_flags = mc.ed_flags(false, false, p.gamemode), sent_pose = 0, sent_skin = p.skin_parts, sent_arm = p.main_hand,
-      trk_start = p_cur, trk_first = true, fresh_join = false, base_x = p.x, base_y = p.y, base_z = p.z, sent_yb = mc.angle_byte(p.yaw), sent_pb = mc.angle_byte(p.pitch), sent_hb = mc.angle_byte(p.yaw),
-      head_yaw = p.yaw, trk_sync = -2, trk_ground = true, vis_x = p.x, vis_z = p.z, tp_ground_tick = null,
+      trk_start = p_cur, trk_first = true, fresh_join = false, vis_wake = p_cur + 8,
+      trk_sync = -2, trk_ground = true, vis_x = p.x, vis_z = p.z, tp_ground_tick = null,
       attr_seen = mc.attr_std_seen(), attr_gm = p.gamemode, attr_spr = false, attr_due = null,
       attr_sent = (select jsonb_object_agg(a.id::text, a.entry) from mc.attr_now(p.uuid, p.held_slot, p.gamemode, false, mc.attr_std_seen()) a),
       sent_equip = mc.equip_now(p.uuid, p.held_slot), sent_held = p.held_slot, equip_dirty = false
    where p.uuid = p_uuid;
+  insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb, head_yaw)
+  select p.entity_id, p.x, p.y, p.z, mc.angle_byte(p.yaw), mc.angle_byte(p.pitch), mc.angle_byte(p.yaw), p.yaw from mc.player p where p.uuid = p_uuid and p.entity_id is not null
+  on conflict (entity_id) do update set base_x = excluded.base_x, base_y = excluded.base_y, base_z = excluded.base_z, sent_yb = excluded.sent_yb, sent_pb = excluded.sent_pb, sent_hb = excluded.sent_hb, head_yaw = excluded.head_yaw;
 end $$;

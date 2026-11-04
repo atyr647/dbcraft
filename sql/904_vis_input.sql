@@ -21,12 +21,16 @@ create or replace function mc.swing_of(p_uuid uuid, p_held int, out stype int, o
     from (select 1) o left join (select i.attack_animation::jsonb ->> 'type' as t, (i.attack_animation::jsonb ->> 'duration')::int as d
                                    from mc.inventory_slot s join ref.item_info i on i.item = s.item where s.player = p_uuid and s.slot = 36 + p_held) x on true $$;
 
-create or replace function mc.vis_input(p_cur bigint) returns void language plpgsql as $$
+drop function if exists mc.vis_input(bigint);
+-- returns true when it handled a packet (the caller then looks at who has work again)
+create or replace function mc.vis_input(p_cur bigint) returns boolean language plpgsql as $$
 declare i_in int := mc.sid('player_input'); i_pu int := mc.sid('punch'); i_ci int := mc.sid('client_information'); i_ab int := mc.sid('player_abilities');
         kinds int[]; sw_e int[]; sw_d bytea[];
 begin
+  -- net.process_fast says whether it queued a packet of these four kinds this tick ('0': none; the queue is not even looked at)
+  if current_setting('dbcraft.vis_in', true) = '0' then return false; end if;
   select coalesce(array_agg(distinct packet_id) filter (where packet_id in (i_in, i_pu, i_ci, i_ab)), '{}') into kinds from mc.play_in_work;
-  if cardinality(kinds) = 0 then return; end if;
+  if cardinality(kinds) = 0 then return false; end if;
 
   -- player_input: the shift key.  Set twice in one tick (down and up) the entity data is still dirty, so the flags are re-sent although the value is back where it was (sent_flags = -1 forces it).
   if i_in = any (kinds) then
@@ -81,4 +85,5 @@ begin
     if sw_e is not null then perform mc.send_players_and_viewers(sw_e, sw_d, false); end if;
     delete from mc.play_in_work where packet_id = i_pu;
   end if;
+  return true;
 end $$;

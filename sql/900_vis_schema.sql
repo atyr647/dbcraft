@@ -51,9 +51,7 @@ alter table mc.player
     add column if not exists attr_due   bigint,                             -- tick from which a changed attribute is sent (equipment changes show in attributes one tick later)
     -- the tracker (ServerEntity): a counter from the entity's creation, the exact position viewers were last told, the angles last sent, the head rotation
     add column if not exists trk_start  bigint,                             -- the tick the entity was created: tickCount = tick - trk_start; the movement body runs on even tickCounts (updateInterval 2)
-    add column if not exists base_x float8, add column if not exists base_y float8, add column if not exists base_z float8,     -- VecDeltaCodec.base: the exact position last sent
-    add column if not exists sent_yb smallint, add column if not exists sent_pb smallint, add column if not exists sent_hb smallint,   -- lastSentYRot / XRot / YHeadRot (Mth.packDegrees, 0-255)
-    add column if not exists head_yaw   real,                                -- yHeadRot: follows the yaw one tick later (the entity phase copies it)
+    -- (the exact position last sent, the angles last sent and the head rotation change every tick of a moving player: they live in the narrow table mc.vtrk below)
     add column if not exists trk_sync   int not null default -2,            -- the tickCount of the last full position sync / the creation: teleportDelay = (tickCount - trk_sync) / 2 (a sync is forced after 400)
     add column if not exists trk_ground boolean,                            -- wasOnGround
     -- the entity was just created (a join, a respawn): the first tracker pass has not run, and (fresh_join) a player who has never played here has no attribute instances yet
@@ -62,8 +60,26 @@ alter table mc.player
     -- who is re-checked against whom
     add column if not exists vis_recheck boolean not null default false,    -- something that decides who may see this player changed (game mode): its pairs are re-evaluated when it or a viewer sends a movement packet (ChunkMap.move)
     add column if not exists tp_ground_tick bigint,                         -- the tick of the entity phase that puts a player moved by the server back on the ground
+    add column if not exists vis_wake bigint,                               -- the tracker looks at this player on every tick up to this one whether it moved or not (a teleport, a game mode change, a join: things that change what a body is)
     add column if not exists last_move_tick bigint,                         -- the tick of the last movement packet (any of the four kinds)
     add column if not exists swing_tick bigint;                             -- the tick of the last arm swing that was broadcast (LivingEntity.swing ignores a second one in the first half of the animation)
+
+-- The hot state of the entity tracker (ServerEntity): what a player's viewers were last told about its position and angles.  It changes on every movement body of a moving player, so it
+-- is NOT in the wide mc.player row (a wide row is rewritten whole by every UPDATE).  UNLOGGED, fillfactor 50 and no indexed column ever changes: the updates are HOT, in place.
+-- One row per online player, made by the join trigger below, removed when the player leaves.
+create unlogged table if not exists mc.vtrk (
+    entity_id int primary key,
+    base_x float8, base_y float8, base_z float8,                  -- VecDeltaCodec.base: the exact position last sent
+    sent_yb smallint, sent_pb smallint, sent_hb smallint,         -- lastSentYRot / XRot / YHeadRot (Mth.packDegrees, 0-255)
+    head_yaw real                                                 -- yHeadRot: follows the yaw one tick later
+) with (fillfactor = 50);
+
+-- the answer of mc.vis_find (sql/905): who has work this tick.  One scan of the online players computes it; the steps of the tick use it instead of scanning again.
+do $$ begin
+    if not exists (select 1 from pg_type where typname = 'vis_work' and typnamespace = 'mc'::regnamespace) then
+        create type mc.vis_work as (cur bigint, n int, nvt int, dirty int[], mv int[], ed int[], eq boolean, att boolean, pose boolean, tpg boolean, first boolean, wp1 boolean, wp2 boolean, recheck boolean);
+    end if;
+end $$;
 
 -- the flags byte of entity data index 0 and the pose, as functions of a row (inlinable)
 create or replace function mc.ed_flags(p_shift boolean, p_sprint boolean, p_gamemode smallint) returns int language sql immutable parallel safe as $$
@@ -71,19 +87,37 @@ create or replace function mc.ed_flags(p_shift boolean, p_sprint boolean, p_game
 
 -- A joining session: what the join burst / the pairing carries counts as sent; the row's tracker state starts clean.  (sql/830's trigger does the same for health etc.)
 create or replace function mc.vis_on_join() returns trigger language plpgsql as $$
+declare gt bigint := (select game_time from mc.game_state);
 begin
   new.shift := false; new.flying := new.gamemode = 3; new.pose := 0;
   new.sent_flags := mc.ed_flags(false, false, new.gamemode); new.sent_pose := 0; new.sent_skin := new.skin_parts; new.sent_arm := new.main_hand; new.sent_hat := (new.skin_parts & 64) <> 0;
   new.sent_equip := null; new.sent_held := null; new.equip_dirty := true; new.attr_sent := null; new.attr_due := null; new.attr_gm := new.gamemode; new.attr_spr := false; new.vis_recheck := false; new.last_move_tick := null; new.swing_tick := null; new.trk_first := true; new.fresh_join := false;
-  new.trk_start := (select game_time from mc.game_state) + 1; new.base_x := new.x; new.base_y := new.y; new.base_z := new.z;
+  new.trk_start := gt + 1; new.vis_wake := gt + 8;
   new.wp_state := null; new.wp_bx := floor(new.x)::int; new.wp_by := floor(new.y)::int; new.wp_bz := floor(new.z)::int; new.wp_cx := new.chunk_x; new.wp_cz := new.chunk_z;       -- (sql/908: the locator bar)
   new.vis_x := new.x; new.vis_z := new.z;
-  new.sent_yb := mc.angle_byte(new.yaw); new.sent_pb := mc.angle_byte(new.pitch); new.sent_hb := mc.angle_byte(new.yaw); new.head_yaw := new.yaw; new.trk_sync := -2; new.trk_ground := new.on_ground;
+  new.trk_sync := -2; new.trk_ground := new.on_ground;
   new.view_distance_req := null; new.sim_distance_req := null;
+  if new.entity_id is not null then
+    insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb, head_yaw)
+    values (new.entity_id, new.x, new.y, new.z, mc.angle_byte(new.yaw), mc.angle_byte(new.pitch), mc.angle_byte(new.yaw), new.yaw)
+    on conflict (entity_id) do update set base_x = excluded.base_x, base_y = excluded.base_y, base_z = excluded.base_z, sent_yb = excluded.sent_yb, sent_pb = excluded.sent_pb, sent_hb = excluded.sent_hb, head_yaw = excluded.head_yaw;
+  end if;
   return new;
 end $$;
 drop trigger if exists vis_on_join on mc.player;
 create trigger vis_on_join before update on mc.player for each row when (old.conn_id is null and new.conn_id is not null) execute function mc.vis_on_join();
+drop trigger if exists vis_on_insert on mc.player;
+create trigger vis_on_insert before insert on mc.player for each row when (new.conn_id is not null) execute function mc.vis_on_join();      -- a row made online (a tool, a test)
+
+create or replace function mc.vis_on_leave() returns trigger language plpgsql as $$
+begin
+  delete from mc.vtrk where entity_id = old.entity_id;
+  return null;
+end $$;
+drop trigger if exists vis_on_leave on mc.player;
+create trigger vis_on_leave after update on mc.player for each row when (old.conn_id is not null and new.conn_id is null and old.entity_id is not null) execute function mc.vis_on_leave();
+drop trigger if exists vis_on_delete on mc.player;
+create trigger vis_on_delete after delete on mc.player for each row when (old.conn_id is not null and old.entity_id is not null) execute function mc.vis_on_leave();
 
 -- an inventory change that other players can see (armor 5-8, hotbar 36-44, off hand 45) marks its owner for the equipment comparison
 create or replace function mc.vis_equip_touch() returns trigger language plpgsql as $$
@@ -105,6 +139,7 @@ begin return coalesce((select value::boolean from mc.server_property where key =
 create or replace function mc.vis_gamemode_changed() returns trigger language plpgsql as $$
 begin
   new.vis_recheck := true;
+  new.vis_wake := (select game_time from mc.game_state) + 8;
   new.flying := case new.gamemode when 3 then true when 0 then false when 2 then false else new.flying end;     -- Player.setGameMode / onUpdateAbilities: spectators fly, survival and adventure players do not
   return new;
 end $$;

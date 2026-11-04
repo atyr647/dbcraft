@@ -291,7 +291,7 @@ begin
       raise notice 'mc.container_step: packet % from connection ignored: %', r.packet_id, sqlerrm;
     end;
   end loop;
-  delete from mc.play_in_work where packet_id in (i_click, i_close, i_input);
+  delete from mc.play_in_work where packet_id in (i_click, i_close) or (packet_id = i_input and not mc.vis_on());       -- (with the vanilla tracker, sql/904 reads the shift key from the same packets and removes them)
   -- menus whose block is gone or whose player walked away close (ServerPlayer.tick: containerMenu.stillValid)
   for msr in select * from mc.menu_state where open loop
     select * into pl from mc.player where uuid = msr.player;

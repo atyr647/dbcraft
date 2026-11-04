@@ -21,34 +21,36 @@ create or replace function mc.pkt_position_sync(p_eid int, p_x float8, p_y float
                                                                      else '\x00'::bytea || proto.f64(p_x) || proto.f64(p_y) || proto.f64(p_z) end)
                                       || proto.f32(p_yaw) || proto.f32(p_pitch) || proto.bool(p_ground)) $$;
 
-create or replace function mc.vis_move(p_cur bigint) returns void language plpgsql as $$
-declare i_pos int := mc.pid('move_entity_pos'); i_pr int := mc.pid('move_entity_pos_rot'); i_rot int := mc.pid('move_entity_rot'); i_head int := mc.pid('rotate_head');
-        e int[]; d bytea[];
+-- The movement step for the players in p_ids (mc.vis_find, sql/905: moved within the last two ticks, woken by an event, or due for the 60-tick refresh / the 400-run sync).  The step
+-- itself runs only on the even ticks of a player's age; on the others the row only gets its head rotation.  The tracker's state is the narrow mc.vtrk (HOT updates, one statement
+-- per tick); mc.player is written only when a position sync changes the ground flag / the sync counter.  The head follows the yaw one tick later: this tick's body uses the head
+-- the row had at the end of the last tick, then the row takes the yaw.
+drop function if exists mc.vis_move(bigint);
+drop function if exists mc.vis_head(bigint);
+create or replace function mc.vis_move(p_cur bigint, p_ids int[]) returns void language plpgsql as $$
+declare e int[]; d bytea[];
 begin
+  if p_ids is null then return; end if;
   with tr as materialized (
-    select p.entity_id as eid, p.x, p.y, p.z, p.yaw, p.pitch, p_cur - p.trk_start as tc, p.base_x, p.base_y, p.base_z, p.sent_yb, p.sent_pb, p.sent_hb, p.trk_sync, p.trk_ground,
+    select p.entity_id as eid, p.x, p.y, p.z, p.yaw, p.pitch, p_cur - p.trk_start as tc, v.base_x, v.base_y, v.base_z, v.sent_yb, v.sent_pb, v.sent_hb, v.head_yaw as hy, p.trk_sync, p.trk_ground,
+           ((p_cur - p.trk_start) % 2 = 0) as even,
            case when coalesce((p.wp_state & 2) = 2, false) then false                                           -- a spectator is never on the ground (Player.tick, so from the entity phase of the tick it became one)
                 when p.fresh_join and p_cur - p.trk_start < 1 then false else p.on_ground end as og,        -- a first-time player is not on the ground yet when it is created
-           mc.angle_byte(p.yaw) as yb, mc.angle_byte(p.pitch) as pb, mc.angle_byte(p.head_yaw) as hb
-      from mc.player p where p.conn_id is not null and p.trk_start is not null and p_cur >= p.trk_start and (p_cur - p.trk_start) % 2 = 0
-       -- only a player something can happen to: the cheap tests of the conditions below (a position or an angle byte that differs from what was sent, the 60-tick refresh, a ground flag that
-       -- differs, a spectator, a first-time player, the 400-body sync); everybody else produces nothing and is not updated, so an idle crowd costs one comparison per player
-       and ((p_cur - p.trk_start) % 60 = 0 or p.base_x is null or p.sent_yb is null or p.sent_pb is null or p.sent_hb is null
-            or (p.x - p.base_x) ^ 2 + (p.y - p.base_y) ^ 2 + (p.z - p.base_z) ^ 2 >= 7.62939453125E-6
-            or mc.angle_byte(p.yaw) <> p.sent_yb or mc.angle_byte(p.pitch) <> p.sent_pb or mc.angle_byte(p.head_yaw) <> p.sent_hb
-            or p.trk_ground is distinct from p.on_ground or coalesce((p.wp_state & 2) = 2, false) or p.fresh_join or (p_cur - p.trk_start - p.trk_sync) / 2 > 400)),
+           mc.angle_byte(p.yaw) as yb, mc.angle_byte(p.pitch) as pb, mc.angle_byte(v.head_yaw) as hb
+      from mc.player p join mc.vtrk v on v.entity_id = p.entity_id
+     where p.entity_id = any (p_ids) and p.conn_id is not null and p.trk_start is not null and p_cur >= p.trk_start),
   a as materialized (
-    select tr.*, ((x - base_x) ^ 2 + (y - base_y) ^ 2 + (z - base_z) ^ 2 >= 7.62939453125E-6) as pos_changed, (yb <> sent_yb or pb <> sent_pb) as rot_changed,
-           mc.quant(x) - mc.quant(base_x) as dx, mc.quant(y) - mc.quant(base_y) as dy, mc.quant(z) - mc.quant(base_z) as dz, (tc - trk_sync) / 2 as tp1, trk_ground is distinct from og as gdiff
+    select tr.*, (even and (x - base_x) ^ 2 + (y - base_y) ^ 2 + (z - base_z) ^ 2 >= 7.62939453125E-6) as pos_changed, (even and (yb <> sent_yb or pb <> sent_pb)) as rot_changed,
+           mc.quant(x) - mc.quant(base_x) as dx, mc.quant(y) - mc.quant(base_y) as dy, mc.quant(z) - mc.quant(base_z) as dz, (tc - trk_sync) / 2 as tp1, (even and trk_ground is distinct from og) as gdiff
       from tr),
   b as materialized (
-    select a.*, (gdiff or tp1 > 400) as sync1, (pos_changed or tc % 60 = 0) as forced,
+    select a.*, (gdiff or (even and tp1 > 400)) as sync1, (pos_changed or (even and tc % 60 = 0)) as forced,
            (dx not between -32768 and 32767 or dy not between -32768 and 32767 or dz not between -32768 and 32767) as too_big
       from a),
   c as materialized (
     select b.*, case when sync1 then 1 when forced and too_big then 1 when forced then case when rot_changed then 3 else 2 end when rot_changed then 4 else 0 end as kind from b),
   pk as materialized (
-    select c.eid, c.kind, c.sync1, c.og, c.yb, c.pb, c.hb, c.x, c.y, c.z, c.yaw, c.pitch, c.tc, c.sent_hb,
+    select c.eid, c.kind, c.sync1, c.og, c.yb, c.pb, c.hb, c.x, c.y, c.z, c.yaw, c.pitch, c.tc, c.even, c.hy, c.sent_hb,
            case c.kind
              when 1 then mc.pkt_position_sync(c.eid, c.x, c.y, c.z, c.tc >= 2, 2, c.yaw, c.pitch, c.og)
              when 2 then mc.cb('move_entity_pos', proto.varint(c.eid) || proto.varint((case when c.og then 1 else 0 end) | (case when c.tc >= 2 then 2 else 0 end))
@@ -58,20 +60,17 @@ begin
                                 || proto.i8(c.yb) || proto.i8(c.pb))
              when 4 then mc.cb('move_entity_rot', proto.varint(c.eid) || proto.bool(c.og) || proto.i8(c.yb) || proto.i8(c.pb))
              else '\x'::bytea end
-           || case when c.hb <> c.sent_hb then mc.cb('rotate_head', proto.varint(c.eid) || proto.i8(c.hb)) else '\x'::bytea end as data
+           || case when c.even and c.hb <> c.sent_hb then mc.cb('rotate_head', proto.varint(c.eid) || proto.i8(c.hb)) else '\x'::bytea end as data
       from c),
   u as (
-    update mc.player p set
-        trk_sync = case when pk.sync1 then pk.tc else p.trk_sync end, trk_ground = case when pk.sync1 then pk.og else p.trk_ground end,
-        base_x = case when pk.kind in (1, 2, 3) then pk.x else p.base_x end, base_y = case when pk.kind in (1, 2, 3) then pk.y else p.base_y end, base_z = case when pk.kind in (1, 2, 3) then pk.z else p.base_z end,
-        sent_qx = case when pk.kind in (1, 2, 3) then mc.quant(pk.x) else p.sent_qx end, sent_qy = case when pk.kind in (1, 2, 3) then mc.quant(pk.y) else p.sent_qy end,
-        sent_qz = case when pk.kind in (1, 2, 3) then mc.quant(pk.z) else p.sent_qz end,
-        sent_yb = case when pk.kind in (1, 3, 4) then pk.yb else p.sent_yb end, sent_pb = case when pk.kind in (1, 3, 4) then pk.pb else p.sent_pb end,
-        sent_yaw = case when pk.kind in (1, 3, 4) then pk.yaw else p.sent_yaw end, sent_pitch = case when pk.kind in (1, 3, 4) then pk.pitch else p.sent_pitch end,
-        sent_hb = pk.hb, last_sent_tick = case when pk.kind <> 0 then p_cur else p.last_sent_tick end
-      from pk where p.entity_id = pk.eid
-       and (pk.sync1 or pk.kind <> 0 or pk.hb <> p.sent_hb)
-    returning 1)
+    update mc.vtrk v set
+        base_x = case when pk.kind in (1, 2, 3) then pk.x else v.base_x end, base_y = case when pk.kind in (1, 2, 3) then pk.y else v.base_y end, base_z = case when pk.kind in (1, 2, 3) then pk.z else v.base_z end,
+        sent_yb = case when pk.kind in (1, 3, 4) then pk.yb else v.sent_yb end, sent_pb = case when pk.kind in (1, 3, 4) then pk.pb else v.sent_pb end,
+        sent_hb = case when pk.even then pk.hb else v.sent_hb end, head_yaw = pk.yaw
+      from pk where v.entity_id = pk.eid and (pk.kind <> 0 or (pk.even and pk.hb <> v.sent_hb) or v.head_yaw is distinct from pk.yaw)
+    returning 1),
+  sy as (
+    update mc.player p set trk_sync = pk.tc, trk_ground = pk.og from pk where p.entity_id = pk.eid and pk.sync1 returning 1)
   select array_agg(pk.eid order by pk.eid) filter (where octet_length(pk.data) > 0), array_agg(pk.data order by pk.eid) filter (where octet_length(pk.data) > 0) into e, d from pk;
   if e is not null then
     insert into mc.play_out (conn_id, data)
@@ -80,10 +79,6 @@ begin
      group by v.viewer_conn;
   end if;
 end $$;
-
--- ServerPlayer's head follows the yaw one tick later: the entity phase copies it
-create or replace function mc.vis_head(p_cur bigint) returns void language sql as $$
-  update mc.player set head_yaw = yaw where conn_id is not null and head_yaw is distinct from yaw $$;
 
 -- The first tracker pass of a new entity (a join, a respawn): besides the pairing bundle the viewers get what became dirty while the entity was created -- its health (and
 -- the skin layers, main arm and score when they are not the defaults) as a second set_entity_data, and for a returning player its attributes (all of them are dirty after a load).

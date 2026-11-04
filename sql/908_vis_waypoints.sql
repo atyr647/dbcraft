@@ -48,10 +48,11 @@ create or replace function mc.wp_state_now(p mc.player) returns int language sql
   select (case when p.pose <> 5 and not p.wp_hidden then 1 else 0 end) | (case when p.gamemode = 3 then 2 else 0 end) $$;
 
 -- one pass over all pairs.  p_phase 1: movement (positions as applied this tick, the transmit state as of the last entity phase); p_phase 2: the entity phase (the state now, remembered).
-create or replace function mc.vis_wp_pass(p_cur bigint, p_phase int) returns void language plpgsql as $$
+drop function if exists mc.vis_wp_pass(bigint, int);
+create or replace function mc.vis_wp_pass(p_cur bigint, p_phase int, p_n int default null) returns void language plpgsql as $$
 declare enabled boolean := mc.rule_bool('locator_bar', true); n int; cap int := coalesce(mc.prop_int('dbcraft.locator-bar-max-players'), 120);
 begin
-  select count(*) into n from mc.player where conn_id is not null;
+  n := coalesce(p_n, (select count(*)::int from mc.player where conn_id is not null));
   if n > cap then enabled := false; end if;
   if not enabled and not exists (select 1 from mc.wp) then return; end if;       -- off and nothing connected: nothing to do, not even the bookkeeping (the first pass after it comes back remakes what it needs)
   with pl as materialized (

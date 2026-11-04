@@ -25,12 +25,20 @@ create or replace function mc.conn_view_r(p_conn int, p_default int) returns int
 -- the pairs of every player that has to be re-evaluated (vis_dirty), with the exact rule; adds and removes what changed
 create or replace function mc.refresh_visibility_vis() returns table(added int, removed int) language plpgsql as $$
 declare srv int := least(mc.prop_int('view-distance'), 32); trk float8 := ((coalesce(mc.prop_int('entity-broadcast-range-percentage'), 100) * 512) / 100)::float8;
-        d int[]; wv int[]; wt int[]; wc int[]; av int[]; at_ int[]; ac int[];
+        d int[]; wv int[]; wt int[]; wc int[]; av int[]; at_ int[]; ac int[]; wk mc.vis_work; gt bigint := (select game_time from mc.game_state); wp_on boolean;
 begin
   added := 0; removed := 0;
-  perform mc.vis_wp_pass((select game_time from mc.game_state), 1);       -- the locator bar's updates for this tick's movement and teleports go out first (vanilla sends them when the movement packet is handled; the tracker's pairing comes after)
-  perform mc.vis_recheck_mark();
-  select coalesce(array_agg(entity_id), '{}') into d from mc.player where vis_dirty and conn_id is not null;
+  wk := mc.vis_find(gt);                                                    -- one scan of the online players for the whole tick (sql/905)
+  -- the locator bar's updates for this tick's movement and teleports go out first (vanilla sends them when the movement packet is handled; the tracker's pairing comes after).
+  -- A pass is needed when somebody moved or its block changed, or when the bar has to be switched on or off (its connections exist or not).
+  wp_on := wk.n > 1 and mc.rule_bool('locator_bar', true) and wk.n <= coalesce(mc.prop_int('dbcraft.locator-bar-max-players'), 120);
+  if wk.wp1 or wp_on is distinct from exists (select 1 from mc.wp) then perform mc.vis_wp_pass(gt, 1, wk.n); end if;
+  if wk.recheck then
+    perform mc.vis_recheck_mark();
+    select coalesce(array_agg(entity_id), '{}') into d from mc.player where vis_dirty and conn_id is not null;
+  else
+    d := coalesce(wk.dirty, '{}');
+  end if;
   if cardinality(d) > 0 then
     with pc as materialized (
       select p.entity_id as eid, p.conn_id as conn, p.x, p.z, p.chunk_x as cx, p.chunk_z as cz, (p.gamemode = 3) as spec,
@@ -74,7 +82,9 @@ begin
       returning 1)
     select (select count(*) from del) into removed;
   end if;
-  update mc.player p set vis_dirty = false, vis_ocx = null, vis_ocz = null, vis_x = x, vis_z = z
-   where vis_dirty and not (p.tp_ground_tick is not null and exists (select 1 from net.conn c where c.conn_id = p.conn_id and (c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z)));      -- (a stale viewer is looked at again next tick)
+  if cardinality(d) > 0 then
+    update mc.player p set vis_dirty = false, vis_ocx = null, vis_ocz = null, vis_x = x, vis_z = z
+     where vis_dirty and not (p.tp_ground_tick is not null and exists (select 1 from net.conn c where c.conn_id = p.conn_id and (c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z)));      -- (a stale viewer is looked at again next tick)
+  end if;
   return next;
 end $$;

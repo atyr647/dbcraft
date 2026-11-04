@@ -72,7 +72,7 @@ update mc.server_property set value = '3' where key in ('view-distance', 'simula
 insert into mc.player (uuid, name, gamemode, x, y, z, yaw, chunk_x, chunk_z, conn_id, entity_id, vis_dirty)
 values ('00000000-0000-0000-0000-0000000000a1', 'Aa', 0, 0.5, -60, 0.5, 0, 0, 0, 101, 1, true), ('00000000-0000-0000-0000-0000000000b2', 'Bb', 0, 4.5, -60, 0.5, 0, 0, 0, 102, 2, true);
 update mc.player set sent_health = health, sent_food = food, sent_sat_zero = false, sent_eh = health, sent_xp_total = 0, sent_score = 0, sent_using = false, join_tick = 0,
-       sent_flags = 0, sent_pose = 0, sent_skin = 0, sent_arm = 1, attr_seen = mc.attr_std_seen(), trk_start = (select game_time from mc.game_state), base_x = x, base_y = y, base_z = z, sent_yb = 0, sent_pb = 0, sent_hb = 0, head_yaw = 0,
+       sent_flags = 0, sent_pose = 0, sent_skin = 0, sent_arm = 1, attr_seen = mc.attr_std_seen(), trk_start = (select game_time from mc.game_state), vis_wake = null,
        trk_ground = true, trk_sync = -2, wp_state = 1, wp_bx = floor(x), wp_by = -60, wp_bz = 0, wp_cx = 0, wp_cz = 0, vis_x = x, vis_z = z, equip_dirty = false, attr_gm = 0, attr_spr = false,
        sent_equip = array['', '', '', '', '', ''], sent_held = 0, view_distance_req = 3, trk_first = false
  where conn_id in (101, 102);
@@ -176,12 +176,13 @@ select t.tick(); select t.reset();
 update mc.player set held_slot = 0 where uuid = '00000000-0000-0000-0000-0000000000b2';
 select t.tick(); select t.reset();
 -- the body of the movement part runs on every second tick of the player's age (tick - trk_start); a walker moving 0.4316 blocks per two ticks sends one stepped packet
-update mc.player set trk_start = (select game_time from mc.game_state) - 10, base_x = x, base_y = y, base_z = z, trk_sync = -2 + 0 where conn_id in (101, 102);       -- both ages are even: bodies on every second tick from now on
+update mc.player set trk_start = (select game_time from mc.game_state) - 10, trk_sync = -2 + 0 where conn_id in (101, 102);
+update mc.vtrk v set base_x = p.x, base_y = p.y, base_z = p.z from mc.player p where p.entity_id = v.entity_id;       -- both ages are even: bodies on every second tick from now on
 select t.reset();
-update mc.player set x = x + 0.2158 where conn_id = 102;                      -- tick of age 10 + 1: no body
+update mc.player set x = x + 0.2158, last_move_tick = (select game_time from mc.game_state) + 1 where conn_id = 102;                      -- tick of age 10 + 1: no body
 select t.tick();
 select t.eq('a tick that is not a movement-body tick sends no move packet', t.names(t.out(101)), '{}'::text[]);
-update mc.player set x = x + 0.2158 where conn_id = 102;
+update mc.player set x = x + 0.2158, last_move_tick = (select game_time from mc.game_state) + 1 where conn_id = 102;
 select t.tick();
 select t.eq('the body tick sends move_entity_pos with ticks = 2 and the delta (recorded 02 03 02 06e8 0000 0000)', t.body(t.out(101), 1), '\x02030206e800000000'::bytea);
 select t.reset();
@@ -194,18 +195,19 @@ select t.tick(); select t.tick();
 select t.eq('tickCount % 60 = 0: a zero move is sent (recorded 02 03 02 00 00 00 00 00 00)', t.body(t.out(101), 1), '\x020302000000000000'::bytea);
 -- off the ground: a full position sync
 select t.reset();
-update mc.player set on_ground = false where conn_id = 102;
+update mc.player set on_ground = false, last_move_tick = (select game_time from mc.game_state) + 1 where conn_id = 102;
 select t.tick(); select t.tick();
 select t.eq('the on-ground flag changed: entity_position_sync (stepped, 1 step of 2 ticks), not a move', t.names(t.out(101)), array['entity_position_sync']);
 select t.eq('   ends with yaw 0, pitch 0, on ground 0', substring(t.body(t.out(101), 1) from length(t.body(t.out(101), 1)) - 8), '\x0000000000000000'::bytea || '\x00'::bytea);
 -- a jump of more than 8 blocks
 select t.reset();
-update mc.player set on_ground = true where conn_id = 102; select t.tick(); select t.tick(); select t.reset();
-update mc.player set x = x + 9 where conn_id = 102;
+update mc.player set on_ground = true, last_move_tick = (select game_time from mc.game_state) + 1 where conn_id = 102; select t.tick(); select t.tick(); select t.reset();
+update mc.player set x = x + 9, last_move_tick = (select game_time from mc.game_state) + 1 where conn_id = 102;
 select t.tick(); select t.tick();
 select t.eq('a delta that does not fit in a short (9 blocks): a position sync, not a move', t.names(t.out(101)), array['entity_position_sync']);
 select t.reset();
-update mc.player set yaw = 90, head_yaw = 0 where conn_id = 102;
+update mc.player set yaw = 90, last_move_tick = (select game_time from mc.game_state) + 1 where conn_id = 102;
+update mc.vtrk set head_yaw = 0 where entity_id = 2;
 select t.tick(); select t.tick();
 select t.eq('only the rotation changed: move_entity_rot (on ground, yaw byte 0x40, pitch 0), then the head', t.names(t.out(101)), array['move_entity_rot', 'rotate_head']);
 select t.eq('   move_entity_rot body', t.body(t.out(101), 1), '\x02014000'::bytea);
@@ -310,6 +312,78 @@ select t.eq('   its own entity data: health only (recorded 02 09 03 41a00000 ff)
 update mc.player set fresh_join = false where conn_id = 102;
 select t.eq('a player with all skin layers and the left hand: the entity data of the burst says so (recorded 09 03 .. 0f 2a 00 10 00 7f)',
             (select substring(body from 2) from (select ('x' || '') as dummy) q, lateral (select proto.varint(2) || mc.ed_entries(0, 0, 0, 20, 0, 127, 0, 8 | 16 | 32) as body) b), '\x090341a000000f2a0010007fff'::bytea);
+
+------------------------------------------------------------------------------------------------ 11. the work finder loses nothing
+-- mc.vis_find (sql/905) decides which players the movement step looks at.  The same random 90-tick script (moves, turns, jumps, teleports, a crouching player, a game mode change, a 60-tick
+-- refresh, a join) is run twice from the same state: once as it is, once with every player looked at every tick (dbcraft.vis_scan_all).  The bytes every connection receives must be the same.
+create or replace function t.finder_run(p_all boolean) returns text language plpgsql as $$
+declare i int; k int; gt bigint; digest text := ''; r record; n int;
+begin
+  perform set_config('session_replication_role', 'replica', false);
+  delete from mc.player; delete from mc.vtrk; delete from mc.visible; delete from mc.wp; delete from net.conn where conn_id between 201 and 206;
+  insert into mc.player select * from t.snap_player;
+  insert into mc.vtrk select * from t.snap_vtrk;
+  insert into mc.visible select * from t.snap_visible;
+  update mc.game_state set game_time = (select game_time from t.snap_game);
+  perform set_config('session_replication_role', 'origin', false);
+  perform set_config('dbcraft.vis_scan_all', case when p_all then 'on' else 'off' end, false);
+  perform t.reset();
+  perform setseed(0.4242);
+  for i in 1 .. 90 loop
+    gt := (select game_time from mc.game_state) + 1;
+    for k in 1 .. 5 loop
+      n := floor(random() * 100);
+      if n < 40 then
+        update mc.player set x = x + (random() - 0.5) * 0.9, z = z + (random() - 0.5) * 0.9, last_move_tick = gt where conn_id = 200 + k;
+      elsif n < 55 then
+        update mc.player set yaw = (yaw + 7 + random() * 40)::real, last_move_tick = gt where conn_id = 200 + k;
+      elsif n < 60 then
+        update mc.player set on_ground = not on_ground, last_move_tick = gt where conn_id = 200 + k;
+      elsif n < 62 then
+        update mc.player set x = x + 12, chunk_x = floor((x + 12) / 16)::int, vis_dirty = true where conn_id = 200 + k;
+        perform mc.sync_entity_position((select uuid from mc.player where conn_id = 200 + k));
+      elsif n < 65 then
+        update mc.player set shift = not shift where conn_id = 200 + k;
+      end if;
+    end loop;
+    if i = 40 then update mc.player set gamemode = 3 where conn_id = 203; end if;
+    if i = 70 then update mc.player set gamemode = 0 where conn_id = 203; end if;
+    perform t.tick();
+    for r in select conn_id, md5(string_agg(data, '\x'::bytea order by seq)) as h from mc.play_out group by conn_id order by conn_id loop
+      digest := digest || i || ':' || r.conn_id || '=' || r.h || ';';
+    end loop;
+    perform t.reset();
+  end loop;
+  digest := digest || (select string_agg(entity_id || ':' || base_x || ',' || base_z || ',' || sent_yb || ',' || sent_hb || ',' || head_yaw, ';' order by entity_id) from mc.vtrk);
+  return md5(digest);
+end $$;
+
+select t.reset();
+set session_replication_role = replica;
+delete from mc.player; delete from mc.vtrk; delete from mc.visible; delete from mc.wp; delete from net.conn where conn_id between 201 and 206;
+set session_replication_role = origin;
+insert into mc.player (uuid, name, gamemode, x, y, z, yaw, chunk_x, chunk_z, conn_id, entity_id, vis_dirty)
+select ('00000000-0000-0000-0000-0000000000' || lpad(to_hex(10 + k), 2, '0'))::uuid, 'F' || k, 0, 2.5 * k, -60, 0.5 + k, 0, 0, 0, 200 + k, 20 + k, true from generate_series(1, 5) k;
+insert into net.conn (conn_id, state, compression) select 200 + k, 'play', -1 from generate_series(1, 5) k on conflict (conn_id) do update set state = 'play';
+update mc.player p set sent_health = health, sent_food = food, sent_sat_zero = false, sent_eh = health, sent_xp_total = 0, sent_score = 0, sent_using = false, join_tick = 0,
+       sent_flags = 0, sent_pose = 0, sent_skin = 0, sent_arm = 1, attr_seen = mc.attr_std_seen(), trk_start = (select game_time from mc.game_state) - 3 - (conn_id % 2), vis_wake = null, trk_first = false,
+       trk_ground = true, trk_sync = -2, wp_state = 1, vis_x = x, vis_z = z, equip_dirty = false, attr_gm = 0, attr_spr = false, view_distance_req = 3,
+       sent_equip = array['', '', '', '', '', ''], sent_held = 0, wp_bx = floor(x)::int, wp_by = -60, wp_bz = floor(z)::int, wp_cx = 0, wp_cz = 0
+ where conn_id between 201 and 205;
+update mc.player p set attr_sent = (select jsonb_object_agg(a.id::text, a.entry) from mc.attr_now(p.uuid, 0, 0, false, mc.attr_std_seen()) a) where conn_id between 201 and 205;
+select mc.refresh_visibility();
+select t.reset();
+create table t.snap_player as select * from mc.player;
+create table t.snap_vtrk as select * from mc.vtrk;
+create table t.snap_visible as select * from mc.visible;
+create table t.snap_game as select game_time from mc.game_state;
+select t.eq('the five players see each other', (select count(*) from mc.visible), 20::bigint);
+create table t.fa as select t.finder_run(false) as h;
+create table t.fb as select t.finder_run(true) as h;
+select t.eq('90 ticks of random movement: the finder and a look at everybody send the same bytes and leave the same tracker state', (select h from t.fa), (select h from t.fb));
+select t.is_true('...and the run was not empty (a digest of more than the empty script)', (select h <> md5('') from t.fa));
+reset session_replication_role;
+set dbcraft.vis_scan_all = 'off';
 
 select 'mc.vis_*: all checks passed' as result;
 \else
