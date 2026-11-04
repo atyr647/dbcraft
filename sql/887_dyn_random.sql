@@ -167,7 +167,7 @@ declare
     dcx int[]; dcz int[]; acx int[]; asy int[]; acz int[]; acnt int[];
     hcx int[]; hsy int[]; hcz int[]; hidx int[]; hsid int[];
     kinds int[]; xs int[]; ys int[]; zs int[]; aux int[]; hs int[];
-    wtot bigint; ew float8; lim int; h int; l float8; pr float8; i int;
+    wtot bigint; ew float8; lim int; h int; l float8; pr float8; i int; tb numeric; t0 timestamptz;
 begin
     if speed <= 0 or p_cur % iv <> 0 then return; end if;                               -- every iv-th tick, with iv ticks' worth of draws
     if not exists (select 1 from mc.player where conn_id is not null) then return; end if;
@@ -184,7 +184,14 @@ begin
     if exists (select 1 from mc.dyn_rt_dirty) then
         select array_agg(q.cx), array_agg(q.cz) into dcx, dcz from (select d.cx, d.cz from mc.dyn_rt_dirty d where d.dimension = dim order by d.seq desc limit budget) q;
         if dcx is not null then
-            for i in 1 .. cardinality(dcx) loop perform mc.dyn_rt_build(dim, dcx[i], dcz[i]); end loop;
+            -- docs/PERF-STORM.md: a build is 16 ms; after the first one the rest of the budget is only used while the tick is inside dbcraft.tick-budget-ms (a tick that already carries a login
+            -- stops after one; the others stay queued for the next run, 4 ticks later).  No budget recorded (tests, the batched tick) or the setting off: every queued chunk, as before.
+            tb := coalesce(nullif(case when lower(mc.prop('dbcraft.tick-budget-ms')) in ('off', '0', '-1', '') then null else mc.prop('dbcraft.tick-budget-ms') end, '')::numeric, 0);
+            t0 := nullif(current_setting('dbcraft.tick_t0', true), '')::timestamptz;
+            for i in 1 .. cardinality(dcx) loop
+                if i > 1 and tb > 0 and t0 is not null and extract(epoch from clock_timestamp() - t0) * 1000 > tb * 0.6 then dcx := dcx[1:i - 1]; dcz := dcz[1:i - 1]; exit; end if;
+                perform mc.dyn_rt_build(dim, dcx[i], dcz[i]);
+            end loop;
             delete from mc.dyn_rt_dirty d using unnest(dcx, dcz) u(cx, cz) where d.dimension = dim and d.cx = u.cx and d.cz = u.cz;
         end if;
     end if;

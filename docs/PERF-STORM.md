@@ -1,6 +1,8 @@
 # Login storms against the Rust gateway: what the stall really was, and what it costs now (STORM)
 
-**Short answer.**  The login-storm stall was not mainly the login: at the scoreboard's view distance (10) with an explored world **every joiner was sent its whole square of 529 chunks (3.7 MB) inside its own join tick**,
+**Round 2 (full tree, locator bar, urgent lane) is at the end of this file.**
+
+**Short answer (round 1).**  The login-storm stall was not mainly the login: at the scoreboard's view distance (10) with an explored world **every joiner was sent its whole square of 529 chunks (3.7 MB) inside its own join tick**,
 about 80 ms of database time per joiner on top of about 15-20 ms for the join itself.  `docs/PERF-JOIN.md` and `docs/PERF-JOINBUDGET.md` were measured at view distance 2 (49 chunks), where that cost does not show.
 Now a joiner gets the nearest 49 chunks in its join burst and the rest over the following ticks, at most one (or, when the first was cheap, two) logins enter play per tick, and the chunk stream takes what is left of a tick budget.
 **Measured on a machine that was never quiet (load average 7-25 on 4 cores, other agents' servers and test suites): the worst tick of a 50-join storm fell about 3 times (median of three, interleaved), the p99 of the chat round trip of players who were already online
@@ -105,6 +107,54 @@ The same harness with the earlier overdue rule (everything past 20 s let in at o
 
 `tests/sql/920_join_stage_budget.sql` (29 checks; the whole suite: 65 files, 2,294 checks, `tools/check_overrides.py`, `tools/check_inlining.sh`, `tools/check_fresh_migration.sh` green): budget off = all six enter in one tick; exhausted budget = the free entry only, the others back in `net.inbox` in order, one more per tick, all six in after nine ticks, and **their join bursts byte for byte the same as without the budget**; two free entries; a connection past its wait is let in, at most 3 overdue per tick; what a held-back connection sent behind its entry packet waits with it;
 121 chunks at view distance 4 in the same nearest-first order with `join-chunks-inline` 0 and 49 (first batch 49); the delivery step with a backlog (shared cap round-robin, view moved, connection gone).  `tests/sql/791` and `430` unchanged except that `dbcraft.tick-budget-ms` is set `off` where a fixed cap is counted.
+
+## Round 2: the storm on the full tree (visibility tracker, survival, containers, dynamics merged)
+
+The final scoreboard campaign (`docs/SCOREBOARD.md`, quiet machine) showed the tail still lost: 200 joins into 20 online, worst tick 948 against 545 ms and p99 265 against 120 ms; 50 joins, online chat p50 146 against 28 ms.  `main` was merged and both cells reproduced with `tools/scoreboard/run.py storm2` (own cluster in `/dev/shm`, Rust gateway, view distance 10).
+**The machine was shared with other agents during every number below (load average 1.6-5.3 on 4 cores); old and new code were alternated inside each repetition, three repetitions, ranges are min-max.  Vanilla ran once per size in this session (it did not start in time at load above 6 and the load gate waits), so its numbers are one repetition each, next to the quiet-machine campaign figures.**
+
+**Where a join tick went** (`pg_stat_user_functions` over a whole 200-join run, then `auto_explain` per slow statement, then `jbench` with 100 players online and `track_functions = 'pl'`):
+
+| | before | what it was |
+|---|---|---|
+| the worst tick of the storm, **1.2-1.6 s**, once, when the 121st player joins | 14,280 UNTRACK packets (120 x 119 locator-bar connections) in one tick | `dbcraft.locator-bar-max-players` (120) switches the bar off; the pass ends every connection at once.  Each waypoint packet cost 130 us in `mc.wp_body` (five PL/pgSQL VarInt calls and a text round trip for the UUID) plus **50 us in `proto.frame` because the packet id 141 takes its slow branch**: `proto.varint_slow` had a `FROM` subselect and could not be inlined (it is also the path of ids 128-143: `teleport_entity`, `update_attributes`, `update_advancements`, `update_tags`, `waypoint`, and of every negative coordinate) |
+| every join tick of every player count | `mc.vis_wp_pass` looked at all N x N pairs in the entity phase (52 ms at 100 players) to find the one new player | the locator bar |
+| `net.play_begin` 35-42 ms per join | `mc.vis_wp_join` 19 ms, `net.hook_chunks` 15 ms (529 single index probes for "which chunks exist" 8 ms, 49 chunk packets 3 ms, 480 wanted rows 4 ms), `mc.on_join` 5 ms | |
+| 16-60 ms of every 4th tick | `mc.dyn_rt_build` (4 chunks per run at 16 ms each, the world-dynamics track's random-tick lists) for the chunks the joiners bring | |
+| 5-17 ms per join | encoding the chunk packet of every chunk on its first send (7,000 chunks in the run) | |
+
+**Changes.**  `proto.varint_slow` is an inlinable expression (sql/315, same bytes: 400,000 random and edge ints compared in `tests/sql/920`); `mc.wp_body` is built from inlinable pieces (130 -> 3 us, same bytes); a waypoint frame costs 50 -> 5 us; `mc.vis_wp_pass` looks at the pairs of which one side's transmit state changed in the entity phase (52 -> 12 ms at 100 players; random states compared with the previous pass, same packets, rows and remembered states);
+with the bar off it takes the rows from the primary key in slices of `dbcraft.locator-bar-untrack-slice` (1500 per tick, byte for byte the packets of the old all-at-once pass, `tests/sql/920`) and drops the rows of players that left; the per-row `mc.prop_int('view-distance')` of the pass is read once;
+`net.hook_chunks` reads the existing chunks with one range scan per column (8 -> 1 ms); the chunk generator encodes the packets of the chunks it makes (`mc.generate_pending`), so the tick of the first player who is sent a chunk no longer does (the scoreboard's `storm2` does the same after its pre-generation: `SCORE_COLD_CACHE=1` leaves it to the first player);
+`mc.dyn_random_ticks` stops building chunk lists after the first one once the tick has used 60% of `dbcraft.tick-budget-ms` (the rest stays queued for the next run);
+**the gateway runs the urgent chat lane before a late tick starts** (`gateway/src/gateway.rs`): the lane used to be skipped whenever the next tick was due within its reserve, and with ticks longer than 50 ms the next tick is always overdue, so chat during a storm waited for the whole tick behind it and then for the next one.
+Per join, 20 joiners into 100 co-located players in one tick (a worst case for pairing), ms of database time: whole tick per joiner 83 -> 44, `net.play_begin` 42 -> 26 -> 15 (after the later steps), `mc.vis_wp_join` 19 -> 7 -> 1.7.
+
+**Result** (view distance 10, 20 players online, N clients in 1 s; dbcraft before = the merged tree, old gateway, cold chunk cache; after = this branch):
+
+| | vanilla (1 rep) | dbcraft before | dbcraft after |
+|---|---|---|---|
+| **200 joins**: worst tick, ms | 1,571 (worst window p99; campaign 545) | 899 [844-1,014] | **257 [239-265]** |
+| tick p99, ms | 340 (campaign 120) | 261 [250-295] | **205 [196-208]** |
+| ticks over 100 ms | | 129 [118-166] | 66 [64-98] |
+| online chat during the storm p50 / p99 / max, ms | 302 / 6,034 / 6,038 (campaign 182 / 2,408) | 205 / 459 / 472 [1,107] | **64 / 180 / 245** |
+| all joined with all chunks, s | 58.8 (campaign 51.8) | 41.4 [39.2-44.6] | **34.7 [34.4-35.9]** |
+| **50 joins**: worst tick, ms | 358 | 180 [156-255] | **138 [127-214]** |
+| tick p99, ms | 113 | 170 [154-172] | **133 [125-205]** |
+| ticks over 100 ms | | 25 [22-26] | 13 [11-27] |
+| online chat during the storm p50 / p99 / max, ms | 34.5 / 1,127 / 1,295 | 153 / 295 / 305 | **53 / 129 / 130** |
+| all joined with all chunks, s | 47.4 | 8.3 | **8.0** |
+
+**Targets and what is still a loss.**  Worst tick at 200 joins below vanilla's 545 ms of the campaign: **met** (257); **not** at 100 ms.  Tick p99 at 200 joins **205 ms against vanilla's 120: not met** (a join tick, entry plus the tracker's pairing, wp pass, first sync and the dynamics, is 80-100 ms of database time at 40-60 players, and one join per tick is
+what it takes to finish 200 joins inside the 20 s wait; a tick over 100 ms is nearly every tick of the storm).  Chat p50 at 50 joins **53 ms against 34.5 (target 40): not met**, 3 times better than before; what is left is the length of the storm's ticks, not the lane (a chat that arrives mid-tick waits for the rest of it, the single-threaded gateway cannot read while the database runs the tick).
+All joined before vanilla: met at both sizes.
+**Not done: deferring the tracker's pairing and first-sync work of a new joiner to later ticks in slices.**  With one join per tick the sum of entry and tracker work per tick does not change by moving the tracker's half one tick later; it only lowers the worst tick if joins are also admitted every second tick (10 per second: 200 joins in 20 s, the wait limit),
+and it moves the pairing and first-tick packets of every joiner by a tick, which `tests/sql/900` pins (tick placement of the pairing bundle, vanilla recordings).  It would take the worst tick to about 50-60 ms; it is the next step.
+The dynamics' own cost (`mc.dyn_step`, 7-17 ms in every tick of this run, 100 ms every 4th tick before) and the chunk packet read for a joiner's first 49 chunks (3-5 ms of the join) are the other large items; the 480 `mc.chunk_wanted` rows per joiner (1.5 ms) could be a cursor.
+A first A/B of this round was discarded: a function-extraction slip of mine re-applied `sql/315` over the database (pre-`433` `mc.pid`/`mc.sid`, `proto.frame` and `proto.varint`: `mc.pid` per row 400 us), which made "before" look worse (10 s ticks) and polluted the profiles; the database was rebuilt and its function hashes compared with a fresh migration (identical except the development gateway) before the numbers above.
+
+**Round 2 verification.**  `tests/sql/920` has 43 checks now (the VarInt and waypoint-body equivalences, the entity-phase pass against the previous pass on random states, the slices of the bar's UNTRACKs against the previous pass).  Full suite (`tests/sql/prun.sh`, JOBS=2, shared machine): 74 files, 2,949 checks, all pass except `tests/sql/970_quiet_gate.sql` once ("the gate is armed after quiet ticks": a timing check of the idle track,
+not involved with these changes; it passes alone, 92 checks, and the suite run was at load 3-5); `tools/check_overrides.py`, `tools/check_inlining.sh`, `tools/check_fresh_migration.sh` green; gateway unit tests 3 + 58 pass.  `tests/e2e` was not run.
 
 ## Raw results
 

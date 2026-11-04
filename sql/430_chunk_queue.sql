@@ -71,6 +71,9 @@ begin
         begin
             n := mc.generate_batch(g.dimension, g.cxs, g.czs);
             made := made + n;
+            -- docs/PERF-STORM.md: the packet of a new chunk is encoded here, on the generator's connection, not by the tick of the first player who is sent it (3-17 ms each, in a login storm
+            -- 9 s of tick time over 7,000 chunks); a chunk that is edited later is re-encoded by the existing paths as before
+            perform mc.chunk_packet(g.dimension, u.cx, u.cz) from unnest(g.cxs, g.czs) u(cx, cz);
             delete from mc.chunk_request r using unnest(g.cxs, g.czs) u(cx, cz) where r.dimension = g.dimension and r.cx = u.cx and r.cz = u.cz;
         exception when others then
             insert into mc.error_log (step, message) values ('generate_pending', g.dimension || ': ' || sqlerrm);
@@ -195,9 +198,14 @@ begin
     end if;
     update net.conn set view_cx = p_cx, view_cz = p_cz, view_r = r where conn_id = p_conn;
     -- the chunks that do not exist yet: generated now (inline; they are returned below) or queued and delivered later (async)
-    select array_agg(p_cx + dx), array_agg(p_cz + dz), array_agg(dx * dx + dz * dz) into r_cx, r_cz, r_d
-      from generate_series(-r, r) dx cross join generate_series(-r, r) dz
-     where not exists (select 1 from mc.chunk c where c.dimension = dim and c.cx = p_cx + dx and c.cz = p_cz + dz);
+    -- (docs/PERF-STORM.md: the chunks that exist are read as one index range scan per column of the square, 2r+1 of them, then anti-joined; 529 single probes cost 8 ms)
+    with ex as materialized (
+        select c.cx, c.cz from generate_series(p_cx - r, p_cx + r) xv
+          cross join lateral (select k.cx, k.cz from mc.chunk k where k.dimension = dim and k.cx = xv and k.cz between p_cz - r and p_cz + r) c)
+    select array_agg(p_cx + sq.dx order by sq.dx, sq.dz), array_agg(p_cz + sq.dz order by sq.dx, sq.dz), array_agg(sq.dx * sq.dx + sq.dz * sq.dz order by sq.dx, sq.dz) into r_cx, r_cz, r_d
+      from (select dx, dz from generate_series(-r, r) dx cross join generate_series(-r, r) dz) sq
+      left join ex on ex.cx = p_cx + sq.dx and ex.cz = p_cz + sq.dz
+     where ex.cx is null;
     if r_cx is not null then perform mc.want_chunks(p_conn::int, dim, r_cx, r_cz, r_d, false); end if;
     lim := case when inl > 0 and (2 * r + 1) * (2 * r + 1) > inl then inl else 2147483647 end;
     if lim < 2147483647 then
