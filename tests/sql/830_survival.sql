@@ -192,7 +192,7 @@ select t.eq('respawn: the new state', (select row(dead, health, food, saturation
 select t.is_true('respawn: the player is announced again to the observer by the same tick''s visibility pass', (select count(*) = 0 from mc.visible where target_eid = (select entity_id from mc.player where conn_id = 1)));
 select mc.refresh_visibility();
 select t.is_true('respawn: ... and the next pass re-adds both ways', (select count(*) = 2 from mc.visible));
-select t.eq('respawn: the observer gets an add_entity for the respawned player', t.names(t.out(2)), array['add_entity']);
+select t.eq('respawn: the observer gets the pairing bundle (sql/903) for the respawned player', t.names(t.out(2)), array['bundle_delimiter', 'add_entity', 'set_entity_data', 'update_attributes', 'bundle_delimiter']);
 
 -- /kill (vanilla, recorded): the player gets damage_event, the death screen, the death message, entity_event 3, the command feedback, and in the same tick the entity data and set_health;
 -- an observer gets damage_event, the death message, entity_event 3 and the entity data

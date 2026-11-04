@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- The join budget (sql/790): logins are admitted through a gate so that a storm does not become one huge tick.  Driven through net.inbox and mc.server_tick() as a gateway
 -- would.  Checked here: budget off = the old behaviour; the admission order and the AIMD rate; the deadline floor; the status ping is never delayed; a parked connection
 -- that closes is cleaned up; and a joiner that WAS delayed receives exactly the bytes it receives without the budget (only the time of the join moves).

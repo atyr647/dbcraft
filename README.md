@@ -74,7 +74,8 @@ The world is stored in Minecraft's own wire format (palette + packed longs per 1
 
 **What is missing:** most of survival gameplay (crafting, mobs and anything that attacks a player, armor, potion effects, fire, drowning, fluids, beds and respawn anchors; the player-side core -- health, hunger, fall and void damage, death, respawn, regeneration, eating, experience -- exists, see [docs/SURVIVAL.md](docs/SURVIVAL.md) for what was compared with the real server and what was not), vanilla's terrain (`dbcraft.generator = dbcraft:noise` makes believable seeded terrain with 16 real biomes, bedrock and sea level 63, but not vanilla's seeds, caves, ores, trees or structures; see [docs/WORLD.md](docs/WORLD.md)), importing/exporting vanilla worlds beyond what [docs/WORLD-IMPORT.md](docs/WORLD-IMPORT.md) lists,
 vanilla mob AI and pathfinding, redstone, fluids, a full light engine (sky light matches vanilla on about 76% of recorded layers), advancements and recipes
-(replayed from a capture, not generated), a real-client test of online mode.
+(replayed from a capture, not generated), a real-client test of online mode, and the corners of player visibility that [docs/PLAYER-VISIBILITY.md](docs/PLAYER-VISIBILITY.md) lists as not verified
+(armor modifier order inside one attribute, azimuth waypoints beyond 332 blocks, jump and knockback movement syncs, vehicles, entity data other than the common flags, pairs re-evaluated only every 4 blocks).
 
 **Performance, honestly:** the tick is one transaction on one core.  500 moving players fit roughly in the 50 ms budget with the batched tick; a crowded spawn
 with 500 players does not, and 2,000 players do not.  Details, and what was tried and rejected, in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and `docs/PERF-*.md`.

@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- mc.fanout_moves (sql/430_tick_perf_fanout.sql): the per-chunk blob path must give every viewer exactly the bytes of the row-wise path through mc.visible,
 -- on random states: dense crowds, sparse worlds, mixtures, several view distances, self-exclusion, movers that are alone, viewers that are only themselves.
 create or replace function t.fan_case(p_seed float8, p_n int, p_side int, p_view int, p_mover_frac float8, p_far int, p_mode_b text default 'cells', p_dirty_b boolean default false) returns int language plpgsql as $$

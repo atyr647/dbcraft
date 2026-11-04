@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- Found with the REAL client (docs/REAL-CLIENT.md): "/tp Name" answered "No player was found".  Vanilla's /tp forms:
 --   tp <destination>  |  tp <targets> <destination>  |  tp <x> <y> <z>  |  tp <targets> <x> <y> <z>
 create or replace function t.send(conn int, pname text, body bytea) returns void language sql as $$

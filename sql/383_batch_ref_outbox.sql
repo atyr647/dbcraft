@@ -46,7 +46,7 @@ begin
     select conn_id, data, d_, cx_, cz_, ver from (
         select conn_id, 1 as ph, 0 as k1, 0 as k2, 0 as k3, proto.frame(i_ctr, proto.varint(ncx) || proto.varint(ncz)) as data, null::text as d_, null::int as cx_, null::int as cz_, null::bigint as ver from st
         union all
-        select s.conn_id, 2, s.ocz + dz, s.ocx + dx, 0, proto.frame(i_fg, proto.i32(s.ocz + dz) || proto.i32(s.ocx + dx)), null, null, null, null
+        select s.conn_id, 2, s.ocx + dx, s.ocz + dz, 0, proto.frame(i_fg, proto.i32(s.ocz + dz) || proto.i32(s.ocx + dx)), null, null, null, null
           from st s, generate_series(-r, r) dx, generate_series(-r, r) dz
          where abs(s.ocx + dx - s.ncx) > r or abs(s.ocz + dz - s.ncz) > r
         union all

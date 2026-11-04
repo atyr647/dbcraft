@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- chat intake, creative slots, held slot, keep-alive, time, command permissions, tick log
 create or replace function t.send(conn int, pname text, body bytea) returns void language sql as $$
   insert into mc.play_in_work (conn_id, packet_id, body) values (conn, mc.sid(pname), body) $$;

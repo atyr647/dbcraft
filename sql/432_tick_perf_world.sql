@@ -394,12 +394,12 @@ begin
     perform mc.generate_flat(dim, x, z) from (select distinct x, z from _stn) t;
 
     insert into mc.play_out (conn_id, data) select conn_id, proto.frame(i_ctr, proto.varint(ncx) || proto.varint(ncz)) from _st order by conn_id;
-    -- chunks that left the client's square: z ascending, then x (the order of the one recorded case)
+    -- chunks that left the client's square: x ascending, then z (ChunkTrackingView.difference; recorded, sql/436)
     insert into mc.play_out (conn_id, data)
     select s.conn_id, proto.frame(i_fg, proto.i32(s.ocz + dz) || proto.i32(s.ocx + dx))
     from _st s, generate_series(-r, r) dx, generate_series(-r, r) dz
     where abs(s.ocx + dx - s.ncx) > r or abs(s.ocz + dz - s.ncz) > r
-    order by s.conn_id, s.ocz + dz, s.ocx + dx;
+    order by s.conn_id, s.ocx + dx, s.ocz + dz;
     insert into mc.play_out (conn_id, data) select distinct conn_id, proto.frame(i_bs, '\x') from _stn;
     insert into mc.play_out (conn_id, data) select conn_id, mc.chunk_packet(dim, x, z) from _stn order by conn_id, d, x, z;
     insert into mc.play_out (conn_id, data) select conn_id, proto.frame(i_bf, proto.varint(count(*)::int)) from _stn group by conn_id;

@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- Differential test, Part B: whole ticks, mc.server_tick_batched() against mc.server_tick(), several consecutive ticks per random trial, including cold-path frames
 -- (unknown ids, chunk_batch_received, keep-alive answers), chunk-border crossings (chunk streaming), visibility changes and connections closing.  Output of the
 -- gateway's drain is compared per connection both in order and as an unordered set: several connections closing in the same tick are processed in physical row order by
