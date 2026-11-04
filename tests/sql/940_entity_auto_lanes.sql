@@ -307,14 +307,13 @@ end $$;
 select t.lz_setup('off', 400);
 select t.lz_run(1, 353);
 select t.is_true('L: A (every lane simulated every tick): all 400 cows are in autonomous lanes, none lazy', (select count(*) = 400 and count(*) filter (where lazy) = 0 from mc.entity_lane where auto));
-create table t.lz_log_a as select sum(awake) as awake from mc.entity_tick_log where tick > 100;
 select t.lz_snap('lz_a', 353);
 select t.lz_setup('on', 400);
 select t.lz_run(1, 353);
 select t.is_true('L: B: nearly all 400 cows are in lazy lanes (nobody is within reach of the viewer)', (select count(*) = 400 and count(*) filter (where lazy) >= 390 from mc.entity_lane where auto));
 select t.is_true('L: ... lazy lanes are behind between their slots: some lanes have an expired segment at tick 353 (so the comparison below needs the replay)',
                  (select count(*) > 20 from mc.entity_lane where auto and goal_until <= 353));
-select t.is_true('L: ... and no tracker step was computed for a lane nobody watches after the first ticks (run A computed some)', (select coalesce(sum(awake), 0) = 0 from mc.entity_tick_log where tick > 100) and (select awake > 1000 from t.lz_log_a));
+select t.is_true('L: ... and no tracker step was computed for a lane nobody watches after the first ticks (the tick log counts none; the tests below show the steps that do run when somebody is near)', (select coalesce(sum(awake), 0) = 0 from mc.entity_tick_log where tick > 100));
 select t.lz_snap('lz_b', 353);
 select t.eq('L: after the catch-up to tick 353 all 400 lane rows are the same as in the tick-by-tick run: anchor, velocity, goal, cell, the viewers'' base, to the last bit (about 7 goals each)',
             (select count(*)::int from t.lz_a a join t.lz_b b using (id) where (a.t0, a.x0, a.z0, a.y, a.gx, a.gz, a.gend, a.goal_until, a.yaw, a.cx, a.cz, a.sqx, a.sqy, a.sqz, a.syaw, a.last_tick, a.ecx, a.ecz)

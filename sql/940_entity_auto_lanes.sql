@@ -271,13 +271,18 @@ create or replace function mc.entity_auto_run(p_tick bigint, p_steps boolean, p_
 set enable_hashjoin = off set enable_mergejoin = off set plan_cache_mode = force_generic_plan as $$
 declare wp float8 := coalesce(nullif(current_setting('dbcraft.entity_walk_prob', true), '')::float8, 0.6);
         ex int[]; cr int[]; nmain int; bcx int[]; bcz int[]; btrk int[]; bblob bytea[];
-        lz_off boolean := coalesce(current_setting('dbcraft.entity_lazy', true), 'on') = 'off'; hv boolean;
+        lz_off boolean := coalesce(current_setting('dbcraft.entity_lazy', true), 'on') = 'off'; hv boolean; bx0 int; bx1 int; bz0 int; bz1 int; e_due boolean := true; e_step boolean := true; l_due boolean := true;
 begin
     more := 0;
-    select exists (select 1 from mc.entity_viewer_cell) into hv;
-    -- (the statement below costs about 1.4 ms of set-up even with nothing to do)
-    if p_ids is null and not exists (select 1 from mc.entity_lane l where l.auto and not l.lazy and l.goal_until <= p_tick)
-       and not exists (select 1 from mc.entity_lane l where l.auto and l.lazy and l.id % 32 = (p_tick % 32)::int and l.goal_until <= p_tick) then
+    -- the cells some viewer sees (a box around all of them: a superset); a lane outside it sends nothing, whatever its kind of lane
+    select count(*) > 0, min(v.cx - v.r), max(v.cx + v.r), min(v.cz - v.r), max(v.cz + v.r) into hv, bx0, bx1, bz0, bz1 from mc.entity_viewer_cell v;
+    -- what there is to do, from ONE pass over the eager lanes and one probe of the lazy slot (each statement below costs 0.7 ms of set-up even with nothing to do)
+    if p_ids is null then
+        select coalesce(bool_or(l.goal_until <= p_tick), false), coalesce(bool_or(l.cx between bx0 and bx1 and l.cz between bz0 and bz1), false) into e_due, e_step      -- (a lane that is due now steps in its new segment)
+          from mc.entity_lane l where l.auto and not l.lazy;
+        select exists (select 1 from mc.entity_lane l where l.auto and l.lazy and l.id % 32 = (p_tick % 32)::int and l.goal_until <= p_tick) into l_due;
+    end if;
+    if p_ids is null and not e_due and not l_due then
         ex := null;
     else
     with s as materialized (
@@ -335,12 +340,13 @@ begin
     end if;
     perform mc.entity_auto_end(ex, null, null);                          -- the lane ended at the tick its segment did: its row carries that state (and the goal that was drawn, or kept)
     end if;
-    if p_steps and exists (select 1 from mc.entity_lane l where l.auto and not l.lazy) then
+    if p_steps and hv and e_step then
         -- the steps of the eager lanes (a lane that started a segment in this very tick is read from the table again: the first step of a segment reads the stored base)
         with cand as (
             select l.id, l.cx, l.cz, l.trk, l.every, l.t0, l.x0, l.z0, l.y, l.gx, l.gz, l.yaw, l.pitch, l.phead, l.born, l.sqx, l.sqy, l.sqz, l.syaw, l.last_tick
               from mc.entity_lane l
              where l.auto and not l.lazy and l.goal_until > p_tick and case when l.gx <> 0 or l.gz <> 0 then l.slot = (p_tick % l.every)::int else p_tick = l.t0 + 1 end
+               and l.cx between bx0 and bx1 and l.cz between bz0 and bz1      -- (eager lanes in the margin around the viewers' cells: nobody to send to)
         ), main as materialized (
         select c.id, c.cx, c.cz, c.trk, k.bad,
                case when k.bad then null
@@ -379,18 +385,12 @@ end $$;
 -- The work of one tick.  Returns the ids the generic tracker must handle.  Nothing to do (the common case of a population nobody watches: no eager lane, no lazy lane in its slot with an expired
 -- segment): two index probes, no statement.
 create or replace function mc.entity_auto_tick(p_tick bigint) returns int[] language plpgsql volatile as $$
-declare r record; res int[]; busy boolean;
+declare r record;
 begin
-    select exists (select 1 from mc.entity_lane l where l.auto and not l.lazy) or exists (select 1 from mc.entity_lane l where l.auto and l.lazy and l.id % 32 = (p_tick % 32)::int and l.goal_until <= p_tick) into busy;
-    if not busy then
-        perform set_config('dbcraft.entity_auto_n', '0', false);
-        return '{}'::int[];
-    end if;
-    select * into r from mc.entity_auto_run(p_tick, true, null);
-    res := r.bad;
+    select * into r from mc.entity_auto_run(p_tick, true, null);       -- (it probes what there is to do before it runs a statement)
     -- A lane that is behind by more than one segment (a lazy lane replays ONE segment per visit of its slot, an eager one that was lazy a segment per tick) is not run again in this tick: another pass
     -- costs 0.7 ms of set-up for a handful of rows.  It catches up in its next visits, and at once when somebody is about to look (mc.entity_auto_catchup).
-    return res;
+    return r.bad;
 end $$;
 
 -- Bring the lanes among p_ids to the state after tick p_to: whoever is about to look at a lane catches it up first.  The entity rows of all of them get the lanes' cells (a lazy lane that crossed
