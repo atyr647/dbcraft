@@ -210,22 +210,8 @@ begin
     if mc.item_id(give_item) is null then perform mc.feedback(p_conn, mc.tc_failure(mc.tc_translate('argument.item.id.invalid', array[mc.tc_arg_str(give_item)]))); return; end if;
     n := coalesce(nullif(tok[4], '')::int, 1);
     if n < 1 then perform mc.feedback(p_conn, mc.tc_failure(mc.tc_translate('command.unknown.argument'))); return; end if;
-    -- slots are filled like vanilla's Inventory.add: merge into an existing stack of the same item (max 64 here; per-item stack limits are not in the data),
-    -- else the first empty hotbar slot, then the main inventory
-    declare left_n int := n; add_n int; sl int; st int;
-    begin
-      for sl in select s from (select generate_series(36, 44) s union all select generate_series(9, 35)) q order by (s >= 36) desc, s loop
-        exit when left_n <= 0;
-        select count into st from mc.inventory_slot where player = tgt.uuid and slot = sl and mc.inventory_slot.item = give_item and count < 64;
-        if st is not null then add_n := least(64 - st, left_n);
-        elsif not exists (select 1 from mc.inventory_slot where player = tgt.uuid and slot = sl) then st := 0; add_n := least(64, left_n);
-        else continue; end if;
-        perform mc.set_slot(tgt.uuid, sl, give_item, st + add_n);
-        left_n := left_n - add_n;
-        update mc.player set inv_state = inv_state + 1 where uuid = tgt.uuid returning inv_state into state;
-        insert into mc.play_out (conn_id, data) values (tgt.conn_id, mc.pkt_container_set_slot(state, sl, give_item, st + add_n));   -- (verified: container 0, state id 2, slot 36, stack of 8)
-      end loop;
-    end;
+    -- Inventory.add (the selected slot, the off hand, then the hotbar and the main inventory; stack sizes from the item rules), then the broadcast of what changed (sql/863)
+    perform mc.inv_give(tgt.uuid, give_item, n);
     perform mc.feedback(p_conn, mc.tc_translate('commands.give.success.single', array[mc.tc_arg_int(n), mc.tc_item(give_item), mc.tc_player(tgt.uuid, tgt.name)]));
 
   elsif verb = 'difficulty' then

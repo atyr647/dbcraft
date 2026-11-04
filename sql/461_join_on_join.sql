@@ -75,12 +75,15 @@ begin
     j.health := p.health; j.food := p.food; j.saturation := p.saturation; j.xp_level := p.xp_level; j.xp_progress := p.xp_progress; j.xp_total := p.xp_total;      -- survival (sql/830): experience in full
     j.show_death_screen := not coalesce((select value::boolean from mc.game_rule where name = 'minecraft:immediate_respawn'), false);
 
-    -- a returning player's inventory: the burst's container_set_content is empty, so send each stack as a slot update right after it
-    st := 1;
-    for s in select slot, item, count from mc.inventory_slot where player = p.uuid and components is null order by slot loop
-        st := st + 1;
-        insert into mc.play_out (conn_id, data) values (p_conn::int, mc.pkt_container_set_slot(st, s.slot, s.item, s.count));
-    end loop;
-    update mc.player set inv_state = st where uuid = p.uuid;
+    -- a returning player's inventory: the burst's container_set_content is empty (state id 1), so the stacks follow as ONE container_set_content with the next state id
+    -- (every slot, stacks with components included: their raw bytes).  Vanilla puts the items into the first packet (state id 1); the packet the burst carries is a capture.
+    if exists (select 1 from mc.inventory_slot i where i.player = p.uuid and i.slot between 1 and 45) then
+        insert into mc.play_out (conn_id, data)
+        select p_conn::int, mc.pkt_cc(0, 2, array_agg(row(i.item, coalesce(i.count, 0), i.components ->> 'raw_hex')::mc.stk order by g), mc.s_empty())
+          from generate_series(0, 45) g left join mc.inventory_slot i on i.player = p.uuid and i.slot = g;
+        update mc.player set inv_state = 2 where uuid = p.uuid;
+    else
+        update mc.player set inv_state = 1 where uuid = p.uuid;
+    end if;
     return j;
 end $$;

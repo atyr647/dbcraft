@@ -60,6 +60,7 @@ Compression is off: frames are `[length][id][body]`.  `mc.login_check` returns t
 | `340_game_input.sql` | movement, held slot, creative slot, keep-alive |
 | `350_game_chat.sql` | chat types, commands and their feedback |
 | `360_game_tick.sql` | chat intake, `mc.tick()`, `mc.tick_log` |
+| `860`-`866_*.sql` | containers, crafting and recipes ([CONTAINERS.md](CONTAINERS.md)): item rules and recipes, the click engine, menus of blocks, furnaces |
 | `830`-`837_survival_*.sql` | the survival core ([SURVIVAL.md](SURVIVAL.md)): health/food/experience state, damage, fall, void, death, respawn, eating, `mc.tick_core` with the survival steps |
 
 Tools: `tools/pkt_layout.py` (reads a packet class's wire layout from the jar with `javap`, never runs it), `tools/nbt_dump.py` (decodes recorded NBT),
@@ -72,7 +73,7 @@ To regenerate the recordings: start a vanilla 26.3 server (offline, whitelist of
 * `teleport_entity` (used when one movement step exceeds 8 blocks; vanilla used `entity_position_sync`, whose path codec I did not decode).
 * Command feedback keys other than the ones listed above: `/gamemode` on yourself, `/time set <ticks>` / `add`, `/difficulty` success, `/weather rain|thunder`, `/whitelist add|remove|on|off`, `/ban`, `/pardon`.  Weather game events are unverified.
 * The clock total after `/time set`: the packet layout is byte-identical, but the value vanilla chose (`/time set day` at game time 5738 gave 49000, two days ahead) is not understood; ours is the next occurrence of the marker.
-* Item stack limits (everything stacks to 64 here), the container state id rule (1 at join, +1 per server-sent update, fitted to one observation), the `block.` / `item.` choice for item names in `/give`.
+* The `block.` / `item.` choice for item names in `/give`.  (Stack limits and the container state id rule are item rules and read from the bytecode now, and the click protocol is compared with the real server: [CONTAINERS.md](CONTAINERS.md).)
 * Item stacks with data components are stored with their raw bytes (`components = {"raw_hex": ...}`); they are not decoded.
 * Defaults of `server.properties`: the key list is what the real server writes, the default values are documented defaults.
 * Unknown-command context for multi-word input (one word recorded).
@@ -82,7 +83,7 @@ To regenerate the recordings: start a vanilla 26.3 server (offline, whitelist of
 Anything that hurts a player other than falls, the void, starvation and `/kill` (see [SURVIVAL.md](SURVIVAL.md): the survival core, its recorded comparisons and its limits); `/experience`, `/damage`, `/effect`; `/seed`, `/msg`, `/me`, `/help` and most of vanilla's ~90 commands; target selectors (`@a`, `@p`); other operators' feedback broadcast; chat rate limits and
 message signing (offline mode only); the `commands` packet (command tree sent at join: **not built**, a recorded 26-node level-0 and 2,399-node operator graph exist for a future
 byte-exact attempt); entity metadata, attributes and the waypoint packets other players receive when someone joins (`set_entity_data`, `update_attributes`, `waypoint`); latency
-broadcasts to the tab list; ender chests and any container beyond the player inventory; `entity-broadcast-range-percentage`.
+broadcasts to the tab list; containers beyond the ones in [CONTAINERS.md](CONTAINERS.md) (hoppers, dispensers, shulker boxes, anvil, enchanting, brewing, ...); `entity-broadcast-range-percentage`.
 Visibility is a simplification: two players see each other when their chunk coordinates differ by at most `view-distance` (capped at 32) in both axes.
 
 ## Performance (single machine: 4 cores, one tick connection, PostgreSQL 16, `jit=off`, `fsync=off`)
