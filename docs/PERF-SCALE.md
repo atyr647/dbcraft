@@ -223,7 +223,7 @@ Dump time is dominated by compression of the dump (user CPU about 90% of wall ti
 2. Adopt `sql/290_blocks_view.sql` (done in this branch). Tell users to add `cx`, `cz`, `sy` to `mc.blocks` filters on big worlds, or use `block_at` / `blocks_in`.
 3. For dense (terrain) worlds switch on `mc.set_cache_storage('lz4')` (joins 2.8x faster for +24% cache) and consider `mc.set_section_compression(true)` + `mc.rewrite_sections()` (-40 KB per chunk).
    For flat worlds neither matters much (joins are 7-10 ms; a flat chunk is 9.8 KB).
-4. Plan disk by world type: flat 9.8 KB/chunk (1M chunks = 9.8 GB); real terrain 95 KB/chunk now (95 GB per million chunks), about 54 KB with compressed sections and 40 KB if the cache were dropped.
+4. (Superseded by [PERF-DISK.md](PERF-DISK.md): `sql/950` made compression the default; flat is now 1.7 KB/chunk, noise terrain 7.0 KB compacted, the imported vanilla world 17.9 KB compacted without the packet cache.)  Plan disk by world type: flat 9.8 KB/chunk (1M chunks = 9.8 GB); real terrain 95 KB/chunk now (95 GB per million chunks), about 54 KB with compressed sections and 40 KB if the cache were dropped.
    WAL while generating: 7 KB (flat) / 68 KB (dense) per chunk, so size `max_wal_size` for the generation rate (6,700 flat chunks/s inserts about 47 MB/s of WAL).
 5. Do not use an unlogged cache without a warm-up path. Do not build cache eviction before there is read tracking and a dense world that needs it.
 
