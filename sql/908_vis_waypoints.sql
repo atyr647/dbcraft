@@ -78,7 +78,9 @@ begin
            case when p_phase = 2 then mc.wp_state_now(p) else p.wp_state end as st,
            coalesce(case when p.view_distance_req is null then 2 else greatest(2, least(p.view_distance_req, vdsrv)) end, 2) as vr
       from mc.player p where p.conn_id is not null),
-  pr as materialized (
+  -- (docs/PERF-CAPACITY.md) pr and dc are NOT materialized: they are N x N rows of twenty columns each, and writing them to a tuplestore twice cost more than the expressions they save (100 walkers: 79 -> 48-58 ms of
+  -- tick CPU, 50 walkers: 39 -> 30; the same rows, only the events are kept)
+  pr as (
     select r.eid as rcv, r.conn_id as rconn, s.eid as src, s.uuid as suuid, s.bx, s.by, s.bz, s.cx as scx, s.cz as scz,
            (enabled and s.st is not null and (s.st & 1) = 1 and not ((coalesce(r.st, 0) & 2) = 0 and (s.st & 2) = 2)) as want,
            (sqrt((r.x - s.x) ^ 2 + (r.y - s.y) ^ 2 + (r.z - s.z) ^ 2)::real > 332::real) as far,
@@ -90,7 +92,7 @@ begin
            w.kind as ok, w.ang as oang
       from pl r join pl s on s.eid <> r.eid and (p_phase = 1 or not enabled or r.st is distinct from r.old_st or s.st is distinct from s.old_st)      -- sql/920: the entity phase (2) only looks at pairs of which one side's transmit state changed (everything else was settled by the movement pass or has nothing to decide)
                    left join mc.wp w on w.rcv = r.eid and w.src = s.eid),
-  dc as materialized (
+  dc as (
     select pr.*, case when far then 3 when not vis then 2 else 1 end as nk,
            case when ok is null then null
                 when not want then 'untrack'
