@@ -16,7 +16,7 @@ TPL="${PREFIX}_tpl"
 tools/pg-dev.sh start >/dev/null 2>&1 || true
 export PGHOST=/tmp PGPORT=$DBCRAFT_PGPORT PGUSER=postgres
 ADMIN="psql -X -q -d postgres -v ON_ERROR_STOP=1"
-OUT=$(mktemp -d /tmp/prun.XXXXXX); trap 'rm -rf "$OUT"' EXIT
+OUT=$(mktemp -d "${TMPDIR:-/tmp}/prun.XXXXXX"); trap 'rm -rf "$OUT"' EXIT
 t0=$(date +%s)
 
 echo "== template database $TPL"

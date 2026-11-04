@@ -157,14 +157,16 @@ create or replace function mc.dyn_on_events() returns trigger language plpgsql v
 declare
     v mc.dyn_vec%rowtype; e record; cur bigint; dim text; osid int; nsid int; keep boolean; k int; many boolean;
     xs int[] := '{}'; ys int[] := '{}'; zs int[] := '{}'; auxs int[] := '{}'; kinds int[] := '{}'; n int := 0; pos int[]; p int; cx0 int; sy int; cz0 int; ci int;
-    dirs int[][] := array[[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]]; interesting int := 4 | 8 | 4096 | 65536 | 262144;
+    dirs int[][] := array[[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]]; interesting int := 4 | 8 | 4096 | 65536 | 262144; dims text;
 begin
     if coalesce(current_setting('mc.dyn_busy', true), 'off') = 'on' then return null; end if;
     if not mc.dyn_enabled() then return null; end if;
     select * into v from mc.dyn_vec;
     select game_time into cur from mc.game_state;
     select count(*) > 64 into many from new_ev where kind = 'block';
+    select ',' || coalesce(value, '') || ',' into dims from mc.server_property where key = 'dbcraft.dynamics-dimensions';
     for e in select * from new_ev order by id loop
+        continue when dims is not null and position(',' || e.dimension || ',' in dims) = 0;      -- not a dynamics dimension: blocks are stored, nothing reacts
         dim := e.dimension;
         if e.kind = 'block' then
             select d.sid into osid from mc.dyn_state d where d.name = e.old_state;
