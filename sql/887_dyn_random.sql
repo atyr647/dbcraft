@@ -29,15 +29,15 @@ drop table if exists mc.dyn_rt_sec;
 create table mc.dyn_rt_sec (dimension text not null, cx int not null, sy int not null, cz int not null, version bigint not null, cnt int not null, cells smallint[] not null, primary key (dimension, cx, cz, sy));
 drop table if exists mc.dyn_rt_chunk;
 create table mc.dyn_rt_chunk (dimension text not null, cx int not null, cz int not null, version bigint not null, primary key (dimension, cx, cz));
-insert into mc.dyn_rt_dirty (dimension, cx, cz) select c.dimension, c.cx, c.cz from mc.chunk c on conflict do nothing;
+insert into mc.dyn_rt_dirty (dimension, cx, cz) select c.dimension, c.cx, c.cz from mc.chunk c on conflict (dimension, cx, cz) do update set seq = excluded.seq;
 create index if not exists player_online_chunk_idx on mc.player (chunk_x, chunk_z) where conn_id is not null;
 
 -- every new chunk, and its eight neighbours (their border cells see new neighbours), are queued for a rebuild of their lists
 create or replace function mc.dyn_rt_chunk_new() returns trigger language plpgsql volatile as $$
 begin
     insert into mc.dyn_rt_dirty (dimension, cx, cz)
-    select n.dimension, n.cx + dx.v, n.cz + dz.v from new_c n, (values (-1), (0), (1)) dx(v), (values (-1), (0), (1)) dz(v)
-    on conflict do nothing;
+    select distinct n.dimension, n.cx + dx.v, n.cz + dz.v from new_c n, (values (-1), (0), (1)) dx(v), (values (-1), (0), (1)) dz(v)
+    on conflict (dimension, cx, cz) do update set seq = excluded.seq;
     return null;
 end $$;
 drop trigger if exists dyn_rt_chunk_new on mc.chunk;
@@ -176,12 +176,13 @@ begin
     if p_cur % 1200 < iv then
         insert into mc.dyn_rt_dirty (dimension, cx, cz)
         select c.dimension, c.cx, c.cz from mc.chunk c left join mc.dyn_rt_chunk k on k.dimension = c.dimension and k.cx = c.cx and k.cz = c.cz
-         where c.dimension = dim and k.version is distinct from c.version on conflict do nothing;
+         where c.dimension = dim and k.version is distinct from c.version on conflict (dimension, cx, cz) do update set seq = excluded.seq;
     end if;
     -- rebuild the lists of the queued chunks, at most `budget` per run (fresh terrain, or the first run after an upgrade, does not make one tick pay for all of it).  Every queued chunk is
-    -- built, near a player or not: a queue that is mostly empty costs one probe, a queue with chunks nobody is near would cost a scan per run.
+    -- built, near a player or not (a queue that is mostly empty costs one probe, a queue with chunks nobody is near would cost a scan per run), the newest change first: an edit near a player
+    -- does not wait behind the backlog of an upgrade or of terrain nobody is near.
     if exists (select 1 from mc.dyn_rt_dirty) then
-        select array_agg(q.cx), array_agg(q.cz) into dcx, dcz from (select d.cx, d.cz from mc.dyn_rt_dirty d where d.dimension = dim limit budget) q;
+        select array_agg(q.cx), array_agg(q.cz) into dcx, dcz from (select d.cx, d.cz from mc.dyn_rt_dirty d where d.dimension = dim order by d.seq desc limit budget) q;
         if dcx is not null then
             for i in 1 .. cardinality(dcx) loop perform mc.dyn_rt_build(dim, dcx[i], dcz[i]); end loop;
             delete from mc.dyn_rt_dirty d using unnest(dcx, dcz) u(cx, cz) where d.dimension = dim and d.cx = u.cx and d.cz = u.cz;

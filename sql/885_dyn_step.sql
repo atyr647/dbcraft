@@ -162,11 +162,13 @@ begin
     if not mc.dyn_enabled() then return null; end if;
     -- the random-tick lists (sql/887) of the chunks a change touches, and of the neighbours when it is within 4 cells of them (water reaches farmland, dirt grass, over a chunk border)
     insert into mc.dyn_rt_dirty (dimension, cx, cz)
-    select ne.dimension, (ne.x >> 4) + dx.v, (ne.z >> 4) + dz.v
-      from new_ev ne, (values (0), (-1), (1)) dx(v), (values (0), (-1), (1)) dz(v)
-     where (dx.v = 0 or ne.kind <> 'block' or (dx.v = -1 and (ne.x & 15) < 4) or (dx.v = 1 and (ne.x & 15) >= 12))
-       and (dz.v = 0 or ne.kind <> 'block' or (dz.v = -1 and (ne.z & 15) < 4) or (dz.v = 1 and (ne.z & 15) >= 12))
-    on conflict do nothing;
+    select distinct q.dimension, q.cx + dx.v, q.cz + dz.v
+      from (select distinct ne.dimension, ne.x >> 4 as cx, ne.z >> 4 as cz, ne.kind <> 'block' as whole,
+                   case when (ne.x & 15) < 4 then -1 when (ne.x & 15) >= 12 then 1 else 0 end as bx,
+                   case when (ne.z & 15) < 4 then -1 when (ne.z & 15) >= 12 then 1 else 0 end as bz
+              from new_ev ne) q, (values (0), (-1), (1)) dx(v), (values (0), (-1), (1)) dz(v)
+     where (dx.v = 0 or q.whole or dx.v = q.bx) and (dz.v = 0 or q.whole or dz.v = q.bz)
+    on conflict (dimension, cx, cz) do update set seq = excluded.seq;
     if coalesce(current_setting('mc.dyn_busy', true), 'off') = 'on' then return null; end if;
     select * into v from mc.dyn_vec;
     select game_time into cur from mc.game_state;

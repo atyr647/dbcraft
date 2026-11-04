@@ -152,7 +152,10 @@ create table if not exists mc.dyn_late_event (
 );
 
 -- random ticks (sql/887): the chunks whose list of randomly ticking cells that can change something must be rebuilt (a block changed in or next to them, or they are new)
-create table if not exists mc.dyn_rt_dirty (dimension text not null, cx int not null, cz int not null, primary key (dimension, cx, cz));
+drop table if exists mc.dyn_rt_dirty;                              -- derived data: sql/887 queues every chunk again
+create sequence if not exists mc.dyn_rt_dirty_seq;
+create table mc.dyn_rt_dirty (dimension text not null, cx int not null, cz int not null, seq bigint not null default nextval('mc.dyn_rt_dirty_seq'), primary key (dimension, cx, cz));
+create index dyn_rt_dirty_seq_idx on mc.dyn_rt_dirty (dimension, seq);          -- the newest change is rebuilt first
 
 -- ---------------------------------------------------------------------------------------------------------------------------------------- settings
 insert into mc.server_property (key, value, default_value, note) values

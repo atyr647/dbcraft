@@ -27,7 +27,7 @@ declare
     ch_n  int := 0; ch_x int4[] := '{}'; ch_y int4[] := '{}'; ch_z int4[] := '{}'; ch_new int4[] := '{}'; ch_loud boolean[] := '{}'; lo_x int4[] := '{}'; lo_y int4[] := '{}'; lo_z int4[] := '{}'; lo_n int := 0;
     -- pending ticks (existing ones from the queue, then the new ones of this run): position key, type and kind
     pk    int8[] := '{}'; pt int4[] := '{}'; pkind "char"[] := '{}';
-    hk    int8[]; hv int4[]; hmask int8; hp int8; hq int8; hv0 int; hn int;           -- the same pending ticks as an open-addressing hash set (value 0 = empty slot)
+    hk    int8[]; hv int4[]; hh int8[]; hmask int8; hp int8; hq int8; hv0 int; hn int;           -- the same pending ticks as an open-addressing hash set (value 0 = empty slot)
     nt_n  int := 0; nt_x int4[] := '{}'; nt_y int4[] := '{}'; nt_z int4[] := '{}'; nt_kind "char"[] := '{}'; nt_type int4[] := '{}'; nt_due int8[] := '{}';
     -- pending landings (cells that falling blocks are on their way to): from the queue and from this run
     ln_n int := 0; ln_x int4[] := '{}'; ln_y int4[] := '{}'; ln_z int4[] := '{}';
@@ -65,8 +65,9 @@ begin
     select coalesce(array_agg(((t.x::int8 & 33554431) << 35) | ((t.z::int8 & 33554431) << 10) | (t.y + 128) order by t.seq), '{}'),
            coalesce(array_agg(case t.kind when 'f' then (case t.type when 'minecraft:water' then 0 when 'minecraft:flowing_water' then 1 when 'minecraft:lava' then 2 else 3 end)
                                           else (select b.bid from mc.dyn_block b where b.name = t.type) end order by t.seq), '{}'),
-           coalesce(array_agg(t.kind order by t.seq), '{}')
-      into pk, pt, pkind
+           coalesce(array_agg(t.kind order by t.seq), '{}'),
+           coalesce(array_agg((t.x::int8 * 73856093) # (t.y::int8 * 19349663) # (t.z::int8 * 83492791) order by t.seq), '{}')
+      into pk, pt, pkind, hh
       from mc.block_tick t
      where t.dimension = p_dim and t.kind in ('f', 'b') and (t.x >> 4) between cx0 and cx1 and (t.z >> 4) between cz0 and cz1;
 
@@ -75,7 +76,7 @@ begin
     hmask := hn - 1; hk := array_fill(0::int8, array[hn]); hv := array_fill(0, array[hn]);
     for ii in 1 .. cardinality(pk) loop
         hv0 := pt[ii] * 2 + (case when pkind[ii] = 'f'::"char" then 0 else 1 end) + 1;
-        hp := (((pk[ii] & 2147483647) * 40503 + (pk[ii] >> 31) * 9973 + hv0 * 7919) & hmask);
+        hp := (hh[ii] # (hv0::int8 * 7919)) & hmask;
         while hv[hp + 1] <> 0 loop hp := (hp + 1) & hmask; end loop;
         hk[hp + 1] := pk[ii]; hv[hp + 1] := hv0;
     end loop;
@@ -300,7 +301,7 @@ begin
                     key := ((ax::int8 & 33554431) << 35) | ((az::int8 & 33554431) << 10) | (ay + 128);
                     tkc := case when op = 2 then 'f'::"char" else 'b'::"char" end;
                     hv0 := pa * 2 + (case when op = 2 then 0 else 1 end) + 1;
-                    hp := (((key & 2147483647) * 40503 + (key >> 31) * 9973 + hv0 * 7919) & hmask);
+                    hp := (((ax::int8 * 73856093) # (ay::int8 * 19349663) # (az::int8 * 83492791)) # (hv0::int8 * 7919)) & hmask;
                     found := false;
                     while hv[hp + 1] <> 0 loop
                         if hk[hp + 1] = key and hv[hp + 1] = hv0 then found := true; exit; end if;

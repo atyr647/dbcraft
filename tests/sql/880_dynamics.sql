@@ -255,9 +255,19 @@ select t.eq('40 random ticks on each of ' || (select count(*) from rt_all i wher
 select t.is_true('random ticks on the active cells change blocks',
                  (select mc.dyn_run('minecraft:overworld', 5000, array_agg(3), array_agg(i.x), array_agg(i.y), array_agg(i.z), array_agg(i.sid), false, array_agg(i.y + 1), 0)
                     from (select r.* from rt_all r, generate_series(1, 40) g where exists (select 1 from rt_active a where a.x = r.x and a.y = r.y and a.z = r.z)) i) > 0);
+delete from mc.chunk_section where cx = 90 and cz = 90; delete from mc.chunk where cx = 90 and cz = 90; delete from mc.dyn_rt_dirty where cx between 89 and 91 and cz between 89 and 91;
 select mc.generate_flat('minecraft:overworld', 90, 90);
 select t.eq('a new chunk and its neighbours are queued for a rebuild', (select count(*) from mc.dyn_rt_dirty where dimension = 'minecraft:overworld' and cx between 89 and 91 and cz between 89 and 91), 9::bigint);
 select pg_temp.reset();
+
+-- mc.cells_positions (sql/888) against the definition of sql/850 -----------------------------------------------------------------------------------------------------------------
+select t.eq('mc.cells_positions: the same positions in the same order as the 4,096-bit scan, on 300 random bit maps of every density',
+            (select count(*) from (select b.c from (select decode(repeat(md5(g::text), 32), 'hex') as c from generate_series(1, 100) g
+                                                    union all select decode(repeat('00', 512 - 16) || md5(g::text), 'hex') from generate_series(1, 100) g
+                                                    union all select decode(repeat('00', 512 - 1) || '01', 'hex') from generate_series(1, 100) g) b) q
+              where mc.cells_positions(q.c) is distinct from (select coalesce(array_agg((x << 8) | (z << 4) | y order by z, y, x), '{}') from generate_series(0, 15) z, generate_series(0, 15) y, generate_series(0, 15) x where get_bit(q.c, (y << 8) | (z << 4) | x) = 1)),
+            0::bigint);
+select t.eq('mc.cells_positions of an empty and a full bit map', (select concat_ws('|', cardinality(mc.cells_positions(decode(repeat('00', 512), 'hex'))), cardinality(mc.cells_positions(decode(repeat('ff', 512), 'hex'))))), '0|4096');
 
 -- cost when nothing is due -------------------------------------------------------------------------------------------------------------------------------------------------
 select pg_temp.reset();
