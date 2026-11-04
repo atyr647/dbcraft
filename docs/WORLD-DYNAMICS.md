@@ -31,7 +31,9 @@ when nothing is due and nobody is online (0.07 ms measured).  Without the derive
   step, is recorded in `mc.error_log` and does not stop the tick.
 * **Quiet writes.**  Vanilla's `setBlock` sends no break effect; only `destroyBlock` does.  The engine's writes are re-recorded as one-position `cells` events (which the broadcast
   never gives a level event 2001); only support breaks stay `block` events.
-* Settings: `dbcraft.dynamics` (on/off), `dbcraft.dynamics-max-ticks` (4,000 per kind per tick; vanilla's limit is 65,536), `dbcraft.random-tick-interval` (4: random ticks run every 4th
+* Settings: `dbcraft.dynamics` (on/off), `dbcraft.dynamics-dimensions` (comma-separated list, default `minecraft:overworld,minecraft:the_nether,minecraft:the_end`: block edits in any
+  other dimension are stored but nothing reacts to them; the SQL tests use private `dbcraft:*` dimensions to test raw storage, and saplings placed in mid-air there would otherwise be
+  dropped on the next neighbour update, exactly as in vanilla), `dbcraft.dynamics-max-ticks` (500 per kind per tick; vanilla's limit is 65,536; see Cost), `dbcraft.random-tick-interval` (4: random ticks run every 4th
   tick with 4 ticks' draws), `dbcraft.random-tick-players` (4), `dbcraft.random-tick-max-hits` (6 per tick), the gamerules `minecraft:random_tick_speed`,
   `water_source_conversion`, `lava_source_conversion` in `mc.game_rule`.
 
@@ -90,4 +92,29 @@ the random-tick statistics (grass spreads, does not spread at midnight, dies und
 
 ## Cost
 
-See the end of this file for the measured numbers (500 players, nothing scheduled; a large active fluid).
+How measured: `tests/bench/game/run.sh`-style driver (the same `bench.setup`, `bench.gen`, `mc.tick`, `bench.drain` loop, every statement its own transaction), 500 players, all moving,
+spread over 30 x 30 chunks (view distance 10), flat chunks generated for the whole area (2,760 chunks, each with a grass layer, so random ticks have work), 120 ticks (the first 20 are
+warm-up), function times from `pg_stat_user_functions`.  **The machine was shared with several other test suites (load average 11 to 23 on this host), so every absolute figure below is
+inflated by roughly 2 to 4 times; read the ratios, and re-measure on a quiet machine before quoting one.**  The scratch driver was not committed (it is `bench.sql` plus a fill; the numbers are
+reproducible with it).
+
+| case | what the dynamics cost per tick |
+|---|---|
+| `dbcraft.dynamics = off` | one function call returning at once: 0.4 to 0.6 ms wall under load (this includes the profiler's own overhead) |
+| on, nothing scheduled, nobody online (tests/sql/880: 2,000 calls, best of five batches) | **0.058 to 0.069 ms** per `mc.dyn_step`: one statement probing `mc.block_tick`, `mc.dyn_late_event` and `mc.player` |
+| on, nothing scheduled, 500 players online (random ticks) | 25 ms per tick on average at load 13 (49 ms at load 23): every 4th tick runs the random ticks, about 100 ms per run at load 13, of which 41 ms is the engine for the 24 hits and the rest the area query; steady state, caches warm |
+| the same before the sampling rewrite (one draw per position) | 80 ms per tick at load 17, and 7.7 s in the very first call (cache build for 1,764 chunks in one tick) |
+| 40 x 40 water source layer dropped 10 blocks onto the floor (5,065 water cells afterwards) | `mc.dyn_run` 23 to 30 s in total over the 120 ticks (58 runs), single ticks of 100 to 900 ms and one of 3.5 s; mc.tick maximum 4.5 to 6.2 s |
+
+Reading it honestly:
+
+* Nothing scheduled is free (0.06 ms), but *random ticks are a standing cost* as soon as players are online and chunks with grass, crops or saplings are near them.  They are bounded by
+  `dbcraft.random-tick-players` (areas served per run), `dbcraft.random-tick-interval`, `dbcraft.random-tick-max-hits` and `dbcraft.random-tick-chunk-budget` (stale chunk caches rebuilt
+  per run), and the sampling is O(hits), not O(sections x draws) (see sql/887).  Set `minecraft:random_tick_speed` to 0 and they cost nothing.
+* **A big flow is NOT cheap.**  The engine costs about 0.2 to 0.5 ms per scheduled position under load (set-based, but every run decodes and re-encodes the touched sections).  A burst of
+  thousands of positions makes ticks of several seconds with `dbcraft.dynamics-max-ticks` at its default of 500 (the queue of that scenario holds fewer rows than that per tick, so the
+  cap does not bite).  A profile with one player and the cap at 100 held every tick to 70 to 240 ms (total 7.0 s instead of 11.7 s for 60 ticks, peak 3.5 s without the cap), at the price
+  of the flow taking longer; lower `dbcraft.dynamics-max-ticks` to trade fluid speed for tick time.  Vanilla handles this scenario in a few milliseconds per tick; this is the weakest part
+  of the track and it is not solved here.
+* The total tick averages in the benchmark runs (426, 580 and 1,361 ms for `off` at three different machine loads) show the noise: the difference between `off` and `idle` is below it.
+  The function-level times above are the reliable part.

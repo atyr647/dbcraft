@@ -96,7 +96,7 @@ begin
 end $$;
 
 create or replace function mc.dyn_step(p_cur bigint) returns void language plpgsql volatile as $$
-declare mx int := coalesce(mc.prop_int('dbcraft.dynamics-max-ticks'), 4000);
+declare mx int := coalesce(mc.prop_int('dbcraft.dynamics-max-ticks'), 500);
 begin
     -- idle test in ONE statement (no tick due, nothing late, nobody to random-tick for): the whole step is about this
     if not (select coalesce((select value <> 'off' from mc.server_property where key = 'dbcraft.dynamics'), true) and exists (select 1 from mc.dyn_vec)

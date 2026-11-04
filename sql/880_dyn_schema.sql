@@ -154,6 +154,7 @@ create table if not exists mc.dyn_late_event (
 -- ---------------------------------------------------------------------------------------------------------------------------------------- settings
 insert into mc.server_property (key, value, default_value, note) values
     ('dbcraft.dynamics', 'on', 'on', 'dbcraft: world dynamics (scheduled ticks, fluids, falling blocks, neighbour updates, random ticks); off makes every dynamics entry point return at once'),
+    ('dbcraft.dynamics-max-ticks', '500', '500', 'dbcraft: most scheduled block ticks, and most fluid ticks, run in one tick (vanilla: 65,536); the rest stay queued and run on the following ticks, so a huge flow lags instead of stalling the server'),
     ('dbcraft.dynamics-dimensions', 'minecraft:overworld,minecraft:the_nether,minecraft:the_end', 'minecraft:overworld,minecraft:the_nether,minecraft:the_end', 'dbcraft: comma-separated dimensions in which block edits trigger world dynamics (other dimensions, such as the tests'' dbcraft:a, store blocks without reacting)'),
     ('dbcraft.random-tick-chunk-budget', '300', '300', 'dbcraft: most chunk columns whose sections get random ticks in one tick; more candidates are served in slices of several ticks that draw proportionally more positions at once (same rate, burstier)')
 on conflict (key) do nothing;
