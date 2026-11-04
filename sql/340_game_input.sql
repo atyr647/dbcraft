@@ -193,6 +193,12 @@ end $$;
 create or replace function mc.keepalive_due(cur_tick bigint) returns table(sent int, timed_out int) language plpgsql as $$
 declare dead int[];
 begin
+  -- sql/800: one scan decides whether anything is due (answered keep-alives are the rule: nothing to time out, nothing to send for 300 ticks)
+  if current_setting('dbcraft.quiet_tick', true) is distinct from 'off' and not exists (select 1 from mc.player where conn_id is not null
+                   and ((keepalive_id is not null and cur_tick - keepalive_sent_tick >= 600)
+                        or (keepalive_id is null and (keepalive_sent_tick is null or cur_tick - keepalive_sent_tick >= 300)))) then
+    sent := 0; timed_out := 0; return next; return;
+  end if;
   select coalesce(array_agg(conn_id), '{}') into dead from mc.player where conn_id is not null and keepalive_id is not null and cur_tick - keepalive_sent_tick >= 600;
   perform mc.kick(c, 'disconnect.timeout') from unnest(dead) c;
   timed_out := coalesce(array_length(dead, 1), 0);

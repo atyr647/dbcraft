@@ -31,9 +31,7 @@ begin
       ts := proto.i64_read(r.body, s.nxt); salt := proto.i64_read(r.body, s.nxt + 8);
       update mc.player set chat_sent = chat_sent + 1 where uuid = r.uuid returning chat_sent - 1 into idx;
       insert into mc.chat_log (kind, sender, sender_name, message) values ('chat', r.uuid, r.name, s.val);
-      with up as (update mc.player set chat_recv = chat_recv + 1 where conn_id is not null returning conn_id, entity_id, chat_recv - 1 as gidx)
-      insert into mc.play_out (conn_id, data)
-        select conn_id, mc.pkt_player_chat(gidx, r.uuid, idx, s.val, ts, salt, ctype, mc.tc_player(r.uuid, r.name)) from up order by entity_id;
+      perform mc.chat_broadcast(r.uuid, r.name, idx, s.val, ts, salt, ctype);          -- sql/802: the packet of every recipient differs only in the global index (the statement used to be here)
       messages := messages + 1;
     else
       perform mc.run_command(r.conn_id, s.val); commands := commands + 1;

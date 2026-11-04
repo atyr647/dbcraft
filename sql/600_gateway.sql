@@ -36,11 +36,16 @@ drop trigger if exists ctl_stamp_delete on net.conn;
 create trigger ctl_stamp_delete after delete on net.conn for each row execute function net.ctl_stamp();
 insert into net.conn_ctl (conn_id, ctl_seq) select conn_id, nextval('net.ctl_seq') from net.conn on conflict (conn_id) do nothing;     -- rows that exist when this file is applied
 
+-- PL/pgSQL since sql/800: the SQL version was planned again on every call (0.2-0.27 ms, as much as the query's execution) and cost a join even when nothing changed
 create or replace function net.gateway_ctl(p_after bigint default 0)
 returns table (conn_id bigint, ctl_seq bigint, state text, compression int, await_key boolean, name text, verify_token bytea)
-language sql stable as $$
+language plpgsql stable as $$
+begin
+    if not exists (select 1 from net.conn_ctl k where k.ctl_seq > p_after) then return; end if;
+    return query
     select c.conn_id, k.ctl_seq, c.state, c.compression, c.await_key, c.name, case when c.await_key then c.verify_token end
-    from net.conn c join net.conn_ctl k on k.conn_id = c.conn_id where k.ctl_seq > p_after order by k.ctl_seq $$;
+    from net.conn c join net.conn_ctl k on k.conn_id = c.conn_id where k.ctl_seq > p_after order by k.ctl_seq;
+end $$;
 
 ------------------------------------------------------------------------------------------------ gateway start
 -- A gateway process numbers its connections from 1.  The rows of the previous process describe sockets that died with it, and anything still queued for those ids

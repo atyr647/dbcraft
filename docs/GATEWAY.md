@@ -35,6 +35,13 @@ Per tick (drift-free 20 Hz schedule, period from `net.setting.tick_ms`), all eve
 8. `net.drain_outbox()` → per connection: the bytes to write, and whether to close afterwards
 9. `net.gateway_ctl(last_seen)` → control rows (below)
 
+**Two exceptions to "all events of the tick in ONE transaction, in this order"** (`docs/PERF-IDLE.md`; both can be turned off, `lean_ticks = false` / `urgent_chat = false`):
+
+* a **lean tick** (nothing to give the database: no accepted socket, no inbound frame, no key response, no verdict, no closed socket) is `select mc.server_tick()` as one autocommit statement and one probe, `net.gateway_pending(last_seen)`; steps 8 and 9 happen only when the probe reports bytes in the
+  outbox, a closing connection or control rows, and the statistics row is written every 10th lean tick (carrying all of them).  `client_tick_end` frames of a play connection with fewer than two position packets in the tick are not given to the database at all (`skip_tick_end`; the database ignores them, `sql/800`), which is what lets an idle server's ticks be lean;
+* the **urgent chat lane**: when a serverbound `chat` frame of a play connection arrives and the next tick is far enough away, the gateway calls `net.urgent_chat(conns, payloads)` and `net.drain_outbox()` in one transaction at once.  The tick's own handling of chat (`mc.apply_chat`, the same drain) is what runs, so the bytes are identical; commands and
+  chat behind a command, or behind another kind of frame of the same connection, are not taken and wait for the tick, which keeps vanilla's arrival order.
+
 After the commit: the drained bytes are queued to each socket's writer (encrypted there when the connection is), `close` rows close the socket after its last bytes, control rows
 are applied.  If the transaction fails it is rolled back and that tick's inbound frames are dropped (a poison frame must not stall the server forever); `net.gateway_stats.errors` counts it.
 
