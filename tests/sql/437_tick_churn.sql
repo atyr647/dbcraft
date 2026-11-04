@@ -1,6 +1,8 @@
 -- No relation files created or deleted by the tick (sql/437 and the files it names).  The two rewritten functions are compared with their previous bodies, kept in
 -- sql/437 as mc.deliver_ready_chunks_general and mc.broadcast_block_events_general: random states are built, the queues are snapshotted, the original runs, the
 -- queues are restored, the rewrite runs, and the bytes in every connection's queue, the rows left in the queues and the return values are compared.
+-- (docs/PERF-IDLE2.md) the tick truncates its queues once a second only above dbcraft.tick-truncate-bytes (default 256 KiB); this file tests the truncation itself, on tiny queues, so it asks for the old behaviour
+update mc.server_property set value = '0' where key = 'dbcraft.tick-truncate-bytes';
 \ir ../../sql/430_chunk_queue.sql
 \ir ../../sql/430_tick_perf.sql
 \ir ../../sql/432_tick_perf_world.sql

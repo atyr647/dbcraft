@@ -18,6 +18,19 @@ begin
   perform set_config('dbcraft.quiet_mark', '', false);
   perform set_config('dbcraft.quiet_xid', '', false);
 end $$;
+-- transaction ids are numbered for the whole cluster: another test running in another database of this cluster (tests/sql/prun.sh runs several at once) completes transactions all the
+-- time, and every one of them disarms the gate (correctly: it cannot know the transaction belongs to another database).  Wait until the other databases are quiet (at most 15 minutes).
+create or replace function t.wait_quiet(p_max_s int) returns int language plpgsql as $$
+declare t0 timestamptz := clock_timestamp(); n int;
+begin
+  loop
+    select count(*) into n from pg_stat_activity where datname is not null and datname <> current_database() and state = 'active' and backend_type = 'client backend' and pid <> pg_backend_pid();
+    exit when n = 0 or clock_timestamp() - t0 > make_interval(secs => p_max_s);
+    perform pg_sleep(0.5);
+  end loop;
+  return n;
+end $$;
+select t.wait_quiet(900);
 select t.gate_reset();
 
 ------------------------------------------------------------------------------------------------ 1. every probed table, from another transaction
@@ -211,3 +224,26 @@ call mc.run_generator_until_idle(16, 1, 5000);
 select t.is_true('the stop flag ends it at once', clock_timestamp() - :'g2'::timestamptz < interval '2 seconds');
 update mc.generator_control set stop = false;
 update mc.server_property set value = 'inline' where key = 'dbcraft.chunk-generation';
+
+------------------------------------------------------------------------------------------------ 6. the truncation bound of the tick's own queues (dbcraft.tick-truncate-bytes)
+select t.gate_reset();
+select t.eq('the default bound is 256 KiB', mc.prop('dbcraft.tick-truncate-bytes'), '262144');
+create or replace function t.trunc_probe(p_bound text) returns boolean language plpgsql as $$
+declare f0 oid; f1 oid;
+begin
+  update mc.server_property set value = p_bound where key = 'dbcraft.tick-truncate-bytes';
+  delete from mc.tick_log; delete from mc.server_tick_log;
+  update mc.game_state set game_time = 19;                                     -- the next tick is 20: the housekeeping of mc.play_out
+  insert into mc.play_out (conn_id, data) values (999, '\x00');                 -- a queue that was written (so the file is not empty); no connection 999: the tick drops it
+  insert into net.conn (conn_id, state, compression) values (999, 'play', -1);
+  f0 := pg_relation_filenode('mc.play_out'::regclass);
+  perform mc.server_tick();
+  f1 := pg_relation_filenode('mc.play_out'::regclass);
+  delete from net.conn where conn_id = 999;
+  return f0 is distinct from f1;
+end $$;
+select t.is_true('with the bound at 0 a written queue is truncated at the housekeeping tick (a new file)', t.trunc_probe('0'));
+select t.is_true('with the default bound a small queue is not (the file stays)', not t.trunc_probe('262144'));
+select t.is_true('...and a queue bigger than the bound is', (select t.trunc_probe('1')));
+update mc.server_property set value = '262144' where key = 'dbcraft.tick-truncate-bytes';
+

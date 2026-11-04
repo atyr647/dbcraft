@@ -7,6 +7,8 @@
 --   C  a block change in split mode is a command row (the trigger does not touch B's rows) and B applies it
 --   D  the TRUNCATE of mc.play_out every 20th tick would wait for B's open transaction and is skipped in split mode (a real second connection holds an uncommitted INSERT)
 --   E  mc.entity_step / the mode setting: off does nothing, errors are logged and never fatal
+-- (docs/PERF-IDLE2.md) the tick truncates its queues once a second only above dbcraft.tick-truncate-bytes (default 256 KiB); this file tests the truncation itself, on tiny queues, so it asks for the old behaviour
+update mc.server_property set value = '0' where key = 'dbcraft.tick-truncate-bytes';
 \! python3 tools/load_world_ref.py >/dev/null
 select mc.block_class_refresh();
 
