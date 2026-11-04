@@ -206,7 +206,7 @@ begin
     values (cur, n_in, n_players, n_out, extract(epoch from t5 - t0) * 1000, extract(epoch from t1 - t0) * 1000, extract(epoch from t2 - t1) * 1000,
             extract(epoch from t3 - t2) * 1000, extract(epoch from t4 - t3) * 1000, extract(epoch from t5 - t4) * 1000)
     on conflict (tick) do nothing;
-    delete from mc.server_tick_log where tick < cur - 6000;
+    if cur % 20 = 0 then delete from mc.server_tick_log where tick < cur - 6000; end if;           -- once a second (docs/PERF-IDLE2.md)
     return cur;
 end $$;
 

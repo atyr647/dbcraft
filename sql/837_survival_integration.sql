@@ -74,6 +74,6 @@ begin
   values (cur, now(), n_players, n_in, n_out,
      extract(epoch from t6 - t0) * 1000, extract(epoch from t1 - s0) * 1000, extract(epoch from t2 - s1) * 1000, extract(epoch from t3 - t2) * 1000,
      extract(epoch from t4 - s2) * 1000, extract(epoch from t5 - t4) * 1000, extract(epoch from t6 - t5) * 1000, mv.moved, mv.corrected, mv.kicked, ms_surv);
-  delete from mc.tick_log where tick < cur - 6000;       -- keep the last 5 minutes
+  if cur % 20 = 0 then delete from mc.tick_log where tick < cur - 6000; end if;       -- keep the last 5 minutes (trimmed once a second: the statement is planned again on every call, 0.2 ms; docs/PERF-IDLE2.md)
   return cur;
 end $$;

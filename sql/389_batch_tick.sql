@@ -77,7 +77,7 @@ begin
            extract(epoch from g6 - g0) * 1000, extract(epoch from g1 - g0) * 1000, extract(epoch from g2 - g1) * 1000, extract(epoch from g3 - g2) * 1000,
            extract(epoch from g4 - g3) * 1000, extract(epoch from g5 - g4) * 1000, extract(epoch from g6 - g5) * 1000, mv.moved, mv.corrected, mv.kicked)
         on conflict (tick) do nothing;
-        delete from mc.tick_log where tick < cur - 6000;
+        if cur % 20 = 0 then delete from mc.tick_log where tick < cur - 6000; end if;       -- once a second (docs/PERF-IDLE2.md)
     exception when others then
         select game_time into cur from mc.game_state;
         delete from mc.play_in; delete from mc.play_in_work;
@@ -149,6 +149,6 @@ begin
     values (cur, n_in, n_players, n_out, extract(epoch from t5 - t0) * 1000, extract(epoch from t1 - t0) * 1000, extract(epoch from t2 - t1) * 1000,
             extract(epoch from t3 - t2) * 1000, extract(epoch from t4 - t3) * 1000, extract(epoch from t5 - t4) * 1000)
     on conflict (tick) do nothing;
-    delete from mc.server_tick_log where tick < cur - 6000;
+    if cur % 20 = 0 then delete from mc.server_tick_log where tick < cur - 6000; end if;           -- once a second (docs/PERF-IDLE2.md)
     return cur;
 end $$;

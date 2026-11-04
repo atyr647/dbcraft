@@ -18,8 +18,8 @@ import run as R
 
 def pgss_top(top):
     try:
-        rows = R.dbq("select calls, round((total_exec_time + coalesce(total_plan_time, 0))::numeric, 1), round(((total_exec_time + coalesce(total_plan_time, 0)) / calls)::numeric, 4), "
-                     "round(coalesce(total_plan_time, 0)::numeric, 1), left(regexp_replace(query, '\\s+', ' ', 'g'), 110) "
+        rows = R.dbq("select calls, round((total_exec_time + coalesce(total_plan_time, 0))::numeric, 1), round(((total_exec_time + coalesce(total_plan_time, 0)) / greatest(calls, 1))::numeric, 4), "
+                     "round(coalesce(total_plan_time, 0)::numeric, 1), left(regexp_replace(query, '[[:space:]]+', ' ', 'g'), 110) "
                      "from pg_stat_statements where dbid = (select oid from pg_database where datname = 'dbcraft') order by total_exec_time + coalesce(total_plan_time, 0) desc limit %d" % top)
     except Exception:
         return None
