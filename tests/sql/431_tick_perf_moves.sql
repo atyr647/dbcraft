@@ -32,6 +32,25 @@ begin
     if p_flavour = 2 and random() < .2 then nx := r.x + 11 + random() * 20; end if;           -- too fast
     if p_flavour = 10 and random() < .3 then nx := r.x + 8.5 + random(); end if;               -- accepted (under 10 blocks) but over the 16-bit delta: teleport packet
     if p_flavour = 6 and random() < .1 then nx := 'NaN'; end if;                                -- kick
+    -- flavours 11-13 (docs/PERF-CAPACITY.md): a client that runs ahead of a slow tick sends several (position, client_tick_end) pairs; legal when a client_tick_end separates every two position
+    -- packets, a violation (kick) when one does not (flavour 13 forgets the separator now and then); the packets of one connection arrive in this order
+    if p_flavour in (11, 12, 13) and random() < .6 then
+      for k in 1 .. 1 + (random() * 2)::int loop
+        if random() < .5 then
+          insert into mc.play_in_work (conn_id, packet_id, body)
+          values (r.conn_id, i_pos, proto.f64(r.x + k * 0.2) || proto.f64(r.y) || proto.f64(r.z + (random() - .5) * 0.4) || set_byte('\x00'::bytea, 0, (random() < .5)::int));
+        else
+          insert into mc.play_in_work (conn_id, packet_id, body)
+          values (r.conn_id, i_pr, proto.f64(r.x + k * 0.2) || proto.f64(r.y) || proto.f64(r.z) || proto.f32((r.yaw + k)::real) || proto.f32(r.pitch) || set_byte('\x00'::bytea, 0, (random() < .5)::int));
+        end if;
+        if not (p_flavour = 13 and random() < .15) then
+          insert into mc.play_in_work (conn_id, packet_id, body) values (r.conn_id, i_te, '\x');
+        end if;
+      end loop;
+      if p_flavour = 11 and random() < .3 then            -- position packets after a client_tick_end of this connection, rotation / status packets in between
+        insert into mc.play_in_work (conn_id, packet_id, body) values (r.conn_id, i_rot, proto.f32((random() * 360)::real) || proto.f32((random() * 100 - 50)::real) || set_byte('\x00'::bytea, 0, (random() < .5)::int));
+      end if;
+    end if;
     if p_flavour = 7 and random() < .2 then nz := 'Infinity'; end if;
     if kind in (0, 1, 2, 3, 4) then   -- position + rotation
       insert into mc.play_in_work (conn_id, packet_id, body) values (r.conn_id, i_pr, proto.f64(nx) || proto.f64(ny) || proto.f64(nz) || proto.f32((r.yaw + 3)::real) || proto.f32(r.pitch) || set_byte('\x00'::bytea, 0, (random() < .5)::int));
@@ -99,7 +118,7 @@ begin
 end $$;
 
 select t.eq('flavour ' || f || ' seed ' || s, t.compare_moves(s / 10.0, f), 'same')
-  from unnest(array[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) f, unnest(array[1, 2, 3]) s;
+  from unnest(array[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) f, unnest(array[1, 2, 3]) s;
 select t.eq('ordinary ticks, 20 more seeds', (select count(*) filter (where t.compare_moves(s::float8 / 100, 1) <> 'same') from generate_series(10, 29) s)::int, 0);
 -- which path ran: the function call counters of the current transaction show whether the general version was called
 set track_functions = 'all';
@@ -117,6 +136,21 @@ begin
   select * into r from mc.apply_player_moves(1000);
   if t.general_calls() = before then raise exception 'FAIL two position packets did not take the general path'; end if;
   raise notice 'ok   two position packets take the general path';
+  perform t.build_moves(0.3, 11);                                 -- several (position, client_tick_end) pairs per connection: legal, still the fast path
+  if (select count(*) from mc.play_in_work where packet_id in (mc.sid('move_player_pos'), mc.sid('move_player_pos_rot')))
+     <= (select count(distinct conn_id) from mc.play_in_work where packet_id in (mc.sid('move_player_pos'), mc.sid('move_player_pos_rot'))) then
+    raise exception 'FAIL the test input has no connection with several position packets';
+  end if;
+  before := t.general_calls();
+  select * into r from mc.apply_player_moves(1000);
+  if t.general_calls() <> before then raise exception 'FAIL several position packets separated by client_tick_end fell back to the general path'; end if;
+  raise notice 'ok   several position packets with a client_tick_end between each two stay on the fast path';
+  perform t.build_moves(0.3, 13);                                 -- the same with a missing separator now and then: the rule violation, kicked by the general path
+  before := t.general_calls();
+  select * into r from mc.apply_player_moves(1000);
+  if t.general_calls() = before then raise exception 'FAIL two position packets without a client_tick_end between them did not take the general path'; end if;
+  if r.kicked = 0 then raise exception 'FAIL nobody was kicked for sending two position packets without a client_tick_end'; end if;
+  raise notice 'ok   a missing client_tick_end between two position packets takes the general path (kick)';
   perform t.build_moves(0.3, 9);                                  -- a malformed length
   before := t.general_calls();
   select * into r from mc.apply_player_moves(1000);

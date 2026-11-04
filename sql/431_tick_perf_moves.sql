@@ -155,13 +155,24 @@ declare
   i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot'); i_rot int := mc.sid('move_player_rot');
   i_st int := mc.sid('move_player_status_only'); i_te int := mc.sid('client_tick_end'); i_tp int := mc.sid('accept_teleportation');
   c_pos int := mc.pid('move_entity_pos'); c_pr int := mc.pid('move_entity_pos_rot'); c_rot int := mc.pid('move_entity_rot'); c_head int := mc.pid('rotate_head');
-  slow boolean; kicked_conns int[]; fin mc.move_fin[]; vison boolean := mc.vis_on();       -- (sql/900: with dbcraft.vanilla-tracker the broadcast is mc.vis_move's, sql/907)
+  slow boolean; multi boolean; kicked_conns int[]; fin mc.move_fin[]; vison boolean := mc.vis_on();       -- (sql/900: with dbcraft.vanilla-tracker the broadcast is mc.vis_move's, sql/907)
   f_eid int[]; f_data bytea[]; f_ocx int[]; f_ocz int[]; v_conn int[]; v_eid int[]; v_cx int[]; v_cz int[]; any_dirty boolean;   -- the fan-out's inputs (sql/430_tick_perf_fanout.sql)
 begin
-  select coalesce(count(*) filter (where m.packet_id in (i_pos, i_pr)) <> count(distinct m.conn_id) filter (where m.packet_id in (i_pos, i_pr)), false)
-         or coalesce(bool_or((m.packet_id = i_pos and length(m.body) <> 25) or (m.packet_id = i_pr and length(m.body) <> 33)
+  -- slow = the input needs the ordered scan of the general version: a malformed length, or a violation of the rule "two position packets between two client_tick_end".
+  -- Several position packets of one connection are NOT a violation when every two of them have a client_tick_end between them (docs/PERF-CAPACITY.md: this is what a client that
+  -- runs ahead of a slow tick sends, a tick of 100 ms carries two client ticks: the general version cost 23 ms of 200 players' tick, 15 times the fast path); only the last
+  -- one counts (apply is "last position per connection", exactly as in the general version), so the fast path handles it.  The violation test is one window over
+  -- the position and tick-end packets of the connections that sent more than one position packet.
+  select count(*) filter (where m.packet_id in (i_pos, i_pr)) <> count(distinct m.conn_id) filter (where m.packet_id in (i_pos, i_pr)),
+         coalesce(bool_or((m.packet_id = i_pos and length(m.body) <> 25) or (m.packet_id = i_pr and length(m.body) <> 33)
                              or (m.packet_id = i_rot and length(m.body) <> 9) or (m.packet_id = i_st and length(m.body) <> 1)), false)
-    into slow from mc.play_in_work m where m.packet_id in (i_pos, i_pr, i_rot, i_st);
+    into multi, slow from mc.play_in_work m where m.packet_id in (i_pos, i_pr, i_rot, i_st);
+  multi := coalesce(multi, false);
+  if multi and not slow then
+    select exists (select 1 from (select m.packet_id, lag(m.packet_id) over (partition by m.conn_id order by m.seq) as prev
+                                    from mc.play_in_work m where m.packet_id in (i_pos, i_pr, i_te)) q
+                    where q.packet_id in (i_pos, i_pr) and q.prev in (i_pos, i_pr)) into slow;
+  end if;
   if slow then
     return query select * from mc.apply_player_moves_general(cur_tick);
     return;

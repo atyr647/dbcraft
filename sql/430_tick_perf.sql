@@ -20,9 +20,11 @@ declare r record; n int; n_vis int; vis_ids int[] := array[mc.sid('player_input'
         i_ka int := mc.sid('keep_alive'); i_tp int := mc.sid('accept_teleportation'); i_ci int := mc.sid('client_information');       -- (client_information: the game reads the skin layers, main hand and view distance too: sql/904)
         i_te int := mc.sid('client_tick_end'); i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot');
         both_ids int[] := array[i_ka, i_tp, i_ci]; keep_te boolean := current_setting('dbcraft.quiet_tick', true) = 'off';          -- sql/800: the switch queues every client_tick_end again
+        i_cb int := mc.sid('chunk_batch_received');                                                                                  -- docs/PERF-CAPACITY.md: answered in bulk like the keep-alives (below)
 begin
     perform set_config('dbcraft.tick_t0', clock_timestamp()::text, true);       -- sql/791: when this tick started (mc.deliver_ready_chunks spends what is left of dbcraft.tick-budget-ms)
     perform net.join_gate();                          -- sql/790: admission gate for logins (parks/releases hello packets; a no-op when nothing is queued or the budget is off)
+    perform net.config_keepalive();                   -- sql/980: a keep-alive for a connection that waits in the configuration state for 15 s (a no-op except once a second)
     delete from net.batch;
     with t as (delete from net.inbox returning conn_id, seq, payload),
          c as (select t.conn_id, t.seq, t.payload, net.pid(t.payload) as pid, (n.state = 'play' and not n.closing) as live
@@ -55,23 +57,28 @@ begin
     -- other protocol-level packet this tick, or a malformed answer (short keep-alive, multi-byte or missing teleport id), keeps the ordered per-packet path: a failing
     -- packet closes the connection and the ones after it are ignored.  The check costs nothing in a tick without protocol-level packets (the batch is empty).
     if exists (select 1 from net.batch) then
+        -- (docs/PERF-CAPACITY.md) the answer to a chunk batch (chunk_batch_received: a client sends one for every batch it was sent, i.e. for every chunk border it crosses; 30 a tick with 200
+        -- walkers, 0.17 ms each through the ordered per-packet path) is applied here too: net.h_play sets chunks_per_tick to the value of the LAST one of the connection (a NaN or tiny value
+        -- becomes 0.01, a big one is capped at 64); a body shorter than 4 bytes is an error there and stays on that path
         with b as materialized (
-               select x.conn_id, x.pid, x.body,
-                      (x.pid = i_ka and length(x.body) >= 8) or (x.pid = i_tp and length(x.body) >= 1 and get_byte(x.body, 0) < 128) as ok
-                 from (select b0.conn_id, net.pid(b0.payload) as pid,
-                              case when net.pid(b0.payload) in (i_ka, i_tp) then substring(b0.payload from net.pid_len(b0.payload) + 1) end as body
+               select x.conn_id, x.pid, x.seq, x.body,
+                      (x.pid = i_ka and length(x.body) >= 8) or (x.pid = i_tp and length(x.body) >= 1 and get_byte(x.body, 0) < 128) or (x.pid = i_cb and length(x.body) >= 4) as ok
+                 from (select b0.conn_id, b0.seq, net.pid(b0.payload) as pid,
+                              case when net.pid(b0.payload) in (i_ka, i_tp, i_cb) then substring(b0.payload from net.pid_len(b0.payload) + 1) end as body
                          from net.batch b0) x),
              good as (select b.conn_id from b where b.conn_id in (select c.conn_id from net.conn c where c.state = 'play' and not c.closing) group by b.conn_id having bool_and(coalesce(b.ok, false))),
              ev as (
                select b.conn_id,
                       coalesce(bool_or(case when b.pid = i_ka then proto.i64_read(b.body, 0) = c.keepalive_id end), false) as ka_hit,       -- CASE: no guarantee that AND stops early,
-                      coalesce(bool_or(case when b.pid = i_tp then get_byte(b.body, 0) = c.teleport_id end), false) as tp_hit               -- and the other kind's body may be too short
+                      coalesce(bool_or(case when b.pid = i_tp then get_byte(b.body, 0) = c.teleport_id end), false) as tp_hit,              -- and the other kind's body may be too short
+                      (array_agg(proto.f32_read(b.body, 0) order by b.seq desc) filter (where b.pid = i_cb))[1] as cb_last                 -- the last chunk_batch_received of the connection
                  from b join net.conn c on c.conn_id = b.conn_id where b.conn_id in (select conn_id from good) group by b.conn_id),
              gone as (delete from net.batch x where x.conn_id in (select conn_id from good) returning 1)
         update net.conn c set keepalive_id = case when ev.ka_hit then null else c.keepalive_id end,
                               latency_ms = case when ev.ka_hit then greatest(0, (extract(epoch from now() - c.keepalive_sent) * 1000)::int) else c.latency_ms end,
-                              teleport_ok = c.teleport_ok or ev.tp_hit
-          from ev where c.conn_id = ev.conn_id and (ev.ka_hit or (ev.tp_hit and not c.teleport_ok));
+                              teleport_ok = c.teleport_ok or ev.tp_hit,
+                              chunks_per_tick = case when ev.cb_last is null then c.chunks_per_tick when ev.cb_last <> 'NaN'::real and ev.cb_last > 0.01 then least(ev.cb_last, 64) else 0.01 end
+          from ev where c.conn_id = ev.conn_id and (ev.ka_hit or (ev.tp_hit and not c.teleport_ok) or ev.cb_last is not null);
     end if;
     -- Join entry budget (sql/920, docs/PERF-STORM.md): the packet that makes a connection enter play (finish_configuration: mc.on_join, the entry burst, the first chunks) is the
     -- expensive step of a login, 15-20 ms.  Once this tick has spent dbcraft.join-entry-budget-ms in this function (25; off = never) further entries are put back into

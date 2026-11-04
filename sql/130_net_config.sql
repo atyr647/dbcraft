@@ -72,9 +72,14 @@ begin
         perform net.send(p_conn, net.pkt('configuration', 'clientbound', 'minecraft:finish_configuration'), '\x');
     elsif p_name = 'minecraft:finish_configuration' then
         if c.known_packs is null then raise exception 'unexpected finish_configuration before select_known_packs'; end if;
-        update net.conn set state = 'play' where conn_id = p_conn;
+        update net.conn set state = 'play', keepalive_id = null where conn_id = p_conn;
         perform net.play_begin(p_conn);
-    elsif p_name in ('minecraft:keep_alive', 'minecraft:pong', 'minecraft:resource_pack', 'minecraft:cookie_response',
+    elsif p_name = 'minecraft:keep_alive' then
+        -- the answer to a keep-alive of the configuration state (net.config_keepalive, sql/980); an id that is not the pending one is ignored (a stray answer is not an error)
+        if c.keepalive_id is not null and length(body) >= 8 and proto.i64_read(body, 0) = c.keepalive_id then
+            update net.conn set keepalive_id = null where conn_id = p_conn;
+        end if;
+    elsif p_name in ('minecraft:pong', 'minecraft:resource_pack', 'minecraft:cookie_response',
                      'minecraft:custom_click_action', 'minecraft:accept_code_of_conduct') then
         null;                                                              -- nothing is pending on these in this server
     else

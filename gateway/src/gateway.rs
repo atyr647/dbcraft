@@ -45,6 +45,10 @@ struct Conn {
     last_read: Instant,
     last_frame: Instant,
     last_write: Instant,
+    /// when the socket was accepted, and what it has sent since: only for the log line of a timeout (docs/PERF-CAPACITY.md: which clients go silent, and where in the login they stood)
+    born: Instant,
+    bytes_in: u64,
+    frames_in: u64,
 }
 
 #[derive(Default, Clone)]
@@ -515,7 +519,7 @@ impl Gateway {
                     let reader = Reader::new(ReaderLimits { prelogin_max_frame: self.cfg.prelogin_max_frame, prelogin_max_bytes: self.cfg.prelogin_max_bytes });
                     self.conns.insert(
                         id,
-                        Conn { stream, ip, reader, enc: None, wq: WriteQueue::new(), closing: false, want_out: false, last_read: now, last_frame: now, last_write: now },
+                        Conn { stream, ip, reader, enc: None, wq: WriteQueue::new(), closing: false, want_out: false, last_read: now, last_frame: now, last_write: now, born: now, bytes_in: 0, frames_in: 0 },
                     );
                     self.accepted.push((id, ip.to_string()));
                 }
@@ -557,6 +561,7 @@ impl Gateway {
                     }
                     Ok(n) => {
                         c.last_read = Instant::now();
+                        c.bytes_in += n as u64;
                         n
                     }
                     Err(e) if e.kind() == ErrorKind::WouldBlock => break,
@@ -595,6 +600,7 @@ impl Gateway {
                 Some(Item::Frame(payload)) => {
                     if let Some(c) = self.conns.get_mut(&id) {
                         c.last_frame = Instant::now();
+                        c.frames_in += 1;
                     }
                     self.stats.frames_in += 1;
                     if let Some(u) = &self.urgent {
@@ -720,18 +726,29 @@ impl Gateway {
     fn sweep_timeouts(&mut self) {
         let now = Instant::now();
         let limit = Duration::from_secs(self.cfg.read_timeout_s);
-        let mut dead: Vec<(u64, &'static str)> = Vec::new();
+        let mut dead: Vec<(u64, String)> = Vec::new();
         for (id, c) in self.conns.iter() {
+            let ctx = || {
+                format!(
+                    "{} s after connecting, {} bytes and {} frames read in all, last byte {} s ago, in play: {}, {} bytes queued to it",
+                    now.duration_since(c.born).as_secs(),
+                    c.bytes_in,
+                    c.frames_in,
+                    now.duration_since(c.last_read).as_secs(),
+                    c.reader.in_play(),
+                    c.wq.pending()
+                )
+            };
             if now.duration_since(c.last_read) > limit {
-                dead.push((*id, "read timeout (no bytes)"));
+                dead.push((*id, format!("read timeout (no bytes; {})", ctx())));
             } else if c.reader.buffered() > 0 && now.duration_since(c.last_frame) > limit {
-                dead.push((*id, "read timeout (a frame never completed)"));
+                dead.push((*id, format!("read timeout (a frame never completed; {})", ctx())));
             } else if !c.wq.is_empty() && now.duration_since(c.last_write) > limit {
-                dead.push((*id, "write timeout"));
+                dead.push((*id, format!("write timeout ({})", ctx())));
             }
         }
         for (id, why) in dead {
-            self.drop_conn(id, true, why);
+            self.drop_conn(id, true, &why);
         }
     }
 
