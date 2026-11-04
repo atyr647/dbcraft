@@ -29,6 +29,7 @@ $ADMIN -c "drop database if exists $TPL" -c "create database $TPL" 2>/dev/null
   if [ -n "$CAP" ]; then
     python3 tools/load_datapack.py "$CAP" >/dev/null 2>&1 && python3 tools/load_static_packets.py "$CAP" >/dev/null 2>&1 && python3 tools/load_world_ref.py >/dev/null 2>&1 \
       || echo "NOTE: datapack/static packets/world reference could not be loaded into the template (tests load what they need themselves)"
+    python3 tools/load_dynamics.py >/dev/null 2>&1 || echo "NOTE: no world-dynamics data (tools/gen_dynamics.sh): the dynamics tests skip"
   else echo "NOTE: no capture file; tests that need the vanilla capture are skipped by their own checks"; fi
 ) || exit 1
 echo "   template ready in $(( $(date +%s) - t0 )) s"

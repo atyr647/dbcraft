@@ -37,6 +37,8 @@ echo "== loading opaque play-entry packets"
 python3 tools/load_static_packets.py "$CAP"
 echo "== loading the flat world reference"
 python3 tools/load_world_ref.py
+echo "== loading the world-dynamics reference data (derived from the jar: tools/gen_dynamics.sh)"
+python3 tools/load_dynamics.py
 echo "== configuring the server"
 psql -X -q -v ON_ERROR_STOP=1 <<'SQL'
 select mc.configure_dev_server('dbcraft', 'creative');

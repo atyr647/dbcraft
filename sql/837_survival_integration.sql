@@ -52,6 +52,7 @@ begin
   select * into ch from mc.apply_chat(cur);                        t3 := clock_timestamp();
   perform mc.survival_input(cur, snap);                            s2 := clock_timestamp();                  -- (survival) respawn, start eating
   select * into vis from mc.refresh_visibility();                  t4 := clock_timestamp();
+  perform mc.dyn_step(cur);                                                                                   -- (world dynamics, sql/880-889) scheduled block and fluid ticks, random ticks, landing falling blocks
   perform mc.survival_entities(cur);                                                                          -- (survival) tracker, deaths, void, eating, food, health/experience
   select * into ka from mc.keepalive_due(cur);                     t5 := clock_timestamp();
   if cur % 20 = 0 then
