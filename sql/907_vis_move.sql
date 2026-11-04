@@ -30,7 +30,13 @@ begin
            case when coalesce((p.wp_state & 2) = 2, false) then false                                           -- a spectator is never on the ground (Player.tick, so from the entity phase of the tick it became one)
                 when p.fresh_join and p_cur - p.trk_start < 1 then false else p.on_ground end as og,        -- a first-time player is not on the ground yet when it is created
            mc.angle_byte(p.yaw) as yb, mc.angle_byte(p.pitch) as pb, mc.angle_byte(p.head_yaw) as hb
-      from mc.player p where p.conn_id is not null and p.trk_start is not null and p_cur >= p.trk_start and (p_cur - p.trk_start) % 2 = 0),
+      from mc.player p where p.conn_id is not null and p.trk_start is not null and p_cur >= p.trk_start and (p_cur - p.trk_start) % 2 = 0
+       -- only a player something can happen to: the cheap tests of the conditions below (a position or an angle byte that differs from what was sent, the 60-tick refresh, a ground flag that
+       -- differs, a spectator, a first-time player, the 400-body sync); everybody else produces nothing and is not updated, so an idle crowd costs one comparison per player
+       and ((p_cur - p.trk_start) % 60 = 0 or p.base_x is null or p.sent_yb is null or p.sent_pb is null or p.sent_hb is null
+            or (p.x - p.base_x) ^ 2 + (p.y - p.base_y) ^ 2 + (p.z - p.base_z) ^ 2 >= 7.62939453125E-6
+            or mc.angle_byte(p.yaw) <> p.sent_yb or mc.angle_byte(p.pitch) <> p.sent_pb or mc.angle_byte(p.head_yaw) <> p.sent_hb
+            or p.trk_ground is distinct from p.on_ground or coalesce((p.wp_state & 2) = 2, false) or p.fresh_join or (p_cur - p.trk_start - p.trk_sync) / 2 > 400)),
   a as materialized (
     select tr.*, ((x - base_x) ^ 2 + (y - base_y) ^ 2 + (z - base_z) ^ 2 >= 7.62939453125E-6) as pos_changed, (yb <> sent_yb or pb <> sent_pb) as rot_changed,
            mc.quant(x) - mc.quant(base_x) as dx, mc.quant(y) - mc.quant(base_y) as dy, mc.quant(z) - mc.quant(base_z) as dz, (tc - trk_sync) / 2 as tp1, trk_ground is distinct from og as gdiff

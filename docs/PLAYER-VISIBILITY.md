@@ -51,7 +51,20 @@ tick in which nobody changes anything costs a few scans of `mc.player`.
 packets of every step of both clients to be **equal, in the same order**.  Masked: entity ids (named by order of appearance), the order of the entries of one `update_attributes` (a hash set in
 vanilla), latencies, sounds, keep-alives, the clock, chunk data, recipes and advancements (their content).
 
-RESULTS_TABLE
+Result of the last full run (`tests/e2e/vis.sh compare`, dev gateway, survival, view distance 3; a step is one scripted action followed by what each client received until it went quiet):
+
+| Scenario | What it does | Act (the actor) | Obs (the observer) |
+|---|---|---|---|
+| `join` | Obs online; Act joins for the first time, is seen, leaves; joins again | 2 of 2 steps **identical**, and 2 of 2 in the second session | 7 of 7 steps **identical** (login burst, Act's first and returning join, the pairing bundle, the tab list, the locator bar, the leave) |
+| `pose` | crouch, sprint, swing, skin layers, hat, armor, held item, game modes | 28 of 30 identical; the 2 others differ only in the order of the modifiers inside one attribute (armor) | 25 of 30 identical; 3 armor/survival steps differ in that modifier order (one of them also when the dev gateway ticked between the two client packets of "legs and feet", which then go out as two `set_equipment`), `spectator` differs in the order of one position sync, `update_attributes` and the removal, `adventure` in the order of the waypoint and the tab-list update |
+| `walk` | walking, sprinting, turning, jumping, 7/9-block moves, `/tp` 10, 40 blocks and next to Obs | 13 of 14 identical (movement is compared as totals per step); the teleport next to Obs differs: dbcraft pairs Obs at once, vanilla at Act's next movement packet (the scripted client sends none after `/tp`) | 11 to 12 of 14: the jump differs (vanilla's `needsSync` bodies), the add-entity of a teleported player carries the velocity vanilla has and dbcraft does not, and a walking step can miss a movement body or two when the dev gateway (18 Hz in PL/Python) merges client packets |
+| `latency` | an idle player for 38 s | 2 of 2 identical (the broadcast and the refresh are counted, not their values) | 2 of 2 identical |
+| `range` | Act walks away and back along x, 256 blocks | 25 of 26 identical; the add-entity bundle and the chunk forgets of the way back are in the other order | 25 of 26 identical; the order of two waypoint packets differs once |
+| `view` | the client asks for view distances 2 to 10 and changes them | 8 of 8 **identical** (ring sends and forgets, no `set_chunk_cache_radius`) | 8 of 8 **identical** |
+
+The comparison is not deterministic to the last step: the dev gateway ticks at about 18 Hz under load and the vanilla recording is one run.  Repeating `join` four times gave
+identical results in three and one extra `entity_position_sync` at the end of the window in the fourth.  The packets that are **pinned byte for byte** by `tests/sql/900_vis.sql`
+(76 checks, run by `tests/sql/prun.sh`) come from the recordings; the cases above are what differs between the recording and a run.
 
 ## Not verified, not built
 
@@ -70,7 +83,10 @@ RESULTS_TABLE
 * **Who sees whom is re-evaluated** when a player joins, is teleported, changes chunk, moves 4 blocks from where it was last evaluated, changes game mode (at the next movement
   packet of anybody), or its client changes the view distance; vanilla re-evaluates a pair on every movement packet of either player.  A player may therefore appear or disappear
   up to 8 blocks away from the exact circle, and vanilla's one-sided transient states (A sees B while B does not see A) are not reproduced.  Chunks still pending delivery are not
-  considered (the circle always lies inside the chunk square).
+  considered (the circle always lies inside the chunk square).  After a `/tp` vanilla pairs the teleported player as a TARGET at once but as a VIEWER only at its next movement
+  packet (a real client sends one immediately, the scripted client does not): dbcraft pairs both ways at once (`walk`, "teleport next to Obs").  Whether the add-entity bundle or the chunk
+  forgets of a teleported player come first was recorded in two cases that disagree with each other (`walk` after `/tp` to Obs's side: no bundle in the window at all; `range`, `/tp`
+  followed by position packets: bundle first, then the forgets); dbcraft pairs a teleported viewer after its chunks were sent, which matches neither exactly (the one `range` step).
 * **Latency**: the value is the keep-alive round trip counted in ticks and smoothed like vanilla; the real server measures milliseconds.  The broadcast is every 601 ticks of game time,
   vanilla's counter starts with the server process.  The comparison counts the broadcasts, it does not compare their values.
 * **First-time joins**: the recipe list, the advancement update and the command tree are still the captured bytes (`net.static_packet`; not generated from rows).  Vanilla spreads
@@ -89,4 +105,27 @@ RESULTS_TABLE
 
 ## Cost per tick
 
-COST_TABLE
+Measured with `tests/bench/game` (500 players over 100 x 100 chunks, every tick `bench.gen` > `mc.tick` > `bench.drain`, 120 ticks, the first 20 skipped) against the commit this work
+started from (c914d77, built from a source archive into a separate database).  The machine was shared with other jobs (load average 10 to 15 on 4 cores), so **wall time is not
+meaningful** (the same baseline ran 146 to 185 ms); the table is the CPU time of the one backend that runs the ticks (`/proc/self/stat`, two runs each; it contains the bench's own
+move generation and drain, a constant of about 10 ms):
+
+| Moving | baseline c914d77 | this tree, `dbcraft.vanilla-tracker = false` | this tree, tracker on (default) |
+|---|---|---|---|
+| 0 % (idle crowd) | 12.7 ms | 15.1 ms | 25 to 27 ms |
+| 20 % | 36.6 ms | 37.2 ms | 49.9 ms |
+| 100 % | 59.8 to 60.1 ms | 62.8 to 63.8 ms | 90 to 104 ms |
+
+* With the tracker **off** the cost is +3 ms (+5 %), the price of the new columns and the extra checks in the movement path.
+* With the tracker **on**, 500 players who all move cost about **+30 to +40 ms per tick** (the 50 ms budget is exceeded; the baseline was already at its edge), an idle crowd about +12 ms.
+  Where it goes at 100 % moving (wall ms per tick on the loaded machine, sum 61): `vis_move` 25 (every second tick: the movement bodies, one wide `UPDATE` of `mc.player`), `vis_input` 13 (a scan of
+  `mc.play_in_work`, a bloated queue in this benchmark that `tick_core` also scans), `vis_head` 9.5 (the head follows the yaw: another `UPDATE` of every rotating row), the entity phase 4.5, the
+  entity-data pass 4, row initialisation 2, first ticks 2, waypoints 1.  The cost is the rewriting of wide `mc.player` rows several times a tick, not the arithmetic.
+  A narrow table for the tracker columns (base position, sent angles, counters) would make most of it go away; it was not done.  `vis_move` skips players nothing can happen to (one comparison
+  each), which helps an idle crowd less than hoped on this noisy machine.
+* The tracker sees **fewer pairs** than the classic broadcast (14 against 19 viewers per player at view distance 10: a circle instead of a square), so it queues half the output rows (276 against 542 per tick).
+* The **locator bar** is not in these numbers: above `dbcraft.locator-bar-max-players` (120) it is switched off, and its cost at that size was not measured.  It is a row per pair of players.
+* With a few players the cost is invisible: the steps of `mc.vis_step` are each a scan of `mc.player`.
+
+To repeat: build two databases (the old tree from a source archive, this tree), run `tests/bench/game/run.sh 500 100 1.0 120` for the wall-time report of the phases, and read the CPU time of the
+session around the ticks (`pg_read_file('/proc/self/stat')`, fields 14 and 15); the two helper scripts were scratch files and are not in the repository.
