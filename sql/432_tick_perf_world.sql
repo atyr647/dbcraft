@@ -171,6 +171,12 @@ begin
                 perform mc.set_block(dim, tx, ty, tz, blk);
                 insert into mc.block_actor values (dim, tx, ty, tz, r.conn_id);
                 places := places + 1;
+                -- the viewers of the placing player see its arm swing, twice (recorded from the real server: two identical swing_animation packets before the block update)
+                if mc.vis_on() then
+                    insert into mc.play_out (conn_id, data)
+                    select v.viewer_conn, mc.pkt_swing(v.target_eid, hand, 1, 6) || mc.pkt_swing(v.target_eid, hand, 1, 6)
+                      from mc.visible v join mc.player t on t.entity_id = v.target_eid where t.uuid = r.uuid and v.viewer_conn <> r.conn_id order by v.viewer_conn;
+                end if;
                 -- vanilla (recorded): the placing player is sent the clicked block's state and the new block's state, then the broadcast sends the new
                 -- block again, then the ack: [clicked, target, target, ack]
                 perform mc.queue_block_update(r.conn_id, pos.x, pos.y, pos.z, clicked);
@@ -251,7 +257,7 @@ begin
              order by dimension, cx, cz, sy
         loop
             -- only sections some connection can see are encoded
-            if not exists (select 1 from net.conn c where c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - s.cx) <= r and abs(c.view_cz - s.cz) <= r) then
+            if not exists (select 1 from net.conn c where c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - s.cx) <= coalesce(c.view_r, r) and abs(c.view_cz - s.cz) <= coalesce(c.view_r, r)) then
                 continue;
             end if;
             if s.nev = 1 and s.has_cells and s.cellss[1] = full_cells then ord := full_ord;           -- one fill of the whole section: the order is a constant
@@ -279,7 +285,7 @@ begin
             insert into mc.play_out (conn_id, data)
             select c.conn_id, proto.frame(i_le, proto.i32(2001) || proto.position(b.x, b.y, b.z) || proto.i32(b.old_id) || '\x00'::bytea)
             from unnest(a_dim, a_x, a_y, a_z, a_old, a_new) as b(dimension, x, y, z, old_id, new_id)
-            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= r and abs(c.view_cz - (b.z >> 4)) <= r
+            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= coalesce(c.view_r, r) and abs(c.view_cz - (b.z >> 4)) <= coalesce(c.view_r, r)
             where b.new_id = 0 and b.old_id <> 0
               and not exists (select 1 from mc.block_actor a where a.dimension = b.dimension and a.x = b.x and a.y = b.y and a.z = b.z and a.conn_id = c.conn_id)
             order by b.x, b.y, b.z;
@@ -288,20 +294,20 @@ begin
             insert into mc.play_out (conn_id, data)
             select c.conn_id, proto.frame(i_bu, proto.position(b.x, b.y, b.z) || proto.varint(b.new_id))
             from unnest(u_dim, u_x, u_y, u_z, u_id) as b(dimension, x, y, z, new_id)
-            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= r and abs(c.view_cz - (b.z >> 4)) <= r
+            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - (b.x >> 4)) <= coalesce(c.view_r, r) and abs(c.view_cz - (b.z >> 4)) <= coalesce(c.view_r, r)
             order by b.x, b.y, b.z;
         end if;
         if mn > 0 then
             insert into mc.play_out (conn_id, data)
             select c.conn_id, k.pkt
             from unnest(m_cx, m_cz, m_pkt) with ordinality as k(cx, cz, pkt, ord)
-            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= r and abs(c.view_cz - k.cz) <= r
+            join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= coalesce(c.view_r, r) and abs(c.view_cz - k.cz) <= coalesce(c.view_r, r)
             order by k.ord, c.conn_id;
         end if;
         if kx is not null then
             insert into mc.play_out (conn_id, data)
             select c.conn_id, mc.chunk_packet(k.dimension, k.cx, k.cz)
-            from unnest(kd, kx, kz) with ordinality as k(dimension, cx, cz, ord) join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= r and abs(c.view_cz - k.cz) <= r
+            from unnest(kd, kx, kz) with ordinality as k(dimension, cx, cz, ord) join net.conn c on c.state = 'play' and not c.closing and c.view_cx is not null and abs(c.view_cx - k.cx) <= coalesce(c.view_r, r) and abs(c.view_cz - k.cz) <= coalesce(c.view_r, r)
             order by k.ord, c.conn_id;
         end if;
     end if;

@@ -24,7 +24,7 @@ begin
     if not exists (select 1 from mc.chunk_wanted) then return 0; end if;
     delete from mc.chunk_wanted w
      where not exists (select 1 from net.conn c where c.conn_id = w.conn_id and c.state = 'play' and not c.closing and c.view_cx is not null
-                          and abs(c.view_cx - w.cx) <= r and abs(c.view_cz - w.cz) <= r);
+                          and abs(c.view_cx - w.cx) <= coalesce(c.view_r, r) and abs(c.view_cz - w.cz) <= coalesce(c.view_r, r));
     select array_agg(q.conn_id), array_agg(q.dimension), array_agg(q.cx), array_agg(q.cz), array_agg(q.dist) into rc, rd, rx, rz, rdist
       from (select q0.*, row_number() over (order by q0.rn, q0.conn_id) as gr         -- round-robin: every connection's nearest first, then every one's second, ...
               from (select w.conn_id, w.dimension, w.cx, w.cz, w.dist, row_number() over (partition by w.conn_id order by w.dist, w.cx, w.cz) rn

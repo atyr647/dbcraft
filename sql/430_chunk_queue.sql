@@ -172,13 +172,13 @@ end $$;
 -- net.hook_chunks (called when a player enters play): the chunks of the square that exist now, as bodies, nearest first.  The ones that do not exist are
 -- generated at once (inline) or queued (async) and arrive through mc.deliver_ready_chunks.  Set-based: no per-chunk call.
 create or replace function net.hook_chunks(p_conn bigint, p_cx int, p_cz int, p_radius int) returns setof bytea language plpgsql volatile as $$
-declare r int := p_radius + 1; dim text := 'minecraft:overworld'; r_cx int[]; r_cz int[]; r_d int[];
+declare r int := mc.conn_view_r(p_conn::int, p_radius + 1); dim text := 'minecraft:overworld'; r_cx int[]; r_cz int[]; r_d int[];
 begin
     if not mc.world_ready() then
         raise notice 'net.hook_chunks: world reference data is not loaded (run tools/load_world_ref.py); no chunks sent to connection %', p_conn;
         return;
     end if;
-    update net.conn set view_cx = p_cx, view_cz = p_cz where conn_id = p_conn;
+    update net.conn set view_cx = p_cx, view_cz = p_cz, view_r = r where conn_id = p_conn;
     -- the chunks that do not exist yet: generated now (inline; they are returned below) or queued and delivered later (async)
     select array_agg(p_cx + dx), array_agg(p_cz + dz), array_agg(dx * dx + dz * dz) into r_cx, r_cz, r_d
       from generate_series(-r, r) dx cross join generate_series(-r, r) dz

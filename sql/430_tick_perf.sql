@@ -18,8 +18,8 @@ end $$;
 create or replace function net.process_fast() returns int language plpgsql as $$
 declare r record; n int; handled int[] := net.handled_play_ids();
         known int[] := (select coalesce(array_agg(protocol_id), '{}') from ref.packet where state = 'play' and direction = 'serverbound');
-        i_ka int := mc.sid('keep_alive'); i_tp int := mc.sid('accept_teleportation');
-        both_ids int[] := array[i_ka, i_tp];
+        i_ka int := mc.sid('keep_alive'); i_tp int := mc.sid('accept_teleportation'); i_ci int := mc.sid('client_information');
+        both_ids int[] := array[i_ka, i_tp, i_ci];       -- (client_information: the game reads the skin layers, main hand and view distance too: sql/904)
 begin
     perform net.join_gate();                          -- sql/790: admission gate for logins (parks/releases hello packets; a no-op when nothing is queued or the budget is off)
     delete from net.batch;

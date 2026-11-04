@@ -29,13 +29,13 @@ begin
   with m as materialized (select mc.pkt_system_chat(proto.nbt_root(mc.tc_translate('multiplayer.player.joined', array[mc.tc_player(p.uuid, p.name)], 'yellow'))) as d)
   insert into mc.play_out (conn_id, data)
     select o.conn_id, m.d from mc.player o, m where o.conn_id is not null and (p_to_joiner or o.conn_id <> p_conn) order by o.entity_id;
-  with m as materialized (select mc.pkt_player_info_add(array[mc.pie_add(p.uuid, p.name, p.gamemode)]) as d)
+  with m as materialized (select mc.pkt_player_info_add(array[mc.pie_add(p.uuid, p.name, p.gamemode, hat => coalesce((select ((client_info ->> 'skin_parts')::int & 64) <> 0 from net.conn where conn_id = p_conn), false))]) as d)
   insert into mc.play_out (conn_id, data)
     select o.conn_id, m.d from mc.player o, m where o.conn_id is not null and (p_to_joiner or o.conn_id <> p_conn) order by o.entity_id;
   -- 2. the joiner learns the players that are already online
   if p_to_joiner then
     insert into mc.play_out (conn_id, data)
-      select p_conn, mc.pkt_player_info_add(array_agg(mc.pie_add(o.uuid, o.name, o.gamemode) order by o.entity_id))
+      select p_conn, mc.pkt_player_info_add(array_agg(mc.pie_add(o.uuid, o.name, o.gamemode, hat => coalesce(o.sent_hat, false)) order by o.entity_id))
         from mc.player o where o.conn_id is not null and o.uuid <> p.uuid having count(*) > 0;
   end if;
   return p;
@@ -55,6 +55,8 @@ begin
     -- round 2: false = mc.on_join builds no rows for the joiner itself.  The original deleted them right after (DELETE ... WHERE seq > before AND conn_id = ...), and
     -- mc.play_out has no index, so every join scanned the whole queue: with a storm queueing about 1,200 rows per joiner that was quadratic in the number of joiners.
     p := mc.on_join(p_conn::int, c.uuid, c.name, false);
+    perform mc.vis_join(p_conn::int, c.uuid);                       -- sql/906: client information, first-time or returning, the visible-state baselines
+    select * into p from mc.player where uuid = c.uuid;
     -- the join teleport id is 1 (the next correction uses 2); the first keep-alive is due 15 s after joining, as in vanilla, not on the first tick
     update mc.player set teleport_id = 1, awaiting_teleport = null, keepalive_id = null, keepalive_sent_tick = gs.game_time where uuid = p.uuid;
 

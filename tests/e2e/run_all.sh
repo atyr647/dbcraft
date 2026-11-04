@@ -50,6 +50,18 @@ else
   echo "skipped: no $E2E/vanilla_fill.json (tests/e2e/record_vanilla.sh records it; the vanilla server needs RCON)"
 fi
 
+step "what other players see: entity data, equipment, attributes, swings, movement, the locator bar, view distance, joins (tests/e2e/vis.sh)"
+VIS=${VIS_DIR:-/tmp/dbcraft-e2e-vis}
+if [ -f "$VIS/vanilla_pose_obs.jsonl" ]; then
+  # the scenarios run in survival with view distance 3 (what the vanilla recording used)
+  psql_ours="psql -X -q -At -h /tmp -p $DBCRAFT_PGPORT -U postgres dbcraft"
+  $psql_ours -c "update mc.server_property set value = 'survival' where key = 'gamemode'" -c "update mc.server_property set value = '3' where key in ('view-distance', 'simulation-distance')" \
+             -c "update mc.server_property set value = 'normal' where key = 'difficulty'" -c "select net.sync_settings()" > /dev/null
+  PGHOST=/tmp PGPORT=$DBCRAFT_PGPORT PGUSER=postgres PGDATABASE=dbcraft VIS_DIR=$VIS tests/e2e/vis.sh compare $PORT || rc=1
+else
+  echo "skipped: no $VIS/vanilla_pose_obs.jsonl (tests/e2e/vis.sh record makes the vanilla recordings; it starts its own vanilla server)"
+fi
+
 step "gateway status"
 tests/e2e/gateway.sh status
 tests/e2e/gateway.sh stop

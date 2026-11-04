@@ -20,6 +20,7 @@ python3 tools/load_reports.py
 python3 tools/load_datapack.py "$CAP"
 python3 tools/load_static_packets.py "$CAP"
 python3 tools/load_world_ref.py
+python3 tools/load_item_components.py || echo "NOTE: no item components (tools/bootstrap.sh makes them): worn items add no attribute modifiers"
 psql -X -q -v ON_ERROR_STOP=1 <<'SQL'
 select mc.configure_dev_server('dbcraft e2e', 'creative');
 update mc.server_property set value = '2'        where key in ('view-distance', 'simulation-distance');

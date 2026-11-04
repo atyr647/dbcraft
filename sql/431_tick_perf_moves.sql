@@ -17,7 +17,7 @@ declare
   iv int := coalesce(nullif((select value::int from mc.server_property where key = 'dbcraft.player-update-interval'), 0), 2);   -- vanilla: a player's update interval is 2 ticks (EntityType.PLAYER.updateInterval(2); sendChanges runs its body when tickCount % 2 = 0; each ServerEntity counts from its own creation, so the phase differs per entity: here (tick + entity id) % interval)
   i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot'); i_rot int := mc.sid('move_player_rot');
   i_st int := mc.sid('move_player_status_only'); i_te int := mc.sid('client_tick_end'); i_tp int := mc.sid('accept_teleportation');
-  kicked_conns int[];
+  kicked_conns int[]; vison boolean := mc.vis_on();       -- (sql/900: with dbcraft.vanilla-tracker the broadcast is mc.vis_move's, sql/907)
   c_pos int := mc.pid('move_entity_pos'); c_pr int := mc.pid('move_entity_pos_rot'); c_rot int := mc.pid('move_entity_rot'); c_head int := mc.pid('rotate_head');
 begin
   create temp table if not exists _mv (conn_id int, seq bigint, kind "char", x float8, y float8, z float8, yaw real, pitch real, flags int, seg int, pos_n int, bad boolean) on commit delete rows;
@@ -98,7 +98,8 @@ begin
       on_ground = f.on_ground,
       chunk_x = case when f.has_pos then floor(greatest(-3.0e7, least(3.0e7, f.x)) / 16)::int else p.chunk_x end,
       chunk_z = case when f.has_pos then floor(greatest(-3.0e7, least(3.0e7, f.z)) / 16)::int else p.chunk_z end,
-      vis_dirty = p.vis_dirty or (f.has_pos and (floor(f.x / 16)::int <> p.chunk_x or floor(f.z / 16)::int <> p.chunk_z))
+      vis_dirty = p.vis_dirty or (f.has_pos and (floor(f.x / 16)::int <> p.chunk_x or floor(f.z / 16)::int <> p.chunk_z or coalesce(vison and (f.x - p.vis_x) ^ 2 + (f.z - p.vis_z) ^ 2 >= 16, false))),     -- (sql/909: with the exact rule also 4 blocks from where the pairs were last evaluated)
+      last_move_tick = cur_tick
     from _fin f where p.conn_id = f.conn_id;
 
   perform mc.prof('6 apply to mc.player');
@@ -110,7 +111,7 @@ begin
            mc.quant(x) - sent_qx as dx, mc.quant(y) - sent_qy as dy, mc.quant(z) - sent_qz as dz,
            (yaw <> sent_yaw or pitch <> sent_pitch) as rot_changed, least(greatest(cur_tick - last_sent_tick, 1), iv)::int as ticks
       from mc.player
-     where conn_id is not null and (cur_tick + entity_id) % iv = 0 and (mc.quant(x) <> sent_qx or mc.quant(y) <> sent_qy or mc.quant(z) <> sent_qz or yaw <> sent_yaw or pitch <> sent_pitch)),
+     where not vison and conn_id is not null and (cur_tick + entity_id) % iv = 0 and (mc.quant(x) <> sent_qx or mc.quant(y) <> sent_qy or mc.quant(z) <> sent_qz or yaw <> sent_yaw or pitch <> sent_pitch)),
   -- Frames are assembled inline from the packet ids looked up once per call (c_*), not through the mc.pkt_* builders: each builder call is a separate
   -- function execution with its own packet-id lookup (72 us per mover measured).  The bytes are the same as mc.pkt_move_entity_pos / _pos_rot / _rot /
   -- mc.pkt_rotate_head (the tests compare them); only the teleport fallback, which is rare, still uses the builder.
@@ -154,7 +155,7 @@ declare
   i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot'); i_rot int := mc.sid('move_player_rot');
   i_st int := mc.sid('move_player_status_only'); i_te int := mc.sid('client_tick_end'); i_tp int := mc.sid('accept_teleportation');
   c_pos int := mc.pid('move_entity_pos'); c_pr int := mc.pid('move_entity_pos_rot'); c_rot int := mc.pid('move_entity_rot'); c_head int := mc.pid('rotate_head');
-  slow boolean; kicked_conns int[]; fin mc.move_fin[];
+  slow boolean; kicked_conns int[]; fin mc.move_fin[]; vison boolean := mc.vis_on();       -- (sql/900: with dbcraft.vanilla-tracker the broadcast is mc.vis_move's, sql/907)
   f_eid int[]; f_data bytea[]; f_ocx int[]; f_ocz int[]; v_conn int[]; v_eid int[]; v_cx int[]; v_cz int[]; any_dirty boolean;   -- the fan-out's inputs (sql/430_tick_perf_fanout.sql)
 begin
   select coalesce(count(*) filter (where m.packet_id in (i_pos, i_pr)) <> count(distinct m.conn_id) filter (where m.packet_id in (i_pos, i_pr)), false)
@@ -230,14 +231,14 @@ begin
            case when f.conn_id is not null then f.on_ground else p.on_ground end as nog,
            case when f.has_pos then floor(greatest(-3.0e7, least(3.0e7, f.x)) / 16)::int else p.chunk_x end as ncx,
            case when f.has_pos then floor(greatest(-3.0e7, least(3.0e7, f.z)) / 16)::int else p.chunk_z end as ncz,
-           p.vis_dirty or coalesce(f.has_pos and (floor(f.x / 16)::int <> p.chunk_x or floor(f.z / 16)::int <> p.chunk_z), false) as nvd
+           p.vis_dirty or coalesce(f.has_pos and (floor(f.x / 16)::int <> p.chunk_x or floor(f.z / 16)::int <> p.chunk_z or (vison and (f.x - p.vis_x) ^ 2 + (f.z - p.vis_z) ^ 2 >= 16)), false) as nvd      -- (sql/909: ... or 4 blocks from where the pairs were last evaluated)
       from mc.player p left join unnest(fin) f on f.conn_id = p.conn_id
      where p.conn_id is not null),
   mv as materialized (
     select nv.*, mc.quant(nx) - sent_qx as dx, mc.quant(ny) - sent_qy as dy, mc.quant(nz) - sent_qz as dz,
            (nyaw <> sent_yaw or npitch <> sent_pitch) as rot_changed, least(greatest(cur_tick - last_sent_tick, 1), iv)::int as ticks
       from nv
-     where (cur_tick + eid) % iv = 0 and (mc.quant(nx) <> sent_qx or mc.quant(ny) <> sent_qy or mc.quant(nz) <> sent_qz or nyaw <> sent_yaw or npitch <> sent_pitch)),
+     where not vison and (cur_tick + eid) % iv = 0 and (mc.quant(nx) <> sent_qx or mc.quant(ny) <> sent_qy or mc.quant(nz) <> sent_qz or nyaw <> sent_yaw or npitch <> sent_pitch)),
   pk as materialized (
     select mv.eid, mv.ocx, mv.ocz,
       (case when abs(dx) > 32767 or abs(dy) > 32767 or abs(dz) > 32767 then mc.pkt_teleport_entity(mv.eid, nx, ny, nz, 0, 0, 0, nyaw, npitch, nog)
@@ -255,6 +256,7 @@ begin
   upd as (
     update mc.player p set x = n.nx, y = n.ny, z = n.nz, yaw = n.nyaw, pitch = n.npitch, on_ground = n.nog, chunk_x = n.ncx, chunk_z = n.ncz, vis_dirty = n.nvd,
            vis_ocx = case when n.nvd and not n.ovd then n.ocx else p.vis_ocx end, vis_ocz = case when n.nvd and not n.ovd then n.ocz else p.vis_ocz end,   -- the chunk mc.visible was computed from (sql/468)
+           last_move_tick = case when n.touched then cur_tick else p.last_move_tick end,       -- (sql/900: a movement packet of any kind)
            sent_qx = case when m.eid is not null then mc.quant(n.nx) else p.sent_qx end,
            sent_qy = case when m.eid is not null then mc.quant(n.ny) else p.sent_qy end,
            sent_qz = case when m.eid is not null then mc.quant(n.nz) else p.sent_qz end,
