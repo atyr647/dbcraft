@@ -74,8 +74,10 @@ begin
                       cx = floor((e.x + e.gx * greatest(lt - e.phys_tick, 0)) / 16)::int, cz = floor((e.z + e.gz * greatest(lt - e.phys_tick, 0)) / 16)::int,
                       sent_qx = l0.sqx, sent_qy = l0.sqy, sent_qz = l0.sqz, sent_yaw = l0.syaw, last_sent_tick = l0.last_tick
                  from (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from unnest(p_dim, p_x, p_y, p_z) u(dimension, x, y, z)) ev, mc.entity_lane l0
-                where l0.id = e.id and e.lane_until > 0 and e.dimension = ev.dimension and e.cx between ev.ecx - 2 and ev.ecx + 2 and e.cz between ev.ecz - 2 and ev.ecz + 2 returning e.id)
+                where l0.id = e.id and not l0.auto and e.lane_until > 0 and e.dimension = ev.dimension and e.cx between ev.ecx - 2 and ev.ecx + 2 and e.cz between ev.ecz - 2 and ev.ecz + 2 returning e.id)
     delete from mc.entity_lane l using u where l.id = u.id;
+    perform mc.entity_auto_end(array(select l.id from mc.entity_lane l join (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from unnest(p_dim, p_x, p_y, p_z) u(dimension, x, y, z)) ev
+                                       on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 2 and ev.ecx + 2 and l.cz between ev.ecz - 2 and ev.ecz + 2), lt, lt);
 end $$;
 
 ------------------------------------------------------------------------------------------------ the trigger: in split mode a command instead of an UPDATE of B's rows
@@ -100,8 +102,12 @@ begin
                       cx = floor((e.x + e.gx * greatest(lt - e.phys_tick, 0)) / 16)::int, cz = floor((e.z + e.gz * greatest(lt - e.phys_tick, 0)) / 16)::int,
                       sent_qx = l0.sqx, sent_qy = l0.sqy, sent_qz = l0.sqz, sent_yaw = l0.syaw, last_sent_tick = l0.last_tick
                  from (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from new_ev) ev, mc.entity_lane l0
-                where l0.id = e.id and e.lane_until > 0 and e.dimension = ev.dimension and e.cx between ev.ecx - 2 and ev.ecx + 2 and e.cz between ev.ecz - 2 and ev.ecz + 2 returning e.id)
+                where l0.id = e.id and not l0.auto and e.lane_until > 0 and e.dimension = ev.dimension and e.cx between ev.ecx - 2 and ev.ecx + 2 and e.cz between ev.ecz - 2 and ev.ecz + 2 returning e.id)
     delete from mc.entity_lane l using u where l.id = u.id;
+    -- autonomous lanes (sql/940): the state after the last entity tick (the clock row: this may run in another session than the entity tick)
+    perform mc.entity_auto_end(array(select l.id from mc.entity_lane l join (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from new_ev) ev
+                                       on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 2 and ev.ecx + 2 and l.cz between ev.ecz - 2 and ev.ecz + 2),
+                               coalesce((select c.last_tick from mc.entity_clock c), lt), coalesce((select c.last_tick from mc.entity_clock c), lt));
     return null;
 end $$;
 
@@ -194,17 +200,22 @@ end $$;
 
 create or replace function mc.entity_tick(p_tick bigint default null) returns int language plpgsql volatile as $$
 declare t bigint := coalesce(p_tick, (select game_time from mc.game_state limit 1), 0); ids int[]; lids int[] := '{}'; fl int[] := '{}'; ai int[];
-        t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; nsent int; npick int; lanes boolean := mc.entity_lanes_enabled();
+        t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; nsent int; npick int; lanes boolean := mc.entity_lanes_enabled(); prev bigint;
 begin
     if coalesce(current_setting('dbcraft.entity_impl', true), '') = 'proto' then return mc.entity_tick_proto(t); end if;       -- the original prototype (tests/bench/entity/proto_baseline.sql), for comparison only
     if mc.entity_mode() = 'split' then perform mc.entity_cmd_apply(t); end if;      -- what the player connection asked for since the last tick (BEFORE the tick number moves: wake-ups use the last tick as their lane time)
     perform set_config('dbcraft.entity_tick', t::text, false);
+    -- the steps of an autonomous lane (sql/940) are a closed form of the tick: they assume that the tick before this one ran.  When it did not (the entity connection jumped, a new
+    -- clock after a crash) every lane is re-anchored at the last tick that did run, with the viewers' real delta base stored
+    select c.last_tick into prev from mc.entity_clock c;
+    if prev is distinct from t - 1 then perform mc.entity_auto_rebase(coalesce(prev, t - 1)); end if;
     perform mc.entity_viewers_refresh(t);
     if lanes then fl := mc.entity_lane_flush(t); else perform mc.entity_lane_flush_all(t); end if;
     ai := mc.entity_ai_ids(t);
     if coalesce(current_setting('dbcraft.entity_spawner', true), 'on') <> 'off' then perform mc.entity_spawner(t); end if;
     perform mc.entity_despawn(t);
     if lanes then
+        perform mc.entity_auto_try(t, fl || ai);                -- a mob that just got a goal and stands on a clean floor starts an autonomous lane (sql/940)
         perform mc.entity_lane_try(t, fl || ai);                  -- goal just given: walk on in a lane if the footprint is clean (no sweep this tick)
         lids := mc.entity_lane_step(t);                         -- lean tracker for lane mobs: plain packets built here, a position sync (rare) comes back for the generic tracker
     end if;
@@ -214,12 +225,14 @@ begin
     nsent := mc.entity_tracker(t, ids || lids);
     -- landed, just placed, or back from a position sync: may (re)start a lane.  AFTER the tracker: a lane copies what the viewers were last told, and this tick's packet is part of it
     -- (started before it, the lane's delta base would be one packet behind the viewers: found by tests/sql/541 E, a constant offset of that packet's delta).
-    if lanes then perform mc.entity_lane_try(t, ids || lids); end if;
+    if lanes then perform mc.entity_auto_try(t, ids || lids); perform mc.entity_lane_try(t, ids || lids); end if;
     t3 := clock_timestamp();
     npick := mc.entity_pickup_dispatch(t);
     t4 := clock_timestamp();
+    update mc.entity_clock set last_tick = t;
+    if t % 1000 = 0 then delete from mc.entity_tick_log where tick < t - 6000; end if;      -- the log was never trimmed
     insert into mc.entity_tick_log (tick, awake, moved, sent, packets, ms_physics, ms_ai, ms_tracker, ms_pickup, ms_total)
-    values (t, cardinality(ids) + cardinality(lids) + (select count(*)::int from mc.entity_lane), nsent, nsent, 0, extract(epoch from t2 - t1) * 1000, extract(epoch from t1 - t0) * 1000, extract(epoch from t3 - t2) * 1000, extract(epoch from t4 - t3) * 1000, extract(epoch from t4 - t0) * 1000)
+    values (t, cardinality(ids) + cardinality(lids) + coalesce(nullif(current_setting('dbcraft.entity_auto_n', true), '')::int, 0), nsent, nsent, 0, extract(epoch from t2 - t1) * 1000, extract(epoch from t1 - t0) * 1000, extract(epoch from t3 - t2) * 1000, extract(epoch from t4 - t3) * 1000, extract(epoch from t4 - t0) * 1000)
     on conflict (tick) do update set awake = excluded.awake, moved = excluded.moved, sent = excluded.sent, packets = excluded.packets, ms_physics = excluded.ms_physics, ms_ai = excluded.ms_ai,
                                      ms_tracker = excluded.ms_tracker, ms_pickup = excluded.ms_pickup, ms_total = excluded.ms_total;
     return cardinality(ids) + cardinality(lids);

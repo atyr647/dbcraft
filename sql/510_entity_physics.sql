@@ -91,6 +91,8 @@ create or replace function mc.entity_physics_ids(p_tick bigint) returns int[] la
 declare ids int[]; nxs float8[]; nys float8[]; nzs float8[]; vxs float8[]; vys float8[]; vzs float8[]; ogs boolean[]; deeps boolean[]; ncxs int[]; nczs int[];
         m_dim text[]; m_cx int[]; m_cz int[]; m_sy int[]; n int := 0;
 begin
+    -- nothing awake outside the lanes (the usual case with mobs in lanes and items asleep): one probe of the partial index instead of the planning and set-up of the statement below
+    if to_regclass('mc.entity_lane') is not null and not exists (select 1 from mc.entity e where not e.deep_sleep and e.lane_until = 0) then return '{}'::int[]; end if;
     with a as materialized (
         select a.*, w.x0, w.x1, w.y0, w.y1, w.z0, w.z1
         from mc.entity_active(p_tick) a

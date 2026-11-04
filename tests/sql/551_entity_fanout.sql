@@ -70,13 +70,13 @@ select set_config('dbcraft.entity_tick', '3', false);
 select mc.entity_viewers_refresh(3);
 select cardinality(mc.entity_lane_step(3)) as synced;
 create table t.act_a as select o.conn_id::int as conn, p.pkt from mc.play_out o cross join lateral t.split(o.data) p(pkt);
-select t.eq('A: every viewer gets at most one play_out row', (select count(*)::int from (select conn_id from mc.play_out group by conn_id having count(*) > 1) q), 0);
+select t.eq('A: every viewer gets at most two play_out rows (one per statement: the autonomous lanes of the cows, the chasing lanes of the zombies)', (select count(*)::int from (select conn_id from mc.play_out group by conn_id having count(*) > 2) q), 0);
 select t.eq('A: viewers D (far away) gets no row, C gets one', (select count(*)::int from mc.play_out where conn_id in (4)), 0);
 select t.is_true('A: the packets every viewer receives are EXACTLY the expected ones (same multiset, byte for byte)',
                  not exists (select 1 from (select conn, pkt, count(*) from t.exp_a group by 1, 2 except select conn, pkt, count(*) from t.act_a group by 1, 2) d)
                  and not exists (select 1 from (select conn, pkt, count(*) from t.act_a group by 1, 2 except select conn, pkt, count(*) from t.exp_a group by 1, 2) d));
 select t.is_true('A: the mobs of one cell are concatenated in id order in one blob (viewer A: the packet of 6001 directly followed by the packet of 6005)',
-                 (select position((select pkt from t.exp_a where conn = 1 and id = 6001) || (select pkt from t.exp_a where conn = 1 and id = 6005) in o.data) > 0 from mc.play_out o where o.conn_id = 1));
+                 (select bool_or(position((select pkt from t.exp_a where conn = 1 and id = 6001) || (select pkt from t.exp_a where conn = 1 and id = 6005) in o.data) > 0) from mc.play_out o where o.conn_id = 1));
 
 ------------------------------------------------------------------------------------------------ B  view distance 3: the range probe is skipped, nobody may get packets out of range
 select t.scenario(3);
