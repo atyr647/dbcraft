@@ -92,14 +92,14 @@ chat message index surviving across sessions.
   from the class but not compared and is unused), survival break timing (the client's word is trusted), `teleport_entity`, several command feedback keys
   (`docs/GAME.md`), keep-alive timing, two real clients' chunk batching, behaviour with a real vanilla client (the test client is a scripted one that answers like a real one).
 * **A first-time player** gets a different burst from a returning one in vanilla (a `recipe_book_add` instead of `update_attributes`); dbcraft sends the returning burst to everyone.
-* **Opaque rows**: recipes, the command tree (`commands`), advancements and the player's own entity data and attributes are stored as captured bytes
+* **Opaque rows**: recipes, advancements and the player's own entity data and attributes are stored as captured bytes
   (`net.static_packet`), correct for a creative player in a flat world, not generated from rows.
 * **Online mode** (RSA, session check, AES-CFB8) and **deflate**: none in SQL; the production gateway has to do them. Without deflate, no packet can be compressed, so
   the dev server runs uncompressed (a join is about 3.3 MB at view distance 9).
 * **World**: flat only. Light is the straight-down model (exact for flat worlds; 76% of sky layers on real terrain). No block light, no terrain generator, no biomes API, no
   structures, block entity data is raw bytes.
 * **Gameplay**: no mobs or other entities beyond players, no damage/death/hunger, no redstone or block ticks (grass does not spread), placement uses default states only, no
-  containers other than the player inventory, no sounds, no entity metadata/waypoint packets, no chat signing or rate limits, no `/seed`, `/kill`, selectors.
+  containers other than the player inventory, no sounds, no entity metadata/waypoint packets, no chat signing or rate limits; about 70 of vanilla's commands answer "not implemented".
 * **Operations**: idle-socket timeouts in the dev gateway, a write-buffer limit, autosave policy (the world is persisted by the database; the queues are unlogged), per-client view distance
   (the server's is used for everybody), several dimensions, chunk generation off the tick (below).
 * **Parallelism**: one connection runs the tick. Region sharding (one connection per region) was measured to scale poorly on this machine ([DATABASE-COMPARISON.md](DATABASE-COMPARISON.md)) and is unproven.

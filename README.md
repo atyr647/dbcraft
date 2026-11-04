@@ -58,14 +58,15 @@ The world is stored in Minecraft's own wire format (palette + packed longs per 1
   entry burst, 49 of 49 recorded flat-world chunk packets and 49 of 49 real-terrain chunks re-encoded from rows, block updates, chat, tab list, teleports.
   Scripts compare dbcraft against recordings of a real server: `tests/sql/` (1,600+ checks) and `tests/e2e/`.
 * Chunks and blocks in SQL (flat world generator, asynchronous generation queue, cached packets, `set_block`, the readable `mc.blocks` view), ops, whitelist, bans,
-  inventories, movement validation, commands (`/tp /gamemode /give /time /weather /difficulty /op /deop /whitelist /list`), a set-based 20 Hz tick, an optional batched tick.
+  inventories, movement validation, a command system driven by the vanilla command graph as rows (the `commands` packet generated for every permission level, byte-identical to the real server;
+  selectors `@a @p @r @s @e` with options; `/tp /gamemode /give /clear /time /weather /difficulty /gamerule /say /me /msg /seed /help /list /kill /op /deop /whitelist /ban /pardon`; operator broadcast of feedback), a set-based 20 Hz tick, an optional batched tick.
 * A Rust gateway with **zero crates.io dependencies** (std + libpq/libcrypto/libcurl through hand-written FFI): epoll loop, AES-128-CFB8, RSA, the Mojang session
   check, inflate, per-IP limits ([docs/GATEWAY.md](docs/GATEWAY.md)).
 * **Online mode**: the design and the login flow are verified end to end against a stub of Mojang's session server with an encrypting client (27 checks, with and
   without compression).  A real client in online mode has **not** been tested (it needs a Mojang account).
 * An entity prototype (items and simple mobs as rows, physics checked against recorded vanilla trajectories with zero deviation): [docs/ENTITY.md](docs/ENTITY.md).
 
-**What is missing:** survival gameplay (damage, death, hunger rules, crafting), terrain generation beyond flat worlds, importing/exporting vanilla worlds,
+**What is missing:** survival gameplay (damage, death, hunger rules, crafting), about 70 of vanilla's 90 commands (they are in the client's command tree and answer "not implemented"), terrain generation beyond flat worlds, importing/exporting vanilla worlds,
 vanilla mob AI and pathfinding, redstone, fluids, a full light engine (sky light matches vanilla on about 76% of recorded layers), advancements and recipes
 (replayed from a capture, not generated), the first-time-player join sequence, a real-client test of online mode.
 
@@ -117,6 +118,7 @@ Which test needs which data (all of it under `$DBCRAFT_HOME`, made by `make setu
 | the generator reports (`reports/`) | everything that touches `ref.*` | required: setup stops |
 | the recordings `play_nocomp`, `status`, `play_known`, `badname`, `play_disconnect`, `play` (`captures/`) | status/login/configuration/registry/chunk-oracle tests (`110`, `140`, `240`, ...) | those tests skip with a notice |
 | **the author's reference session** (one particular run of the vanilla server: entity id 20, hashed seed `aa7208e3219d34cc`, spawn -6.5 -60 -5.5, game time 2984), **not** reproducible by setup | `130_net_config_play`, `385_batch_replay`, `410_integration_replay` replay that session packet for packet (65 packets byte for byte) | **skipped**, with a notice that says which recording they need; a recording made by `make setup` is a different run (vanilla's entity ids, seed, spawn and hash-ordered sets differ per run) |
+| the recordings `play_op1` .. `play_op4` (an operator of each level joins; `make setup` records them) | the command graph (`tools/load_command_tree.py`), `810_command_tree` (the generated `commands` packet byte for byte), `811` and `812` | the graph is not loaded: every player gets the static level-0 tree and those tests skip |
 | vanilla entity trajectories (`entity_traj_*.json`, `tools/entity/rcon.py record`, optional) | the vanilla comparison inside `510_entity_physics` | those checks skip |
 
 Setup records its recordings in two phases on purpose: a first throwaway vanilla server (view distance 8) generates and lights the area around the spawn and saves it,

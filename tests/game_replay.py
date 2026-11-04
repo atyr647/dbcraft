@@ -89,7 +89,8 @@ def main():
     sc("/time set day: feedback", "", "perform mc.run_command(1, 'time set day');", {1: ("Op", "cmd time set day", {"system_chat"})})
     sc("/weather clear on a clear world: feedback and no events", "", "perform mc.run_command(1, 'weather clear');", {1: ("Op", "cmd weather clear", {"system_chat", "game_event"})})
     for mode, mark in (("survival", "cmd gamemode survival Bob"), ("creative", "cmd gamemode creative Bob")):
-        sc(f"/gamemode {mode} Bob: what Op and Bob each receive", "", f"perform mc.run_command(1, 'gamemode {mode} Bob');",
+        # (a game mode that does not change is silent, as the real server found out: Bob starts in the other mode)
+        sc(f"/gamemode {mode} Bob: what Op and Bob each receive", f"update mc.player set gamemode = {1 if mode == 'survival' else 0} where name = 'Bob';", f"perform mc.run_command(1, 'gamemode {mode} Bob');",
            {1: ("Op", mark, {"system_chat", "player_info_update"}), 2: ("Bob", mark, {"system_chat", "player_info_update", "player_abilities", "game_event"})})
     sc("/say hi there: disguised_chat to everyone", "", "perform mc.run_command(1, 'say hi there');",
        {1: ("Op", "cmd say hi there", {"disguised_chat"}), 2: ("Bob", "cmd say hi there", {"disguised_chat"})})
@@ -99,7 +100,7 @@ def main():
        "perform mc.run_command(1, 'give Bob minecraft:stone 3');", {1: ("Op", "cmd give Bob minecraft:stone 3", {"system_chat"}), 2: ("Bob", "cmd give Bob minecraft:stone 3", {"container_set_slot"})})
     sc("/difficulty peaceful when already peaceful: failure message", "", "perform mc.run_command(1, 'difficulty peaceful');", {1: ("Op", "cmd difficulty peaceful", {"system_chat"})})
     sc("/op Bob", "", "perform mc.run_command(1, 'op Bob');", {1: ("Op", "cmd op Bob", {"system_chat"})})
-    sc("/deop Bob", "", "perform mc.run_command(1, 'deop Bob');", {1: ("Op", "cmd deop Bob", {"system_chat"})})
+    sc("/deop Bob", "insert into mc.op (uuid, name, level) select uuid, name, 4 from mc.player where name = 'Bob';", "perform mc.run_command(1, 'deop Bob');", {1: ("Op", "cmd deop Bob", {"system_chat"})})
     sc("/whitelist list (empty)", "", "perform mc.run_command(1, 'whitelist list');", {1: ("Op", "cmd whitelist list", {"system_chat"})})
     sc("unknown command", "", "perform mc.run_command(1, 'nosuchcommand');", {1: ("Op", "cmd nosuchcommand", {"system_chat"})})
     # chat: Bob types "hello world"; both players receive player_chat
