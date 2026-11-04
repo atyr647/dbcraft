@@ -18,6 +18,16 @@ def psql(a, sql):
     return r.stdout.strip()
 
 
+def tree_cpu_s(pm):
+    """CPU seconds of the postmaster tree including the backends that already exited (the postmaster's cutime and cstime hold their time once it has reaped them)."""
+    f = open(f"/proc/{pm}/stat").read().rsplit(")", 1)[1].split()
+    tot = (int(f[11]) + int(f[12]) + int(f[13]) + int(f[14])) / C.CLK
+    for p in C.descendants(pm):
+        if p != pm:
+            tot += C.proc_cpu(p)[0]
+    return tot
+
+
 def postmaster(a):
     return int(open(os.path.join(a.pgdata, "postmaster.pid")).readline())
 
@@ -43,17 +53,17 @@ def main():
     psql(a, "update mc.server_property set value = 'dbcraft:noise' where key = 'dbcraft.generator'")
     psql(a, "checkpoint")
     print("load", open("/proc/loadavg").read().split()[:3], flush=True)
-    c0, _ = C.tree_cpu(pm); t0 = time.time()
+    c0 = tree_cpu_s(pm); t0 = time.time()
     rows = list(range(a.origin, a.origin + a.size))
     outs, th = [], []
     for w in range(a.workers):
         t = threading.Thread(target=worker, args=(a, rows[w::a.workers], a.per_call, outs)); t.start(); th.append(t)
     for t in th:
         t.join()
-    c1, _ = C.tree_cpu(pm); t1 = time.time()
+    c1 = tree_cpu_s(pm); t1 = time.time()
     n = sum(outs)
     psql(a, "checkpoint")
-    c2, _ = C.tree_cpu(pm); t2 = time.time()
+    c2 = tree_cpu_s(pm); t2 = time.time()
     res = {"chunks": n, "workers": a.workers, "gen_wall_s": t1 - t0, "gen_cpu_ms": (c1 - c0) * 1000, "ms_per_chunk_cpu": (c1 - c0) * 1000 / max(1, n), "ms_per_chunk_wall": (t1 - t0) * 1000 / max(1, n),
            "checkpoint_wall_s": t2 - t1, "checkpoint_cpu_ms": (c2 - c1) * 1000, "total_cpu_ms_per_chunk": (c2 - c0) * 1000 / max(1, n), "load_after": open("/proc/loadavg").read().split()[:3]}
     print(json.dumps(res, indent=1))

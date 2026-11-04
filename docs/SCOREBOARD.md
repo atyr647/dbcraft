@@ -65,6 +65,12 @@ and it loses (or fails) on login-storm stalls and long runs with 200 moving play
 before-the-work numbers on the same machine are there.  The other rows are the original session's, and `SCOREBOARD-table.md` / `scoreboard-results.jsonl.txt` still show it.  The original session's values for the changed rows were: idle tick 0.27 / 1.92 ms, CPU 0.01 / 0.11; 50 idle tick 40.0 / 7.4 ms, CPU 0.84 / 0.20, chat p50 24.7 / 43.1 ms;
 200 idle tick 71.7 / 22.7 ms, chat 46 / 74 ms p50 and 113 / 406 ms p99 (vanilla / dbcraft).  Chat percentiles rest on about 60 round trips per run.
 
+‡ **Edit rows re-run on the current tree** ([PERF-WORLD2.md](PERF-WORLD2.md) section 4, `tests/bench/world2/scoreboard_edit.py`, V D V D, 2 repetitions, both servers on the same busy machine: **load average 13 to 17**, so
+every time is 5 to 15 times what it was in the original quiet-ish session and the rows above keep their original values).  Nobody in range, vanilla / dbcraft, median of the p50s: single block edit 4.34 / **0.16** ms,
+fill 1,000 blocks 20.3 / **8.6** ms, fill 100,000 blocks **3,080** / **188** ms (ratios 0.04, 0.42, 0.06; originally 0.11, 0.14, 0.21).  With a player in range: single edit 34.1 / 0.15 ms (tick 0.11), fill 1,000 blocks 35.7 / 6.6 (tick 4.1),
+fill 100,000 blocks 1,571 / 182 (tick 14.5).  Better evidence for the large fills, in CPU time: with a player in range vanilla's main thread spends 239 to 286 ms (command plus broadcast) and all its threads 647 to 765 ms on the 100,000-block
+fill, while dbcraft's tick now spends 3 to 9 ms (it was 240 to 320) and the whole fill about 110 ms at load 8 to 10 (PERF-WORLD2.md section 1).  Vanilla's 201 ms above is a wall-clock RCON round trip without a player; it did not reproduce under load.
+
 ## Where dbcraft loses, ranked by how much it matters in real play
 
 1. **It cannot hold 200 moving players for more than about 4 minutes.**  In every dbcraft run of 5 minutes or more with 200 walking players (default tick and
@@ -89,8 +95,8 @@ before-the-work numbers on the same machine are there.  The other rows are the o
    a migrated database: the same SQL statements and the same `\timing` method as `run2.scenario_blocks`, **not the full harness**.  **Vanilla was not re-run** (201 ms and 9.98 ms are
    the earlier run's), and the machine was busier now than then: the OLD code, run the same way in the same hour, measured 7.2 ms and 691 ms, not 11.77 and 535.  So the ratio to vanilla
    (0.21 for 100,000 blocks) mixes two sessions: read it as "clearly faster than vanilla's RCON `fill`", not as a precise factor.  The fill also does less than vanilla's: no light
-   update, no neighbour updates, heightmaps recomputed later (docs/WORLD.md says what that moves to the next chunk send).  **With a player in range** the tick that follows the fill
-   spends another 243 to 309 ms encoding the 48 section packets (docs/WORLD.md "Large fills"); this scenario has no player, on either server.
+   update, no neighbour updates, heightmaps recomputed later (docs/WORLD.md says what that moves to the next chunk send).  **With a player in range** the tick that followed the fill
+   spent another 243 to 309 ms encoding the 48 section packets (docs/WORLD.md "Large fills"); **since [PERF-WORLD2.md](PERF-WORLD2.md) it spends 3 to 9 ms** (vanilla's main thread: 240 to 290 ms for command and broadcast); this scenario has no player, on either server.
 6. **Disk**: a 10,000-chunk flat world is 33% bigger (82.5 against 62.1 MiB): the wire-format sections plus caches against compressed region files.
 7. **Mobs**: about 150 microseconds per awake mob against vanilla's 22 (`docs/ENTITY.md`; the worker that later optimised it reports a lower figure in its own doc).
 

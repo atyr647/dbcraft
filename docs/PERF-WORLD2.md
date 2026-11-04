@@ -114,7 +114,32 @@ modes were not recorded** (no byte-level comparison; `compare_fill.py` covers th
 
 ## 3. Terrain generation against vanilla
 
-(see below)
+Measured the same way on both sides: CPU time of the whole server process tree while it generates a square of chunks (vanilla: `tests/bench/world2/vanilla_gen.py`, `/forceload` rectangles
+of up to 256 chunks, each waited for, JVM threads from `/proc`; dbcraft: `tests/bench/world2/gen_cluster.py`, 80 x 80 chunks of `dbcraft:noise` through `mc.generate_noise_batch`,
+CPU of the postmaster and every backend including the ones that exited, WAL writer and checkpointer included, plus a `CHECKPOINT`).
+
+| | CPU per chunk | notes |
+|---|---|---|
+| **vanilla 26.3, real terrain** (default generator, structures on, seed 12345), rectangles of 256 chunks one after the other | **140, 73, 85, 67, 67 ms** (rectangles 1 to 5, load average 6 to 7, 1,280 chunks, JIT still cold: still falling) | all JVM threads: generation workers, light engine, JIT, GC, the chunk IO thread; no player; `save-all flush` not measured |
+| vanilla, same, load average 18 | 241 ms (first rectangle) | |
+| **dbcraft, `dbcraft:noise`, whole Postgres cluster** | **8.08 ms** generation + 0.12 ms checkpoint (6,400 chunks, load average 11 to 13) | rows, light, the cached packet, WAL |
+| dbcraft, generating backend only (`bench_terrain.sql`, 1,600 chunks, 3 rounds, load about 10) | 6.3 ms (5.9 - 6.3): rows 3.25, light 1.08, packet 1.97; fresh database: 5.15 ms at load 3 to 4 (`docs/WORLD.md`) | |
+
+So dbcraft's cost per chunk is **at least 8 times below vanilla's best observed 67 ms** (a lower bound of the gap: vanilla's number was still falling, and it is generated
+terrain with caves, ores, trees and structures where dbcraft's has none: **not the same work**, which `docs/WORLD.md` says too).  What I could NOT do is a clean steady-state vanilla
+figure: the container's memory cgroup OOM-killed every vanilla JVM after 5 to 6 rectangles (four times, 1.0 to 1.8 GB resident, other workers' servers were killed as well), and under a
+load average of 10 to 26 a rectangle took 20 to 270 s of wall time.  The vanilla figure is therefore "at least 67 ms with a warming JIT", not a benchmark.  The dbcraft figure includes
+persistence (WAL) and the packet, vanilla's does not include sending; vanilla's chunk files are written lazily (not measured).
+
+**A bug found on the way, fixed: `mc.compute_light` took 0.6 to 1.8 s per terrain chunk on a populated database.**  Its `pl` CTE is referenced from a scalar subquery of `want`
+(once per layer); the planner inlined it there and evaluated the whole window computation above it once per layer.  With the statistics of a database holding a few thousand
+chunks and `plan_cache_mode = force_generic_plan` it chose that plan every time (EXPLAIN ANALYZE: `Function Scan on generate_series lay ... actual time=1812 ms`); on a fresh database
+it did not, which is why `bench_terrain.sql` (fresh databases, scratch dimensions) measured 0.9 ms and nobody noticed.  Generating 6,400 chunks into a database with 700 chunks ran at about
+1 chunk per second before the fix.  `pl as materialized (...)` (sql/220) makes it deterministic: 589 ms to 1.5 ms per chunk in the same database, light bytes unchanged
+(tests/sql/240, 250 (real terrain, 49 captured chunks), 260, 270, 295 and 855 pass).  Every light recompute of an edited terrain chunk had the same exposure.
+
+The generator itself (sql/855) was not changed: with vanilla at 67 ms or more, shaving the noise (a profile of 400 chunks: 151 `t_vnoise` calls at about 5 us and 256 `t_hash` calls at
+2 us per chunk, together 1.3 of the 3.2 ms of rows) would have been a few percent of 5 to 8 ms and each change needs the byte-identity tests of `tests/sql/855` to be re-argued.
 
 ## Verification
 
@@ -122,6 +147,58 @@ modes were not recorded** (no byte-level comparison; `compare_fill.py` covers th
   packets were the pre-built ones): **32 steps, 134 `section_blocks_update` packets (133,921 entries) and 4 `block_update` packets, ALL IDENTICAL.**
 * `tests/sql/850`, `851`, `855` unchanged and green; `tests/sql/960` (32 checks) and `961` (36 checks) new.
 
-## What did not work, what is still a loss
+## 4. The scoreboard's edit rows, re-run (`tests/bench/world2/scoreboard_edit.py`)
 
-(see below)
+Same statements and timing as `tools/scoreboard/run2.py scenario_blocks` (vanilla: RCON round trip; dbcraft: server-side statement time), V D V D alternated, 2 repetitions, one
+database and one vanilla JVM for the whole run, **load average 13 to 17**, so every time below is 5 to 15 times what a quiet machine gives (vanilla's 100,000-block fill took 3.1 s here
+against 201 ms in the original session; dbcraft's 188 ms against 42.8 ms).  Medians of the per-repetition p50, range in brackets:
+
+| | nobody in range: vanilla | dbcraft | with a player in range: vanilla | dbcraft statement | dbcraft tick |
+|---|---|---|---|---|---|
+| single block edit (ms) | 4.34 (0.82 - 7.85) | 0.16 (0.15 - 0.17) | 34.1 (15.5 - 52.8) | 0.15 | 0.11 |
+| fill 1,000 blocks (ms) | 20.3 (16.6 - 23.9) | 8.6 (5.5 - 11.7) | 35.7 (23.4 - 48.0) | 6.6 | 4.1 (1.0 - 7.2) |
+| fill 100,000 blocks (ms) | 3,080 (2,252 - 3,909) | 188 (181 - 195) | 1,571 (1,300 - 1,843) | 182 | 14.5 (12.0 - 16.9) |
+
+The ratios (dbcraft / vanilla) are 0.04, 0.42 and 0.06 without a player and 0.004, 0.19 and 0.12 with one, taken under the same load, alternated; they agree in direction with the original
+scoreboard's rows (0.11, 0.14, 0.21) and I would not quote them to better than a factor of two.  The vanilla column mixes a cold JIT (the JVM was started shortly before) with the load;
+the CPU-time measurements of section 1 are the better comparison for the large fills.  `docs/SCOREBOARD.md` keeps its original values and gets a dated note, not replaced numbers.
+
+## What did not work
+
+* **`translate()` instead of `replace()`** in the template fill: one pass instead of two or three, but 0.3 ms against 0.05 ms for the 20 kB template of a whole section (multibyte-aware per-character search).
+* **A faster `mc.shortset_order`** (precomputed hash table, no duplicate test in the probe loop, tighter loops): 5% (2.83 against 2.99 ms for 1,728 positions, 5.93 against 6.09 ms for 4,096, results identical on
+  60 random sequences).  The cost is the interpretation of about 15 PL/pgSQL statements per position (inserts and re-inserts of the doubling rehash), not the arithmetic; not applied.  A faster `mc.cells_positions` (one series instead of a cross join):
+  0.95 to 0.68 ms for 1,728 positions; not applied (it would rely on the order of an aggregate without ORDER BY).
+* **Set-based simulation of the hash set**: linear probing with insertion order is a sequential process (a later key whose home slot is free takes it, an earlier key that probed past it displaces nothing), and a round-based SQL formulation
+  needs one statement per round; I did not find a loop-free formulation, so a shape's FIRST encoding still costs the simulation (about 1.5 us a position: 2.8 ms for a typical partial section, 6 ms for a whole one).
+* **The vanilla comparisons under load**: every wall-clock vanilla number of this session is inflated by the load and the cold JIT; only main-thread and JVM CPU time are usable, and those only roughly (239 to 286 ms for the 100,000-block fill).
+* **A clean vanilla terrain figure** (see section 3).
+* A first version of the A/B script ran for 30 minutes before I killed it; the CPU timer's 4 ms resolution had forced groups of hundreds of calls, which at that load took far longer than estimated.
+
+## What is still a loss, or not done
+
+* **The first fill of a shape costs what the tick used to pay**, now in the filling statement.  Measured (`cold.sql` pattern: empty template cache, one viewer, the scoreboard fill, load average 13): the first fill to stone
+  271 ms of CPU (27 distinct shapes simulated for the 48 sections) and 12 ms in the tick; the same fill again to air 79.5 ms and 7 ms, to stone 88.7 ms and 2.3 ms.  So a cold fill's statement plus tick (about 283 ms)
+  is still below the starting point's (statement about 80 to 90 plus tick 240 to 316 ms at similar load), and a repeated shape is 3 to 4 times cheaper; the saving of a cold fill is 20 to 30%, not the 35x of the tick alone.
+  Only repeated shapes (the interior sections of a big fill, repeated fills) hit the cache.  A native function (the zlib accelerator's way) would make the first encoding about 100 times cheaper; not built.
+* **A fill issued from inside the tick** pays the encoding there, as before (there is no `/fill` command in dbcraft; only SQL calls `mc.fill`).  The encode-at-fill-time design assumes fills come from other connections.
+* A fill to stone is 7 to 13% more expensive as a statement when a player can see it (the encoding); a whole-section fill costs 1.00x of the original per-block-era fill, not less.
+* **The speed of the fill modes against vanilla was not measured**, and vanilla's packets for them were not recorded.  `keep` and `replace <filter>` read every field of the box (about 0.4 ms a section); the 4-bit bit-map packing is fast, sections with
+  5- to 8-bit palettes still read their changed positions with a loop (1.2 us a position).  `destroy` is not implemented.
+* Vanilla at steady state, vanilla without structures, vanilla's `save-all flush` for terrain, and dbcraft with several generator loops: not measured.
+* `light_update` after block changes, `block_entity_data`, the order of sections of different chunks: unchanged from `docs/WORLD.md` ("Not verified").
+
+## Reproduce
+
+```
+tests/bench/world2/make_head_impl.py                                   # frozen copies of the starting commit's fill/broadcast in schema bench_head
+psql -X -d DB -f tests/bench/world2/head_impl.sql; psql -X -d DB -v rounds=5 -f tests/bench/world2/ab_world2.sql     # head against new, fill and tick, one viewer
+psql -X -d DB -v rounds=9 -f tests/bench/world/ab_fill.sql                                                           # the per-block-era fill against the box fill (no viewer)
+psql -X -d DB -v rounds=5 -f tests/bench/world2/bench_broadcast.sql                                                  # statement and tick per scenario, with and without a viewer
+python3 tests/bench/world2/vanilla_fill.py --port P --rcon R --reps 7                                                  # vanilla, flat world, view distance 10, started by hand (see the file header)
+python3 tests/bench/world2/vanilla_gen.py --rcon R --size 100                                                          # vanilla terrain: forceload rectangles, CPU per chunk
+python3 tests/bench/world2/gen_cluster.py --port P --db DB --pgdata DIR --size 80                                      # dbcraft noise terrain, whole-cluster CPU per chunk
+python3 tests/bench/world2/scoreboard_edit.py --db DB --dbport P --repeat 2                                            # the scoreboard's edit rows, V D V D, with and without a viewer
+python3 tests/e2e/fill_probe.py ...; python3 tests/e2e/compare_fill.py V.json D.json                                    # byte comparison with a real vanilla server (tests/e2e/README.md)
+```
+Raw output of this session: `docs/perf-world2-results.txt`.
