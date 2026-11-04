@@ -30,6 +30,8 @@ create table if not exists mc.dyn_state (
     lightd        smallint not null default 0          -- BlockState.getLightDampening() (15 for an opaque cube)
 );
 alter table mc.dyn_state add column if not exists lightd smallint not null default 0;
+alter table mc.dyn_state add column if not exists react boolean not null default false;       -- a change next to this state can make it react (flag mask 4 | 8 | 4096 | 65536 | 262144, filled by mc.dyn_rebuild)
+alter table mc.dyn_state add column if not exists tickc boolean not null default false;       -- a class of random tick this engine implements (grass, crops, farmland, saplings)
 create unique index if not exists dyn_state_name_key on mc.dyn_state (name);
 create index if not exists dyn_state_block_idx on mc.dyn_state (block);
 create table if not exists mc.dyn_shape (id int primary key, kind smallint not null, aabbs text not null);                 -- kind 0 empty, 1 full block, 2 other
@@ -60,6 +62,11 @@ alter table mc.dyn_vec add column if not exists rule int4[] not null default '{}
 alter table mc.dyn_vec add column if not exists tagbits int8[] not null default '{}';     -- per state: membership of the block tags the rules use, see sql/886
 alter table mc.dyn_vec add column if not exists wlt int4[] not null default '{}';        -- per state: the state id of the waterlogged = true variant (-1: none)
 alter table mc.dyn_vec add column if not exists sturdy int4[] not null default '{}';     -- per state: bits 0-5 isFaceSturdy FULL, 6-11 CENTER, 12-17 RIGID for DOWN UP NORTH SOUTH WEST EAST
+-- The arrays are read whole by every engine run and every list build: stored uncompressed (a pglz pass over 140-280 KB costs a millisecond or more each time they are detoasted).
+alter table mc.dyn_vec alter column flags set storage external, alter column famt set storage external, alter column coll set storage external, alter column skind set storage external,
+                       alter column bid set storage external, alter column occ set storage external, alter column k set storage external, alter column wlt set storage external,
+                       alter column sturdy set storage external, alter column lightd set storage external, alter column nextp set storage external, alter column rule set storage external,
+                       alter column tagbits set storage external;
 -- k[]: 1 air, 2 void_air, 3 cobblestone, 4 obsidian, 5 stone, 6 basalt, 7 .. 22 water[level = 0 .. 15], 23 .. 38 lava[level = 0 .. 15], 39 soul_soil, 40 blue_ice, 41 dirt,
 --      42 .. 49 farmland[moisture = 0 .. 7]
 -- F_* flags (powers of two; the engine uses the literal numbers, keep them in sync)

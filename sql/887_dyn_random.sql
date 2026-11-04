@@ -21,12 +21,19 @@
 
 insert into mc.server_property (key, value, default_value, note) values
     ('dbcraft.random-tick-max-hits', '6', '6', 'dbcraft: at most this many random-tick hits are processed per tick (a random subset when there are more: the rate of every block drops proportionally)'),
+    ('dbcraft.random-tick-build-ms', '0.5', '0.5', 'dbcraft: CPU milliseconds per tick (average) the maintenance of the random-tick lists may use; one chunk is built at a time and the next waits for the time it cost'),
     ('dbcraft.random-tick-interval', '4', '4', 'dbcraft: random ticks run every this many ticks, with that many ticks of draws at once (1 = every tick, vanilla timing)')
 on conflict (key) do nothing;
 
 -- derived data, rebuilt from the dirty queue: forget what an older version of this file stored
 drop table if exists mc.dyn_rt_sec;
 create table mc.dyn_rt_sec (dimension text not null, cx int not null, sy int not null, cz int not null, version bigint not null, cnt int not null, cells smallint[] not null, primary key (dimension, cx, cz, sy));
+-- when the next list may be built (the maintenance pays back the time a build took: a few tenths of a millisecond per tick on average, never a burst), and the neighbourhoods known to have
+-- no active cell (a flat world is one neighbourhood: its chunks cost a hash, not a build)
+create table if not exists mc.dyn_rt_state (id int primary key check (id = 1), next_build bigint not null default 0);
+insert into mc.dyn_rt_state (id) values (1) on conflict do nothing;
+create table if not exists mc.dyn_rt_memo (key text primary key);
+truncate mc.dyn_rt_memo;
 drop table if exists mc.dyn_rt_chunk;
 create table mc.dyn_rt_chunk (dimension text not null, cx int not null, cz int not null, version bigint not null, primary key (dimension, cx, cz));
 insert into mc.dyn_rt_dirty (dimension, cx, cz) select c.dimension, c.cx, c.cz from mc.chunk c on conflict (dimension, cx, cz) do update set seq = excluded.seq;
@@ -66,7 +73,7 @@ declare
     fl    int4[]; fa int2[]; kk int4[]; tg int8[]; npv int4[]; ld int2[];
     ver   bigint; sys int[]; sy0 int; sy1 int; nsy int; secs int4[]; gm int4[];
     ii int; s int; rw int; cand int[]; act smallint[]; k int; i int; x int; y int; z int; lx int; ly int; lz int; cell int; ab int; a2 int; q int;
-    ex_x int[]; ex_y int[]; ex_z int[]; ex_n int; dpos int[]; hit boolean; dx int; dy int; dz int; m1 int; need_ex boolean; found boolean;
+    ex_x int[]; ex_y int[]; ex_z int[]; ex_n int; dpos int[]; hit boolean; dx int; dy int; dz int; m1 int; need_ex boolean; found boolean; memo_key text; total_act int := 0;
 begin
     select version into ver from mc.chunk where dimension = p_dim and cx = p_cx and cz = p_cz;
     delete from mc.dyn_rt_sec where dimension = p_dim and cx = p_cx and cz = p_cz;
@@ -74,13 +81,24 @@ begin
         delete from mc.dyn_rt_chunk where dimension = p_dim and cx = p_cx and cz = p_cz;
         return;
     end if;
-    select * into v from mc.dyn_vec;
-    fl := v.flags; fa := v.famt; kk := v.k; tg := v.tagbits; npv := v.nextp; ld := v.lightd;
     select array_agg(cs.sy order by cs.sy) into sys from mc.chunk_section cs
      where cs.dimension = p_dim and cs.cx = p_cx and cs.cz = p_cz and cardinality(cs.palette) > 0
-       and exists (select 1 from unnest(cs.palette) pn join mc.dyn_state d on d.name = pn where (fl[d.sid + 1] & 7864320) <> 0);     -- 524288 | 1048576 | 2097152 | 4194304
+       and exists (select 1 from unnest(cs.palette) pn join mc.dyn_state d on d.name = pn and d.tickc);
     if sys is not null then
         sy0 := sys[1] - 1; sy1 := sys[cardinality(sys)] + 1; nsy := sy1 - sy0 + 1;
+        -- the neighbourhood (this chunk and its eight neighbours, sections sy0 .. sy1) as a hash of the stored rows: when an identical one is known to have no active cell, so has this chunk
+        select md5(string_agg(coalesce(md5(array_to_string(cs.palette, ',') || ':' || cs.bits::text) || md5(cs.data), case when ch.cx is null then 'B' else 'A' end), ',' order by c.sy, b.cz, a.cx))
+          into memo_key
+          from generate_series(p_cx - 1, p_cx + 1) a(cx) cross join generate_series(p_cz - 1, p_cz + 1) b(cz) cross join generate_series(sy0, sy1) c(sy)
+          left join mc.chunk ch on ch.dimension = p_dim and ch.cx = a.cx and ch.cz = b.cz
+          left join mc.chunk_section cs on cs.dimension = p_dim and cs.cx = a.cx and cs.cz = b.cz and cs.sy = c.sy;
+        memo_key := memo_key || ':' || sys::text;
+        if exists (select 1 from mc.dyn_rt_memo m where m.key = memo_key) then
+            insert into mc.dyn_rt_chunk (dimension, cx, cz, version) values (p_dim, p_cx, p_cz, ver)
+            on conflict (dimension, cx, cz) do update set version = excluded.version;
+            return;
+        end if;
+        select dv.flags, dv.famt, dv.k, dv.tagbits, dv.nextp, dv.lightd into fl, fa, kk, tg, npv, ld from mc.dyn_vec dv;
         secs := mc.dyn_secs(p_dim, p_cx - 1, p_cx + 1, sy0, sy1, p_cz - 1, p_cz + 1, array(select generate_series(1, 9 * nsy)));
         gm := array[sy0, p_cz - 1, p_cx - 1, 3, 3] || array(select generate_series(2, 9 * nsy + 1));
         for ii in 1 .. cardinality(sys) loop
@@ -147,47 +165,63 @@ begin
                 end if;
                 if hit then act := act || i::smallint; end if;
             end loop;
+            total_act := total_act + cardinality(act);
             if cardinality(act) > 0 then
                 insert into mc.dyn_rt_sec (dimension, cx, sy, cz, version, cnt, cells) values (p_dim, p_cx, s, p_cz, ver, cardinality(act), act);
             end if;
         end loop;
+        if total_act = 0 then insert into mc.dyn_rt_memo (key) values (memo_key) on conflict do nothing; end if;
     end if;
     insert into mc.dyn_rt_chunk (dimension, cx, cz, version) values (p_dim, p_cx, p_cz, ver)
     on conflict (dimension, cx, cz) do update set version = excluded.version;
 end $$;
 
+-- Keep the lists current: build the list of the newest queued chunk, then the next, until this tick's share of CPU time (dbcraft.random-tick-build-ms, 0.5 ms) is used; a build that cost more
+-- than the share makes the following ticks wait (the debt is paid in ticks), so the cost per tick stays at the share and one tick never pays for more than one slow build.
+create or replace function mc.dyn_rt_maintain(p_cur bigint) returns void language plpgsql volatile as $$
+declare
+    dim text := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
+    share float8 := greatest(coalesce((select value::float8 from mc.server_property where key = 'dbcraft.random-tick-build-ms'), 0.5), 0.01);
+    t0 timestamptz; el float8 := 0; v_cx int; v_cz int;
+begin
+    if (select next_build - p_cur from mc.dyn_rt_state) between 1 and 100000 then return; end if;                   -- (a clock set far back does not stall the maintenance)
+    if not exists (select 1 from mc.player where conn_id is not null) then return; end if;
+    t0 := clock_timestamp();
+    loop
+        v_cx := null;
+        select d.cx, d.cz into v_cx, v_cz from mc.dyn_rt_dirty d where d.dimension = dim order by d.seq desc limit 1;
+        exit when v_cx is null;
+        perform mc.dyn_rt_build(dim, v_cx, v_cz);
+        delete from mc.dyn_rt_dirty d where d.dimension = dim and d.cx = v_cx and d.cz = v_cz;
+        el := extract(epoch from clock_timestamp() - t0) * 1000;
+        exit when el >= share;
+    end loop;
+    if el > 0 then update mc.dyn_rt_state set next_build = p_cur + ceil(el / share)::bigint; end if;
+end $$;
+
 create or replace function mc.dyn_random_ticks(p_cur bigint) returns void language plpgsql volatile as $$
 declare
-    speed  int := mc.rule_int('random_tick_speed', 3);
-    r      int := mc.prop_int('simulation-distance');
-    cap    int := coalesce(mc.prop_int('dbcraft.random-tick-max-hits'), 6);
+    speed  int; r int; cap int;
     iv     int := greatest(coalesce(mc.prop_int('dbcraft.random-tick-interval'), 4), 1);
-    budget int := greatest(coalesce(mc.prop_int('dbcraft.random-tick-chunk-budget'), 4), 1);
     dim    text;
-    dcx int[]; dcz int[]; acx int[]; asy int[]; acz int[]; acnt int[];
+    acx int[]; asy int[]; acz int[]; acnt int[];
     hcx int[]; hsy int[]; hcz int[]; hidx int[]; hsid int[];
     kinds int[]; xs int[]; ys int[]; zs int[]; aux int[]; hs int[];
-    wtot bigint; ew float8; lim int; h int; l float8; pr float8; i int;
+    wtot bigint; ew float8; lim int; h int; l float8; pr float8;
 begin
-    if speed <= 0 or p_cur % iv <> 0 then return; end if;                               -- every iv-th tick, with iv ticks' worth of draws
-    if not exists (select 1 from mc.player where conn_id is not null) then return; end if;
-    dim := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
+    if p_cur % iv <> 0 then return; end if;                                             -- every iv-th tick, with iv ticks' worth of draws
     -- once in a while: chunks whose cached version is not the chunk's (an edit that did not go through mc.block_event) are queued again
-    if p_cur % 1200 < iv then
+    if p_cur % 6000 < iv then
+        dim := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
         insert into mc.dyn_rt_dirty (dimension, cx, cz)
         select c.dimension, c.cx, c.cz from mc.chunk c left join mc.dyn_rt_chunk k on k.dimension = c.dimension and k.cx = c.cx and k.cz = c.cz
          where c.dimension = dim and k.version is distinct from c.version on conflict (dimension, cx, cz) do update set seq = excluded.seq;
     end if;
-    -- rebuild the lists of the queued chunks, at most `budget` per run (fresh terrain, or the first run after an upgrade, does not make one tick pay for all of it).  Every queued chunk is
-    -- built, near a player or not (a queue that is mostly empty costs one probe, a queue with chunks nobody is near would cost a scan per run), the newest change first: an edit near a player
-    -- does not wait behind the backlog of an upgrade or of terrain nobody is near.
-    if exists (select 1 from mc.dyn_rt_dirty) then
-        select array_agg(q.cx), array_agg(q.cz) into dcx, dcz from (select d.cx, d.cz from mc.dyn_rt_dirty d where d.dimension = dim order by d.seq desc limit budget) q;
-        if dcx is not null then
-            for i in 1 .. cardinality(dcx) loop perform mc.dyn_rt_build(dim, dcx[i], dcz[i]); end loop;
-            delete from mc.dyn_rt_dirty d using unnest(dcx, dcz) u(cx, cz) where d.dimension = dim and d.cx = u.cx and d.cz = u.cz;
-        end if;
-    end if;
+    if not exists (select 1 from mc.dyn_rt_sec) then return; end if;                    -- nothing active anywhere: this run is over
+    speed := mc.rule_int('random_tick_speed', 3);
+    if speed <= 0 or not exists (select 1 from mc.player where conn_id is not null) then return; end if;
+    r := mc.prop_int('simulation-distance'); cap := coalesce(mc.prop_int('dbcraft.random-tick-max-hits'), 6);
+    dim := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
     -- the active sections in range of any online player
     select array_agg(t.cx order by t.cx, t.sy, t.cz), array_agg(t.sy order by t.cx, t.sy, t.cz), array_agg(t.cz order by t.cx, t.sy, t.cz), array_agg(t.cnt order by t.cx, t.sy, t.cz), coalesce(sum(t.cnt), 0)
       into acx, asy, acz, acnt, wtot
