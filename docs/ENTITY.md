@@ -132,3 +132,20 @@ query was already shown weak in this project, so this does not get fixed by core
 3. Tracker: send mob movement only for entities with viewers (already so) and batch the per-viewer fan-out for cells with many viewers, raise the mob update interval under load.
 4. Item pickup via an item-cell index rather than per-player scans (4.9 ms at 500 players).
 5. Aggressive autovacuum or periodic `VACUUM` of `mc.entity` to bound the dead tuples.
+
+## Update: re-measured against the real server (docs/PERF-MOBS2.md)
+
+The "150 us per awake mob" and the 106 ms row above are the prototype before the lanes (docs/PERF-ENTITY.md) and the autonomous lanes (sql/940, docs/PERF-MOBS2.md).  Re-measured, CPU per tick of the
+entity tick (dbcraft, 3 repetitions, steady state) against the CPU of the real vanilla server's thread (3 repetitions, the machine loaded: load 8-24, so vanilla's wall-clock tick times are not usable):
+
+| scenario | vanilla | dbcraft (this branch) |
+|---|---|---|
+| 2,000 awake walking cows, a viewer in range | 65.6 ms | 10.9 ms (5.5 us per mob; the tree before: 33.0) |
+| 5,000 awake walking cows, a viewer in range | 178.6 ms | 18.2 ms (3.6 us per mob; before: 57.4) |
+| 5,000 resting items | 96.9 ms | 1.4 ms |
+| 2,000 / 5,000 cows nobody can see | 5.2 / 10.1 ms | 12.0 / 19.2 ms (**still a loss**: vanilla's idle cow costs 2-2.6 us per tick) |
+
+What changed: a walking or standing mob lives in a lane row (state, goal, chunk cell, the viewers' delta base) and a tracker step writes nothing; the next goal is drawn inside the lane; chunk borders
+are crossed inside the lane when nobody notices; the WAL of 2,000 walking mobs fell from 17-44 KB per tick to about 0.  The "Next optimisations" list above is done except the pickup scan (items by cell:
+partial index) and aggressive vacuum (the bench does what autovacuum does).  The prototype still models no pathfinding, goals, look-around, motion packets, sounds or collision, so the comparison
+is not like for like (docs/PERF-MOBS2.md says what vanilla does per mob, from the jar).
