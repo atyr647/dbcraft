@@ -18,6 +18,8 @@ declare
     i_ka int; i_held int; i_cs int; i_chat int; i_cmd int; i_cmds int; i_act int; i_use int;
     n_misc boolean := true; n_chat boolean := true; n_blocks boolean := true;
 begin
+    -- sql/800: nothing queued, nobody connected: the tick is the clock and a log row
+    if f_skip and mc.tick_quiet() then return mc.tick_quiet_step(false); end if;
     -- 1, 2: ingest
     if f_in then
         n_in := mc.ingest_batched();
@@ -47,7 +49,10 @@ begin
         end if;
         select count(*)::int into n_players from mc.player where conn_id is not null;
         g0 := clock_timestamp();
-        if f_mv then select * into mv from mc.moves_batched(cur); else select * into mv from mc.apply_player_moves(cur); end if;
+        if f_skip and mc.moves_idle() then                       -- sql/800: no movement packet and nobody to announce: what the call would do is nothing (but removing tick_end)
+            select 0::int as moved, 0::int as corrected, 0::int as kicked into mv;
+            if n_in > 0 and exists (select 1 from mc.play_in_work where packet_id = mc.sid('client_tick_end')) then delete from mc.play_in_work where packet_id = mc.sid('client_tick_end'); end if;
+        elsif f_mv then select * into mv from mc.moves_batched(cur); else select * into mv from mc.apply_player_moves(cur); end if;
         g1 := clock_timestamp();
         -- which of the less frequent input kinds are present this tick (one query), so the others cost nothing
         i_ka := mc.sid('keep_alive'); i_held := mc.sid('set_carried_item'); i_cs := mc.sid('set_creative_mode_slot');

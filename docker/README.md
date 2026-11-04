@@ -24,6 +24,7 @@ None of it is in an image or in git.  It lives in the volume `dbcraft-mojang`, w
 |---|---|---|---|
 | `/data/reports` | the official data generator, run from the downloaded jar | block states, items, packet ids (`ref.*`) | the server cannot run; the init script says so |
 | `/data/captures/play_nocomp.jsonl` (+ a few more) | `tools/capture_vanilla.py` against a throwaway vanilla server | datapack registries, tags, a few opaque packets, world reference data | logins stop in the configuration phase |
+| `/data/captures/play_op4.jsonl` (and `play_op1` .. `play_op3` for the tests) | the same, with an operator of that level joining | the command graph (`tools/load_command_tree.py`, run by `load_static_packets.py`) | every player gets the static level-0 command tree |
 
 You can still mount your own reports and captures instead (replace the volume by bind mounts of `/data/reports` and `/data/captures`).
 

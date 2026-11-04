@@ -13,6 +13,12 @@
 --   select * from net.drain_outbox()          -> append to each connection's write buffer; flush when writable; close when asked
 --   commit
 --
+-- Since sql/800/801 (docs/PERF-IDLE.md) two things differ from the list above:
+--   * a tick with nothing for the database (no new socket, no inbound frame, no closed socket) runs only `select mc.server_tick()` and one probe (net.gateway_pending); the outbox is
+--     drained when the probe says it holds bytes, and the control row is written every 10th such tick (the stop flag is looked at then);
+--   * serverbound chat frames are handled between ticks (net.urgent_chat, then a drain) when the next tick is far enough away: the Rust gateway's urgent lane, same rules.
+--   (Not done here, unlike the Rust gateway: dropping client_tick_end frames of idle players; this gateway does not know which connections are in play.)
+--
 -- What it deliberately does NOT do: no encryption and no Mojang session check (online mode is the production gateway's job; this procedure refuses to
 -- start while the `online-mode` property is true) and no deflate (SQL has no deflate, so outbound packets are never compressed: it refuses to start while
 -- `network-compression-threshold` is not -1).  Run `select mc.configure_dev_server();` first, it sets both.
@@ -50,7 +56,25 @@ prep_inbox   = plpy.prepare("insert into net.inbox (conn_id, payload) select c, 
 prep_tick    = plpy.prepare("select mc.server_tick() as t", [])
 prep_drain   = plpy.prepare("select conn_id, data, close from net.drain_outbox()", [])
 prep_comp    = plpy.prepare("select conn_id, compression from net.conn where compression >= 0", [])
-prep_ctl     = plpy.prepare("update net.gateway_control set ticks = ticks + 1, last_tick_ms = $1, max_tick_ms = greatest(coalesce(max_tick_ms, 0), $1), late_ticks = late_ticks + $2, connections = $3 returning stop", ["float8", "int", "int"])
+prep_ctl     = plpy.prepare("update net.gateway_control set ticks = ticks + $4, last_tick_ms = $1, max_tick_ms = greatest(coalesce(max_tick_ms, 0), $5), late_ticks = late_ticks + $2, connections = $3 returning stop", ["float8", "int", "int", "int", "float8"])
+prep_pending = plpy.prepare("select net.gateway_pending(0) & 1 as p", [])
+
+# the urgent chat lane (sql/801): packet ids of the serverbound frames it has to tell apart; disabled when net.urgent_chat does not exist
+urgent_ok = False
+try:
+    r = plpy.execute("select mc.sid('chat') as chat, mc.sid('chat_command') as c1, mc.sid('chat_command_signed') as c2, mc.sid('client_tick_end') as n1, mc.sid('move_player_pos') as n2, "
+                     "mc.sid('move_player_pos_rot') as n3, mc.sid('move_player_rot') as n4, mc.sid('move_player_status_only') as n5, to_regprocedure('net.urgent_chat(bigint[],bytea[])') is not null as ok")[0]
+    if r["ok"] and None not in (r["chat"], r["c1"], r["c2"], r["n1"], r["n2"], r["n3"], r["n4"], r["n5"]):
+        U_CHAT, U_CMD, U_NEUTRAL = r["chat"], (r["c1"], r["c2"]), (r["n1"], r["n2"], r["n3"], r["n4"], r["n5"])
+        prep_urgent = plpy.prepare("select coalesce(array_to_string(net.urgent_chat($1, $2), ','), '') as u", ["bigint[]", "bytea[]"])
+        urgent_ok = True
+except Exception:
+    urgent_ok = False
+URGENT_RESERVE_S, URGENT_MAX = 0.004, 4
+urgent_cost = 0.002
+urgent_runs = 0
+urgent_want = False
+lean_n, lean_late, lean_max = 0, 0, 0.0
 
 def varint_at(b, o):
     """(value, next offset) or None when the buffer ends inside the VarInt; raises ValueError when it is longer than 5 bytes"""
@@ -61,6 +85,54 @@ def varint_at(b, o):
         if not c & 0x80: return v, o + i + 1
         shift += 7
     raise ValueError("VarInt too long")
+
+def frame_pid(b):
+    v = 0
+    for i in range(3):
+        if i >= len(b): return None
+        v |= (b[i] & 0x7F) << (7 * i)
+        if not b[i] & 0x80: return v
+    return None
+
+def urgent_candidates():
+    """Indices into ids/payloads of the chat frames that may be handled now: no command ahead of them (any connection), nothing but chat, client_tick_end or movement ahead of them from
+    their own connection.  Whether a connection is in play is the database's to say (net.urgent_chat hands the others back)."""
+    taken, blocked = [], set()
+    for i in range(len(ids)):
+        pid = frame_pid(payloads[i]); cid = ids[i]
+        if pid is None: blocked.add(cid)
+        elif pid in U_CMD: break
+        elif pid == U_CHAT:
+            if cid not in blocked: taken.append(i)
+        elif pid not in U_NEUTRAL: blocked.add(cid)
+    return taken
+
+def run_urgent(deadline):
+    nonlocal urgent_runs, urgent_cost
+    if urgent_runs >= URGENT_MAX or time.perf_counter() + urgent_cost + URGENT_RESERVE_S > deadline: return
+    taken = urgent_candidates()
+    if not taken: return
+    t = time.perf_counter()
+    try:
+        un = plpy.execute(prep_urgent, [[ids[i] for i in taken], [payloads[i] for i in taken]])[0]["u"]
+        unhandled = set(int(x) for x in un.split(",") if x.strip())
+        rows = list(plpy.execute(prep_drain, []))
+        plpy.commit()
+    except plpy.SPIError as e:
+        plpy.rollback(); urgent_runs = URGENT_MAX
+        plpy.notice("net.run: urgent chat run failed and was rolled back: %s" % e)
+        return
+    handled = set(taken[k] for k in range(len(taken)) if (k + 1) not in unhandled)
+    keep_ids = [x for i, x in enumerate(ids) if i not in handled]; keep_pl = [x for i, x in enumerate(payloads) if i not in handled]
+    ids[:] = keep_ids; payloads[:] = keep_pl
+    urgent_runs += 1
+    urgent_cost = 0.7 * urgent_cost + 0.3 * (time.perf_counter() - t)
+    for row in rows:
+        c = conns.get(row["conn_id"])
+        if c is None: continue
+        if row["data"]: c["outb"] += row["data"]
+        if row["close"]: c["closing"] = True
+    for cid in set(r["conn_id"] for r in rows): flush(cid)
 
 def drop(cid, notify=True):
     c = conns.pop(cid, None)
@@ -101,6 +173,7 @@ while True:
         late = 1
     ids, payloads, accepted = [], [], []
     dropped = []
+    urgent_runs = 0; urgent_want = False
     # ---- I/O until the tick is due.  ALWAYS one pass over the ready sockets, even when the tick is already late: a loop that overruns must not stop reading
     # (it used to break out at once when `left <= 0`, so under sustained overload no socket was ever read, keep-alive answers sat in the kernel buffers and the
     # server kicked every player for not answering: docs/SOAK.md)
@@ -145,28 +218,40 @@ while True:
                             body = zlib.decompress(body[q:])
                             if len(body) != dl: raise ValueError("inflated size mismatch")
                     ids.append(cid); payloads.append(body)
+                    if urgent_ok and frame_pid(body) == U_CHAT: urgent_want = True
             except Exception as e:
                 plpy.notice("net.run: closing connection %s: %s" % (cid, e)); drop(cid); continue
             del b[:pos]
+        if urgent_want:
+            urgent_want = False
+            run_urgent(deadline)
     # ---- database work for this tick
     t_start = time.perf_counter()
     try:
+        lean = not accepted and not dropped and not ids
         for cid in accepted:
             if cid in conns: plpy.execute(prep_connect, [cid, conns[cid]["ip"]])
         for cid in dropped: plpy.execute(prep_disc, [cid])
         dropped = []
         if ids: plpy.execute(prep_inbox, [ids, payloads])
         plpy.execute(prep_tick, [])
-        for row in plpy.execute(prep_drain, []):
-            c = conns.get(row["conn_id"])
-            if c is None: continue
-            if row["data"]: c["outb"] += row["data"]
-            if row["close"]: c["closing"] = True
-        for row in plpy.execute(prep_comp, []):
-            c = conns.get(row["conn_id"])
-            if c is not None: c["thr"] = row["compression"]
+        pending = 1 if not lean else plpy.execute(prep_pending, [])[0]["p"]
+        if pending:
+            for row in plpy.execute(prep_drain, []):
+                c = conns.get(row["conn_id"])
+                if c is None: continue
+                if row["data"]: c["outb"] += row["data"]
+                if row["close"]: c["closing"] = True
+            for row in plpy.execute(prep_comp, []):
+                c = conns.get(row["conn_id"])
+                if c is not None: c["thr"] = row["compression"]
         ms = (time.perf_counter() - t_start) * 1000.0
-        stop = plpy.execute(prep_ctl, [ms, late, len(conns)])[0]["stop"]
+        lean_n += 1; lean_late += late; lean_max = max(lean_max, ms)
+        if not lean or pending or lean_n >= 10:
+            stop = plpy.execute(prep_ctl, [ms, lean_late, len(conns), lean_n, lean_max])[0]["stop"]
+            lean_n, lean_late, lean_max = 0, 0, 0.0
+        else:
+            stop = False
         plpy.commit()
     except plpy.SPIError as e:
         plpy.rollback()

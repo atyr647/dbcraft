@@ -39,6 +39,7 @@ echo "== loading the flat world reference"
 python3 tools/load_world_ref.py
 echo "== loading the per-item components (attribute modifiers of worn and held items)"
 python3 tools/load_item_components.py || echo "NOTE: no item components (tools/bootstrap.sh makes them): worn items add no attribute modifiers"
+python3 tools/load_recipes.py
 echo "== configuring the server"
 psql -X -q -v ON_ERROR_STOP=1 <<'SQL'
 select mc.configure_dev_server('dbcraft', 'creative');

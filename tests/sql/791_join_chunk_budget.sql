@@ -36,6 +36,7 @@ begin
     update mc.server_property set value = 'off' where key = 'dbcraft.join-budget-ms';        -- this file is about chunks: no login queue
     update mc.server_property set value = 'async' where key = 'dbcraft.chunk-generation';
     update mc.server_property set value = '64' where key = 'dbcraft.chunk-batch-max';
+    update mc.server_property set value = 'off' where key = 'dbcraft.tick-budget-ms';             -- the cap alone (the time-scaled cap has its own check below)
     update mc.game_state set game_time = 1, day_time = 1;
     delete from mc.chunk where dimension = 'minecraft:overworld';
 end $$;

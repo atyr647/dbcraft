@@ -10,8 +10,10 @@
 -- Returns the number of frames consumed.
 create or replace function mc.ingest_batched() returns int language plpgsql as $$
 declare n int; r record;
-        handled int[] := net.handled_play_ids();
-        valid   int[] := (select coalesce(array_agg(protocol_id), '{}') from ref.packet where state = 'play' and direction = 'serverbound');
+        handled int[] := net.handled_play_ids_c();          -- sql/800: plan-time constants (two table queries per tick before)
+        valid   int[] := net.known_play_ids_c();
+        i_te int := mc.sid('client_tick_end'); i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot');
+        keep_te boolean := current_setting('dbcraft.quiet_tick', true) = 'off';          -- sql/800: the switch queues every client_tick_end again
 begin
     perform net.join_gate();                          -- sql/790: admission gate for logins (parks/releases hello packets; a no-op when nothing is queued or the budget is off)
     if exists (select 1 from net.batch) then delete from net.batch; end if;           -- leftovers of a failed tick (the baseline truncates here)
@@ -19,9 +21,11 @@ begin
          c as materialized (select i.conn_id, i.seq, i.payload, net.pid(i.payload) as pid, n.state as st, coalesce(n.closing, true) as closing
                               from inb i left join net.conn n on n.conn_id = i.conn_id),
          touch as (update net.conn n set last_activity = now() from (select distinct conn_id from inb) t where n.conn_id = t.conn_id returning 1),
+         multi as (select conn_id from c where st = 'play' and not closing and pid in (i_pos, i_pr) group by conn_id having count(*) >= 2),     -- sql/800: tick_end only matters next to two position packets
          fwd as (insert into mc.play_in_work (seq, conn_id, packet_id, body)
                  select seq, conn_id::int, pid, substring(payload from net.pid_len(payload) + 1)
-                   from c where st = 'play' and not closing and pid = any (valid) and not (pid = any (handled)) returning 1),
+                   from c where st = 'play' and not closing and pid = any (valid) and not (pid = any (handled))
+                    and (pid <> i_te or keep_te or conn_id in (select conn_id from multi)) returning 1),
          cold as (insert into net.batch (conn_id, seq, payload)
                   select conn_id, seq, payload from c
                    where not (st = 'play' and not closing and pid = any (valid) and not (pid = any (handled))) returning 1)

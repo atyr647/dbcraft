@@ -4,7 +4,7 @@
 -- Everything player- or world-specific comes from one record, net.join_info, produced by net.hook_join_info(conn_id) (sql/190_net_hooks.sql).
 -- The game layer replaces that hook with real player and world rows; until then net.default_join_info gives a plain world.
 --
--- OPAQUE PACKETS: update_recipes, commands, recipe_book_add, update_advancements and the player's own set_entity_data / update_attributes
+-- OPAQUE PACKETS: update_recipes, recipe_book_add, update_advancements and the player's own set_entity_data / update_attributes
 -- are stored as captured bytes in net.static_packet (loaded by tools/load_static_packets.py).  They are correct for what they were captured
 -- for (a creative player in a flat world) but are NOT yet generated from readable rows; see docs/NET.md.
 
@@ -74,6 +74,11 @@ create or replace function net.player_info_body(p_conns bigint[]) returns bytea 
                                   || proto.bool(false) || proto.varint(0) || proto.bool(false), ''::bytea order by c.conn_id), '\x'::bytea)
     from net.conn c where c.conn_id = any (p_conns) $$;
 
+-- The command tree a player of permission level p_level receives (the `commands` packet body).  Here: the captured level-0 packet (net.static_packet) for
+-- everybody; sql/810 replaces this with the tree GENERATED from the rows of mc.cmd_node for the player's level.
+create or replace function net.commands_body(p_level int) returns bytea language sql stable as $$
+    select body from net.static_packet where packet = 'minecraft:commands' $$;
+
 -- The ordered packets for one player.  ord is the position in the sequence; rows with the same ord do not occur.
 create or replace function net.play_entry_packets(p_conn bigint, j net.join_info) returns table (ord int, packet text, body bytea) language plpgsql stable as $$
 begin
@@ -95,6 +100,7 @@ begin
               || proto.f32(j.fly_speed) || proto.f32(j.walk_speed)),
         (40,  'minecraft:set_held_slot', proto.varint(j.held_slot)),
         (60,  'minecraft:entity_event', proto.i32(j.entity_id) || proto.i8(24 + j.op_level)),    -- 24 + level: the player's permission level
+        (70,  'minecraft:commands', net.commands_body(j.op_level)),
         (80,  'minecraft:recipe_book_settings', '\x0000000000000000'::bytea),
         (100, 'minecraft:player_position',
               proto.varint(j.teleport_id) || proto.f64(j.x) || proto.f64(j.y) || proto.f64(j.z) || '\x000000000000000000000000000000000000000000000000'::bytea
@@ -119,7 +125,7 @@ begin
               proto.varint(0) || proto.varint(1) || proto.varint(j.inventory_slots) || decode(repeat('00', j.inventory_slots), 'hex') || '\x00'::bytea),   -- every slot empty, nothing carried
         (260, 'minecraft:set_health', proto.f32(j.health) || proto.varint(j.food) || proto.f32(j.saturation)),
         (270, 'minecraft:set_experience', proto.f32(j.xp_progress) || proto.varint(j.xp_level) || proto.varint(j.xp_total))     -- level BEFORE total (found with /experience on the real server, docs/SURVIVAL.md; all zero in the recorded burst, so it was invisible)
-    ) v(ord, packet, body)
+    ) v(ord, packet, body) where v.body is not null
     union all
     select g.ord, g.packet, g.body from mc.join_static_packets(j.entity_id) g       -- the captured packets, adapted to the player (sql/906); the plain captured rows when the game layer is not involved
     order by 1;

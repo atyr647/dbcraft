@@ -51,6 +51,11 @@ The config file is `key=value` lines; every key has an environment override `DBC
 | `inbox_mode` | `copy` | how inbound frames reach `net.inbox`: binary `copy` or an `unnest` insert |
 | `maintenance_s` | 5 | seconds between maintenance passes: a thread with its own connection runs `VACUUM (ANALYZE, SKIP_LOCKED)` on `maintenance_tables`; 0 = off (then run `tools/janitor.sh` or rely on autovacuum with `autovacuum_naptime = 1s`). See `docs/SOAK.md` |
 | `maintenance_tables` | `net.conn, mc.player, mc.visible, mc.chunk_wanted, ...` | schema-qualified tables (a-z, 0-9, `_`) separated by commas or spaces; NOT the queues `net.inbox`/`net.outbox` (the database truncates them itself: `sql/780`) |
+| `lean_ticks` | true | a tick with nothing for the database (no new socket, no inbound frame, no key response, no verdict, no closed socket) runs `select mc.server_tick()` and one probe (`net.gateway_pending`) instead of the whole statement set; the outbox is drained and the control rows read only when the probe says so; the statistics row is written every 10th such tick (a stop request is acted on within 0.5 s). `docs/PERF-IDLE.md` |
+| `skip_tick_end` | true | `client_tick_end` frames of a play connection that sent fewer than two position packets in the tick are not given to the database (they cannot change anything there; `sql/800`), so idle players leave the inbound queue empty and their ticks run lean |
+| `urgent_chat` | true | serverbound `chat` frames are handled between ticks (`net.urgent_chat`, then a drain, one transaction) when the next tick is far enough away; commands, and chat behind a command or behind another kind of frame of the same connection, wait for the tick. false = chat waits for the tick like every other frame. `docs/PERF-IDLE.md` |
+| `urgent_reserve_ms` | 4 | milliseconds that must remain before the next tick, on top of the measured cost of the last urgent run, for an urgent run to start |
+| `urgent_max_per_tick` | 4 | at most this many urgent runs between two ticks (a chat flood must not starve the tick) |
 | `max_connections`, `max_connections_per_ip` | 20000, 16 | connection limits (0 = unlimited per IP) |
 | `new_connections_per_ip_per_sec`, `login_attempts_per_ip_per_min` | 5, 20 | rate limits (0 = unlimited) |
 | `read_timeout_s` | 30 | idle sockets and stalls inside a frame are closed |

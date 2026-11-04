@@ -6,10 +6,13 @@
 #        dbcraft.sh start | stop | kill9 | status | psql [args...] | reset-world
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-export DBCRAFT_PGDATA=/tmp/dbcraft-pg-score DBCRAFT_PGPORT=54599
-PORT=25643
-LOG=/tmp/scoreboard/gateway.log
-mkdir -p /tmp/scoreboard
+# SCORE_PGDATA / SCORE_PGPORT / SCORE_GW_PORT / SCORE_OUT move the cluster, the gateway port and the log directory (several measurements on one machine);
+# SCORE_GATEWAY=rust runs gateway/target/dbcraft-gateway (calling mc.server_tick() or, after `tickmode batched`, the wrapper) instead of the PL/Python net.run.
+export DBCRAFT_PGDATA=${SCORE_PGDATA:-/tmp/dbcraft-pg-score} DBCRAFT_PGPORT=${SCORE_PGPORT:-54599}
+PORT=${SCORE_GW_PORT:-25643}
+OUTD=${SCORE_OUT:-/tmp/scoreboard}
+LOG=$OUTD/gateway.log
+mkdir -p $OUTD
 PSQL="psql -X -q -At -h /tmp -p $DBCRAFT_PGPORT -U postgres dbcraft"
 listening() {
   python3 - "$PORT" <<'PY'
@@ -54,25 +57,39 @@ SQL
       done
     done
     $PSQL -c "update net.gateway_control set stop = false, ticks = 0, max_tick_ms = 0, late_ticks = 0"
-    (nohup $PSQL -c "call net.run($PORT)" > "$LOG" 2>&1 &)
+    if [ "${SCORE_GATEWAY:-plpython}" = rust ]; then
+      DBCRAFT_GW_DATABASE_URL="host=/tmp port=$DBCRAFT_PGPORT user=postgres dbname=dbcraft" DBCRAFT_GW_LISTEN="0.0.0.0:$PORT" \
+        DBCRAFT_GW_MAX_CONNECTIONS_PER_IP=0 DBCRAFT_GW_NEW_CONNECTIONS_PER_IP_PER_SEC=0 DBCRAFT_GW_LOGIN_ATTEMPTS_PER_IP_PER_MIN=0 DBCRAFT_GW_TICK_FN="${SCORE_TICKFN:-mc.server_tick()}" \
+        nohup gateway/target/dbcraft-gateway > "$LOG" 2>&1 &
+      echo $! > $OUTD/gateway.pid      # stop kills THIS pid only (other runs on the machine have gateways with the same command line)
+    else
+      (nohup $PSQL -c "call net.run($PORT)" > "$LOG" 2>&1 &)
+    fi
     for i in $(seq 1 100); do
       if listening; then break; fi
       sleep 0.2
     done
     $PSQL -c "update mc.generator_control set stop = false"
     for g in 1 2; do
-      (nohup $PSQL -c "call mc.run_generator(64, 5)" > /tmp/scoreboard/generator$g.log 2>&1 &)
+      (nohup $PSQL -c "call mc.run_generator(64, 5)" > $OUTD/generator$g.log 2>&1 &)
     done
     echo "dbcraft gateway listening on $PORT (+2 chunk generator connections)"
     ;;
   stop)
     $PSQL -c "update mc.generator_control set stop = true" > /dev/null 2>&1 || true
     $PSQL -c "update net.gateway_control set stop = true" > /dev/null 2>&1 || true
+    if [ "${SCORE_GATEWAY:-plpython}" = rust ]; then
+      GWPID=$(cat $OUTD/gateway.pid 2>/dev/null || true)
+      if [ -n "$GWPID" ]; then kill -TERM "$GWPID" 2>/dev/null || true; fi
+      for i in $(seq 1 60); do [ -n "$GWPID" ] && kill -0 "$GWPID" 2>/dev/null || break; sleep 0.25; done
+    fi
     for i in $(seq 1 60); do
       N=$($PSQL -c "select count(*) from pg_stat_activity where query like 'call net.run%' and pid <> pg_backend_pid()" 2>/dev/null || echo 0)
       if [ "$N" = 0 ]; then break; fi
       sleep 0.25
     done
+    # SCORE_TRIM_AT_STOP=1: give the world's disk space back when the run is over (a machine with little free disk; every run regenerates the world anyway)
+    if [ -n "${SCORE_TRIM_AT_STOP:-}" ]; then $PSQL -c "truncate mc.chunk cascade" > /dev/null 2>&1 || true; fi
     echo "gateway stopped"
     ;;
   kill9)
@@ -101,7 +118,7 @@ SQL
     $PSQL -c "truncate net.conn, net.inbox, net.outbox, net.play_inbox, net.batch" > /dev/null 2>&1 || true
     $PSQL -c "truncate mc.play_out, mc.play_in, mc.play_in_work, mc.visible, mc.kick, mc.pending_ack, mc.block_actor, mc.block_event, mc.error_log, mc.chunk_request, mc.chunk_wanted" > /dev/null 2>&1 || true
     $PSQL -c "delete from mc.player" > /dev/null 2>&1 || true
-    $PSQL -c "delete from mc.chunk where dimension = 'minecraft:overworld'" > /dev/null
+    $PSQL -c "truncate mc.chunk cascade" > /dev/null 2>&1 || $PSQL -c "delete from mc.chunk where dimension = 'minecraft:overworld'" > /dev/null     # truncate: the world is regenerated for every run, and deleted rows would pile up (about 90 MB per run)
     echo "world reset (unexplored world, no players)"
     ;;
   *)

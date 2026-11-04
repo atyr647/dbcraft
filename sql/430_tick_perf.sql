@@ -16,21 +16,26 @@ do $$ begin
 end $$;
 
 create or replace function net.process_fast() returns int language plpgsql as $$
-declare r record; n int; handled int[] := net.handled_play_ids();
-        known int[] := (select coalesce(array_agg(protocol_id), '{}') from ref.packet where state = 'play' and direction = 'serverbound');
-        i_ka int := mc.sid('keep_alive'); i_tp int := mc.sid('accept_teleportation'); i_ci int := mc.sid('client_information');
-        both_ids int[] := array[i_ka, i_tp, i_ci];       -- (client_information: the game reads the skin layers, main hand and view distance too: sql/904)
+declare r record; n int; handled int[] := net.handled_play_ids_c(); known int[] := net.known_play_ids_c();       -- sql/800: plan-time constants (two table queries per tick before)
+        i_ka int := mc.sid('keep_alive'); i_tp int := mc.sid('accept_teleportation'); i_ci int := mc.sid('client_information');       -- (client_information: the game reads the skin layers, main hand and view distance too: sql/904)
+        i_te int := mc.sid('client_tick_end'); i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot');
+        both_ids int[] := array[i_ka, i_tp, i_ci]; keep_te boolean := current_setting('dbcraft.quiet_tick', true) = 'off';          -- sql/800: the switch queues every client_tick_end again
 begin
+    perform set_config('dbcraft.tick_t0', clock_timestamp()::text, true);       -- sql/791: when this tick started (mc.deliver_ready_chunks spends what is left of dbcraft.tick-budget-ms)
     perform net.join_gate();                          -- sql/790: admission gate for logins (parks/releases hello packets; a no-op when nothing is queued or the budget is off)
     delete from net.batch;
     with t as (delete from net.inbox returning conn_id, seq, payload),
          c as (select t.conn_id, t.seq, t.payload, net.pid(t.payload) as pid, (n.state = 'play' and not n.closing) as live
                  from t left join net.conn n on n.conn_id = t.conn_id),
          k as (select c.*, (c.live and c.pid = any (known)) as known_play from c),
+         -- sql/800: client_tick_end only matters to the movement rule "two position packets without a client_tick_end between them" (mc.apply_player_moves); a connection
+         -- with fewer than two position packets in this tick cannot trigger it, so its client_tick_end frames are not queued (every player sends one every tick)
+         multi as (select conn_id from k where known_play and pid in (i_pos, i_pr) group by conn_id having count(*) >= 2),
          to_game as (
              insert into mc.play_in_work (seq, conn_id, packet_id, body)
              select seq, conn_id, pid, substring(payload from net.pid_len(payload) + 1)
                from k where known_play and (not (pid = any (handled)) or pid = any (both_ids))
+                and (pid <> i_te or keep_te or conn_id in (select conn_id from multi))
              returning 1),
          to_batch as (
              insert into net.batch (conn_id, seq, payload)
@@ -67,13 +72,45 @@ begin
                               teleport_ok = c.teleport_ok or ev.tp_hit
           from ev where c.conn_id = ev.conn_id and (ev.ka_hit or (ev.tp_hit and not c.teleport_ok));
     end if;
-    for r in select conn_id, payload from net.batch order by conn_id, seq loop
+    -- Join entry budget (sql/920, docs/PERF-STORM.md): the packet that makes a connection enter play (finish_configuration: mc.on_join, the entry burst, the first chunks) is the
+    -- expensive step of a login, 15-20 ms.  Once this tick has spent dbcraft.join-entry-budget-ms in this function (25; off = never) further entries are put back into
+    -- net.inbox with their sequence numbers and run in the next tick, oldest first; the first dbcraft.join-entry-free (1) of a tick always run, so a login never starves, and a
+    -- connection that has waited longer than dbcraft.join-max-wait-s is let in regardless of the budget, at most 3 per tick (a queue that all reaches the limit together, as under an overloaded machine, must not flood one tick).  What a held-back connection sent after the entry packet waits behind it.  A client
+    -- waiting for its `login` packet sends nothing, so nothing is lost; the bytes a joiner receives do not change, only the tick they are produced in.
+    declare jb_ms numeric; jb_free int; jb_wait numeric; i_fc int; t_pf timestamptz := clock_timestamp(); n_entry int := 0; n_over int := 0; held bigint[] := '{}';
+            d_c bigint[] := '{}'; d_s bigint[] := '{}'; d_p bytea[] := '{}';
+    begin
+    if exists (select 1 from net.batch where conn_id in (select conn_id from net.conn where state = 'configuration')) then
+        select nullif(case when lower(value) in ('off', '0', '-1', '') then null else value end, '')::numeric into jb_ms from mc.server_property where key = 'dbcraft.join-entry-budget-ms';
+        if jb_ms is not null then
+            jb_free := coalesce((select value::int from mc.server_property where key = 'dbcraft.join-entry-free'), 1);
+            jb_wait := coalesce((select value::numeric from mc.server_property where key = 'dbcraft.join-max-wait-s'), 20);
+            i_fc := net.pkt('configuration', 'serverbound', 'minecraft:finish_configuration');
+        end if;
+    end if;
+    for r in select b.conn_id, b.seq, b.payload, c.connected_at,
+                    (jb_ms is not null and c.state = 'configuration' and net.pid(b.payload) = i_fc) as entry
+               from net.batch b left join net.conn c on c.conn_id = b.conn_id order by b.conn_id, b.seq loop
+        if jb_ms is not null then
+            if r.conn_id = any (held)
+               or (r.entry and n_entry >= jb_free and extract(epoch from clock_timestamp() - t_pf) * 1000 > jb_ms
+                   and not (extract(epoch from now() - r.connected_at) >= least(25, jb_wait) and n_over < 3)) then
+                held := held || r.conn_id; d_c := d_c || r.conn_id; d_s := d_s || r.seq; d_p := d_p || r.payload;
+                continue;
+            end if;
+            if r.entry and n_entry >= jb_free and extract(epoch from clock_timestamp() - t_pf) * 1000 > jb_ms then n_over := n_over + 1; end if;
+            if r.entry then n_entry := n_entry + 1; end if;
+        end if;
         begin
             perform net.handle(r.conn_id, r.payload);
         exception when others then
             perform net.fail(r.conn_id, sqlerrm);
         end;
     end loop;
+    if cardinality(d_c) > 0 then
+        insert into net.inbox (conn_id, seq, payload) select u.c, u.s, u.p from unnest(d_c, d_s, d_p) u(c, s, p);
+    end if;
+    end;
     return n;
 end $$;
 
@@ -81,14 +118,25 @@ end $$;
 -- mc.play_in_work.  tick_core() does not count its output rows unless `set mc.count_out = 'on'` (counting a queue of wide rows cost 1.2 ms per tick for a log column).
 create or replace function mc.tick_core() returns bigint language plpgsql as $$
 declare cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz; t6 timestamptz;
-        mv record; ch record; vis record; ka record; n_in int; n_players int; n_out int;
+        mv record; ch record; vis record; ka record; n_in int; n_players int; n_out int; n_misc boolean; n_chat boolean;
 begin
   update mc.game_state set game_time = game_time + 1, day_time = day_time + 1 returning game_time into cur;
   select count(*)::int into n_in from mc.play_in_work;
   select count(*)::int into n_players from mc.player where conn_id is not null;
-  select * into mv from mc.apply_player_moves(cur);                t1 := clock_timestamp();
-  perform mc.apply_misc_input(cur);                                t2 := clock_timestamp();
-  select * into ch from mc.apply_chat(cur);                        t3 := clock_timestamp();
+  -- sql/800: phases with nothing to do are not run.  Which of the rarer input kinds are in the work queue is one scan of a (small) queue; movement is skipped only
+  -- when mc.moves_idle() proves apply_player_moves would change nothing (no movement packet, nobody whose position differs from what the viewers were told).
+  select coalesce(bool_or(packet_id in (mc.sid('keep_alive'), mc.sid('set_carried_item'), mc.sid('set_creative_mode_slot'))), false),
+         coalesce(bool_or(packet_id in (mc.sid('chat'), mc.sid('chat_command'), mc.sid('chat_command_signed'))), false)
+    into n_misc, n_chat from mc.play_in_work;
+  if current_setting('dbcraft.quiet_tick', true) = 'off' then n_misc := true; n_chat := true; end if;       -- the switch of sql/800: run every phase, as before
+  if mc.moves_idle() then
+    select 0::int as moved, 0::int as corrected, 0::int as kicked into mv;
+    if n_in > 0 and exists (select 1 from mc.play_in_work where packet_id = mc.sid('client_tick_end')) then delete from mc.play_in_work where packet_id = mc.sid('client_tick_end'); end if;     -- what mc.apply_player_moves would have removed (the other movement kinds are absent)
+  else
+    select * into mv from mc.apply_player_moves(cur);
+  end if;                                                          t1 := clock_timestamp();
+  if n_misc then perform mc.apply_misc_input(cur); end if;         t2 := clock_timestamp();
+  if n_chat then select * into ch from mc.apply_chat(cur); end if; t3 := clock_timestamp();
   select * into vis from mc.refresh_visibility();                  t4 := clock_timestamp();
   select * into ka from mc.keepalive_due(cur);                     t5 := clock_timestamp();
   if cur % 20 = 0 then
@@ -116,6 +164,8 @@ declare
     cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz;
     n_in int; n_players int; n_out int; r record; framed_rows mc.drain_row[];
 begin
+    -- sql/800: nothing queued, nobody connected: the whole tick is the clock and a log row (mc.tick_quiet says when; same bytes: there is nothing to send)
+    if mc.tick_quiet() then return mc.tick_quiet_step(true); end if;
     -- housekeeping, once a second: the queues only the tick uses are emptied with TRUNCATE (sql/435 says why; the others are emptied with DELETE every tick)
     -- (a queue that was never written since its last truncate has a zero-length file: nothing to empty, and truncating it anyway would create new files for nothing;
     -- an idle server therefore creates no relation file at all)

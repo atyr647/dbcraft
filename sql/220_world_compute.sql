@@ -165,7 +165,9 @@ begin
         select a, translate((max(cm) filter (where j = 0))::bit(64)::text || (max(cm) filter (where j = 1))::bit(64)::text
                             || (max(cm) filter (where j = 2))::bit(64)::text || (max(cm) filter (where j = 3))::bit(64)::text, '01', '0f') as hx
           from acc group by a),
-    pl as (
+    -- MATERIALIZED: referenced from a scalar subquery of `want` (once per layer), the planner would otherwise inline it there and evaluate the whole window computation
+    -- above once per layer: on a populated database (statistics that make the generic plan choose that) 0.6 to 1.8 s per terrain chunk instead of 0.9 ms (docs/PERF-WORLD2.md)
+    pl as materialized (
         select (a - b0) / 16 as off, decode(string_agg(hx, '' order by a), 'hex') as arr from txt group by 1),
     want as (
         select lay,

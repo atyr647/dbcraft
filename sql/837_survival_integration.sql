@@ -40,16 +40,27 @@ alter table mc.tick_log add column if not exists ms_survival float8;
 
 create or replace function mc.tick_core() returns bigint language plpgsql as $$
 declare cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz; t6 timestamptz;
-        mv record; ch record; vis record; ka record; n_in int; n_players int; n_out int; snap mc.surv_snap; s0 timestamptz; s1 timestamptz; s2 timestamptz; ms_surv float8;
+        mv record; ch record; vis record; ka record; n_in int; n_players int; n_out int; snap mc.surv_snap; n_misc boolean; n_chat boolean; s0 timestamptz; s1 timestamptz; s2 timestamptz; ms_surv float8;
 begin
   update mc.game_state set game_time = game_time + 1, day_time = day_time + 1 returning game_time into cur;
   select count(*)::int into n_in from mc.play_in_work;
   select count(*)::int into n_players from mc.player where conn_id is not null;
   snap := mc.survival_pre();                                       s0 := clock_timestamp();                  -- (survival) sprint flags, positions before the moves
-  select * into mv from mc.apply_player_moves(cur);                t1 := clock_timestamp();
+  -- sql/800 (idle): phases with nothing to do are not run; movement is skipped only when mc.moves_idle() proves apply_player_moves would change nothing
+  select coalesce(bool_or(packet_id in (mc.sid('keep_alive'), mc.sid('set_carried_item'), mc.sid('set_creative_mode_slot'))), false),
+         coalesce(bool_or(packet_id in (mc.sid('chat'), mc.sid('chat_command'), mc.sid('chat_command_signed'))), false)
+    into n_misc, n_chat from mc.play_in_work;
+  if current_setting('dbcraft.quiet_tick', true) = 'off' then n_misc := true; n_chat := true; end if;       -- the switch of sql/800: run every phase, as before
+  if mc.moves_idle() then
+    select 0::int as moved, 0::int as corrected, 0::int as kicked into mv;
+    if n_in > 0 and exists (select 1 from mc.play_in_work where packet_id = mc.sid('client_tick_end')) then delete from mc.play_in_work where packet_id = mc.sid('client_tick_end'); end if;
+  else
+    select * into mv from mc.apply_player_moves(cur);
+  end if;                                                          t1 := clock_timestamp();
   perform mc.survival_moves(cur, snap);                            s1 := clock_timestamp();                  -- (survival) fall damage, jump / sprint exhaustion
-  perform mc.apply_misc_input(cur);                                t2 := clock_timestamp();
-  select * into ch from mc.apply_chat(cur);                        t3 := clock_timestamp();
+  if n_misc then perform mc.apply_misc_input(cur); end if;         t2 := clock_timestamp();
+  perform mc.container_step(cur);                                                                                                  -- (containers) menus: clicks, open, close, furnaces; sql/860-866, docs/CONTAINERS.md
+  if n_chat then select * into ch from mc.apply_chat(cur); end if; t3 := clock_timestamp();
   perform mc.survival_input(cur, snap);                            s2 := clock_timestamp();                  -- (survival) respawn, start eating
   select * into vis from mc.refresh_visibility();                  t4 := clock_timestamp();
   perform mc.vis_step(cur);                                                                                   -- (visibility, sql/905) entity data, equipment, attributes, swings: what other players see

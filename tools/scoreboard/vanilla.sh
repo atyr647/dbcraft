@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Start/stop the real vanilla 26.3 server for the scoreboard.   usage: vanilla.sh start [VIEW_DISTANCE] | stop | kill9 | status | reset
 set -euo pipefail
-D=/tmp/vanilla-score
+D=${SCORE_VANILLA_DIR:-/tmp/vanilla-score}
+VPORT=${SCORE_VANILLA_PORT:-25615}
+RPORT=${SCORE_RCON_PORT:-25625}
 JAVA=/usr/lib/jvm/java-25-openjdk-amd64/bin/java
 pid() {
   for p in $(pgrep -f "server.jar nogui" || true); do
@@ -19,18 +21,18 @@ case "${1:-}" in
     VD=${2:-10}
     mkdir -p $D
     cd $D
-    [ -f server.jar ] || cp /tmp/jar-dl/server.jar .
+    [ -f server.jar ] || cp "${SCORE_JAR:-${DBCRAFT_SERVER_JAR:-$HOME/.cache/dbcraft/server-26.3.jar}}" server.jar
     echo "eula=true" > eula.txt
     cat > server.properties <<P
 online-mode=false
-server-port=25615
+server-port=$VPORT
 level-type=minecraft\:flat
 view-distance=$VD
 simulation-distance=10
 network-compression-threshold=-1
 spawn-protection=0
 enable-rcon=true
-rcon.port=25625
+rcon.port=$RPORT
 rcon.password=score
 enable-query=false
 motd=vanilla-score
@@ -50,7 +52,7 @@ max-tick-time=-1
 P
     : > server.log
     : > gc.log
-    (nohup $JAVA -Xms2G -Xmx2G -Xlog:gc:file=$D/gc.log:uptime -jar server.jar nogui > server.log 2>&1 &)
+    (nohup $JAVA -Xms${SCORE_HEAP:-2G} -Xmx${SCORE_HEAP:-2G} -Xlog:gc:file=$D/gc.log:uptime -jar server.jar nogui > server.log 2>&1 &)
     for i in $(seq 1 240); do
       if grep -q "Done (" server.log 2>/dev/null; then break; fi
       sleep 0.5

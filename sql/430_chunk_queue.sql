@@ -83,15 +83,26 @@ end $$;
 
 -- The generator loop: run it from its own connection (`call mc.run_generator();`), as many of them as you have cores to spare.  Commits after every batch.
 -- Stops when mc.generator_control.stop is set, or after p_max_seconds.
-create or replace procedure mc.run_generator(p_batch int default 64, p_idle_ms int default 5, p_max_seconds int default null) language plpgsql as $$
-declare n int; t0 timestamptz := clock_timestamp();
+-- Polling cost (sql/800, docs/PERF-IDLE.md): the poll is one EXISTS (the full request/delete statements only run when a request exists), and after p_idle_polls empty polls in a row the
+-- sleep doubles with every further empty poll up to p_idle_max_ms, so an idle server's generators wake about 20 times a second instead of 200 (two connections used 0.07 of the 0.15
+-- cores an empty server burnt).  A request waits at most p_idle_max_ms for a generator that has backed off; the first poll after work starts again at p_idle_ms.
+drop procedure if exists mc.run_generator(int, int, int);
+create or replace procedure mc.run_generator(p_batch int default 64, p_idle_ms int default 5, p_max_seconds int default null, p_idle_max_ms int default 50, p_idle_polls int default 20) language plpgsql as $$
+declare n int; t0 timestamptz := clock_timestamp(); idle int := 0; sleep_ms float8;
 begin
     loop
-        n := mc.generate_pending(p_batch);
+        n := 0;
+        if exists (select 1 from mc.chunk_request) then n := mc.generate_pending(p_batch); end if;
         commit;
         exit when (select stop from mc.generator_control);
         exit when p_max_seconds is not null and clock_timestamp() - t0 > make_interval(secs => p_max_seconds);
-        if n = 0 then perform pg_sleep(p_idle_ms / 1000.0); end if;
+        if n = 0 then
+            idle := least(idle + 1, 1000);
+            sleep_ms := case when idle <= p_idle_polls then p_idle_ms else least(p_idle_max_ms, p_idle_ms * power(2, least(idle - p_idle_polls, 20))) end;
+            perform pg_sleep(sleep_ms / 1000.0);
+        else
+            idle := 0;
+        end if;
         commit;
     end loop;
 end $$;
@@ -171,8 +182,12 @@ end $$;
 ------------------------------------------------------------------------------------------------ the hooks, on top of the queue
 -- net.hook_chunks (called when a player enters play): the chunks of the square that exist now, as bodies, nearest first.  The ones that do not exist are
 -- generated at once (inline) or queued (async) and arrive through mc.deliver_ready_chunks.  Set-based: no per-chunk call.
+-- sql/920 (docs/PERF-STORM.md): only the nearest dbcraft.join-chunks-inline chunks (default 49 = the whole square at view distance 2) are returned for the burst of the join;
+-- the rest of the square is recorded as wanted and sent in the following ticks by mc.deliver_ready_chunks (nearest first, batches of at most dbcraft.chunk-batch-max,
+-- like vanilla's chunk sender).  A square of 529 chunks at view distance 10 was 3.7 MB, about 80 ms of database time, inside ONE tick per joiner.  0 = everything inline (the old behaviour).
 create or replace function net.hook_chunks(p_conn bigint, p_cx int, p_cz int, p_radius int) returns setof bytea language plpgsql volatile as $$
 declare r int := mc.conn_view_r(p_conn::int, p_radius + 1); dim text := 'minecraft:overworld'; r_cx int[]; r_cz int[]; r_d int[];
+        inl int := coalesce(nullif(mc.prop('dbcraft.join-chunks-inline'), '')::int, 0); lim int;
 begin
     if not mc.world_ready() then
         raise notice 'net.hook_chunks: world reference data is not loaded (run tools/load_world_ref.py); no chunks sent to connection %', p_conn;
@@ -184,12 +199,23 @@ begin
       from generate_series(-r, r) dx cross join generate_series(-r, r) dz
      where not exists (select 1 from mc.chunk c where c.dimension = dim and c.cx = p_cx + dx and c.cz = p_cz + dz);
     if r_cx is not null then perform mc.want_chunks(p_conn::int, dim, r_cx, r_cz, r_d, false); end if;
+    lim := case when inl > 0 and (2 * r + 1) * (2 * r + 1) > inl then inl else 2147483647 end;
+    if lim < 2147483647 then
+        -- the rest of the square (everything after the nearest `lim`) is wanted: mc.deliver_ready_chunks sends it in the next ticks, nearest first (set-based insert: 5 ms
+        -- through mc.want_chunks' unnest and ON CONFLICT DO UPDATE, 1.5 ms like this; the missing ones are already in the queue above and may be wanted rows already)
+        insert into mc.chunk_wanted (conn_id, dimension, cx, cz, dist)
+        select p_conn, dim, p_cx + s.dx, p_cz + s.dz, s.dx * s.dx + s.dz * s.dz
+          from (select dx, dz, row_number() over (order by dx * dx + dz * dz, dx, dz) o from generate_series(-r, r) dx cross join generate_series(-r, r) dz) s
+         where s.o > lim
+        on conflict (conn_id, dimension, cx, cz) do nothing;
+    end if;
     return query
     select mc.packet_body(coalesce(k.packet, mc.chunk_packet(dim, c.cx, c.cz)))
-      from generate_series(-r, r) dx cross join generate_series(-r, r) dz
-      join mc.chunk c on c.dimension = dim and c.cx = p_cx + dx and c.cz = p_cz + dz
+      from (select dx, dz, row_number() over (order by dx * dx + dz * dz, dx, dz) o from generate_series(-r, r) dx cross join generate_series(-r, r) dz) s
+      join mc.chunk c on c.dimension = dim and c.cx = p_cx + s.dx and c.cz = p_cz + s.dz
       left join mc.chunk_cache k on k.dimension = c.dimension and k.cx = c.cx and k.cz = c.cz and k.version = c.version and not c.dirty and not c.hm_dirty
-     order by dx * dx + dz * dz, dx, dz;
+     where s.o <= lim
+     order by s.dx * s.dx + s.dz * s.dz, s.dx, s.dz;
 end $$;
 
 -- Chunk streaming for players that crossed a chunk border (tick step 6), plus delivery of everything that became ready.  Same packets, same order as

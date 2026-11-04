@@ -170,19 +170,25 @@ begin
   update mc.player p set held_slot = proto.i16_read(m.body, 0)
     from mc.play_in_work m where m.packet_id = i_held and length(m.body) = 2 and p.conn_id = m.conn_id and proto.i16_read(m.body, 0) between 0 and 8;
   get diagnostics held = row_count;
+  -- ServerGamePacketListenerImpl.handleSetCreativeModeSlot: a creative player only; the slot must be 1..45 (the result slot cannot be set) and the stack must not exceed
+  -- its item's maximum (otherwise the packet is ignored); a change of the crafting grid recomputes and sends the result (mc.menu_grid_changed, sql/864)
   for r in select m.seq, m.body, p.uuid, p.gamemode from mc.play_in_work m join mc.player p on p.conn_id = m.conn_id where m.packet_id = i_cs order by m.seq loop
     continue when r.gamemode <> 1 or length(r.body) < 3;                        -- only creative players may set slots
-    slot := proto.i16_read(r.body, 0); continue when slot not between 0 and 45;
+    slot := proto.i16_read(r.body, 0); continue when slot not between 1 and 45;
     cnt := proto.varint_safe(r.body, 2); continue when cnt is null;
-    if cnt <= 0 then perform mc.set_slot(r.uuid, slot, null, 0); creative_slots := creative_slots + 1; continue; end if;
+    if cnt <= 0 then perform mc.set_slot(r.uuid, slot, null, 0); creative_slots := creative_slots + 1;
+      if slot <= 4 then perform mc.menu_grid_changed(r.uuid); end if;
+      continue; end if;
     o := (select nxt from proto.varint_read(r.body, 2));                         -- varint_read returns the absolute next offset
     iid := proto.varint_safe(r.body, o); continue when iid is null;
     select name into item from ref.registry where registry = 'minecraft:item' and protocol_id = iid; continue when item is null;
+    continue when cnt > mc.s_max(item);
     o := (select nxt from proto.varint_read(r.body, o));
     added := proto.varint_safe(r.body, o);
     -- component entries are not decoded: a stack with data components is stored with its raw bytes (hex) so nothing is lost silently
-    perform mc.set_slot(r.uuid, slot, item, least(cnt, 99), case when coalesce(added, 0) > 0 or length(r.body) > o + 2 then jsonb_build_object('raw_hex', encode(substring(r.body from o + 1), 'hex')) end);
+    perform mc.set_slot(r.uuid, slot, item, cnt, case when coalesce(added, 0) > 0 or length(r.body) > o + 2 then jsonb_build_object('raw_hex', encode(substring(r.body from o + 1), 'hex')) end);
     creative_slots := creative_slots + 1;
+    if slot <= 4 then perform mc.menu_grid_changed(r.uuid); end if;
   end loop;
   delete from mc.play_in_work where packet_id in (i_ka, i_held, i_cs);
   return next;
@@ -193,6 +199,12 @@ end $$;
 create or replace function mc.keepalive_due(cur_tick bigint) returns table(sent int, timed_out int) language plpgsql as $$
 declare dead int[];
 begin
+  -- sql/800: one scan decides whether anything is due (answered keep-alives are the rule: nothing to time out, nothing to send for 300 ticks)
+  if current_setting('dbcraft.quiet_tick', true) is distinct from 'off' and not exists (select 1 from mc.player where conn_id is not null
+                   and ((keepalive_id is not null and cur_tick - keepalive_sent_tick >= 600)
+                        or (keepalive_id is null and (keepalive_sent_tick is null or cur_tick - keepalive_sent_tick >= 300)))) then
+    sent := 0; timed_out := 0; return next; return;
+  end if;
   select coalesce(array_agg(conn_id), '{}') into dead from mc.player where conn_id is not null and keepalive_id is not null and cur_tick - keepalive_sent_tick >= 600;
   perform mc.kick(c, 'disconnect.timeout') from unnest(dead) c;
   timed_out := coalesce(array_length(dead, 1), 0);

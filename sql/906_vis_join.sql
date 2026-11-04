@@ -34,13 +34,13 @@ declare p mc.player; attrs bytea[];
 begin
   select * into p from mc.player where entity_id = p_eid;
   if not found or not mc.vis_on() then
-    return query select s.ord, s.packet, case when s.entity_prefixed then proto.varint(p_eid) || s.body else s.body end from net.static_packet s;
+    return query select s.ord, s.packet, case when s.entity_prefixed then proto.varint(p_eid) || s.body else s.body end from net.static_packet s where s.packet <> 'minecraft:commands';       -- (the command tree is generated: net.commands_body)
     return;
   end if;
   attrs := mc.pairing_attrs(p.uuid, p.held_slot, case when p.fresh_join then p.gamemode else 0 end, p.sprinting, mc.attr_std_seen());
   return query
     select case when p.fresh_join and s.packet = 'minecraft:recipe_book_add' then 235 else s.ord end, s.packet, case when s.entity_prefixed then proto.varint(p_eid) || s.body else s.body end
-      from net.static_packet s where s.packet not in ('minecraft:set_entity_data', 'minecraft:update_attributes')
+      from net.static_packet s where s.packet not in ('minecraft:set_entity_data', 'minecraft:update_attributes', 'minecraft:commands')
     union all select 90, 'minecraft:recipe_book_add', '\x0001'::bytea where p.fresh_join
     union all select w.ord, w.packet, w.body from mc.wp_join_packets(p_eid) w
     union all select 230, 'minecraft:set_entity_data',

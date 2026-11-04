@@ -74,6 +74,11 @@ impl Reader {
         }
     }
 
+    /// the database said this connection is in the play state (set by its control row)
+    pub fn in_play(&self) -> bool {
+        self.play
+    }
+
     pub fn awaiting(&self) -> Option<&Await> {
         self.awaiting.as_ref()
     }

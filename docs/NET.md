@@ -108,9 +108,9 @@ Also: adacraft's golden corpus (14 of its 20 scenarios apply to SQL; the other 6
 * **Online mode.** Hook design below.
 * **Deflate.** Frames at or above the threshold call `net.deflate_frame`, which raises (the connection is dropped with that reason) until a native implementation
   is installed (`docs/COMPRESSION.md`).  The default threshold is -1 (off), where everything works.  Below-threshold framing is done and verified.
-* **Opaque packets** (stored as captured bytes in `net.static_packet`, loaded by `tools/load_static_packets.py`): `update_recipes`, `commands`, `recipe_book_add`,
+* **Opaque packets** (stored as captured bytes in `net.static_packet`, loaded by `tools/load_static_packets.py`): `update_recipes`, `recipe_book_add`,
   `update_advancements`, and the player's own `set_entity_data` / `update_attributes`.  They are right for a creative player in a flat world and are **not** generated
-  from rows yet.  `commands` should come from the command definitions in `mc`, recipes from the recipe tables, advancements from the advancement rows.
+  from rows yet.  (`commands` is no longer one of them: it is generated from the rows of `mc.cmd_node`, docs/GAME.md#commands.)  Recipes should come from the recipe tables, advancements from the advancement rows.
 * Chunks, entities, movement, chat, inventory and everything else in play: the world and game layers.
 * Transfer intent (3), cookies, resource packs, server links, the code-of-conduct screen, re-entering configuration from play, chat signing (the "initialize chat" action is always absent).
 * The tick glue (`mc.tick`) is not here; `net.process()` and `net.keepalive_tick()` are the calls it should make.
