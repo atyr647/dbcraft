@@ -39,13 +39,13 @@ for s in order:
           f"{rng([r.get('viewer_bytes_per_s', 0) / 1000 for r in rs], '%.0f')} | {rng([float(r['load']) for r in rs], '%.0f')} |")
 print()
 print("### dbcraft entity tick (inline = what the server tick pays), CPU ms per tick")
-print("| scenario | variant | reps | CPU mean | CPU p99 | wall mean | out KB/tick | WAL KB/tick | load |")
-print("|---|---|---|---|---|---|---|---|---|")
+print("| scenario | variant | reps | CPU mean | CPU p50 | CPU p99 | wall mean | out KB/tick | WAL KB/tick | load |")
+print("|---|---|---|---|---|---|---|---|---|---|")
 for s in order:
     for v in ["old", "new", "old-walk1", "new-walk1"]:
         rs = db.get((s, v), [])
         if not rs: continue
-        print(f"| {s} | {v} | {len(rs)} | {rng([r['cpu'] for r in rs])} | {rng([r['p99'] for r in rs])} | {rng([r['wall'] for r in rs])} | {rng([r['kb'] for r in rs], '%.0f')} | {rng([r['wal'] for r in rs], '%.0f')} | {rng([r['load'] for r in rs], '%.0f')} |")
+        print(f"| {s} | {v} | {len(rs)} | {rng([r['cpu'] for r in rs])} | {rng([r['p50'] for r in rs])} | {rng([r['p99'] for r in rs])} | {rng([r['wall'] for r in rs])} | {rng([r['kb'] for r in rs], '%.0f')} | {rng([r['wal'] for r in rs], '%.0f')} | {rng([r['load'] for r in rs], '%.0f')} |")
 print()
 print("### dbcraft split mode: the entity connection B (A stood in by a clock), wall ms per entity tick")
 print("| scenario | reps | ticks run of 150 | B wall mean | B wall p99 |")

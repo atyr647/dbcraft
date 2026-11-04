@@ -85,9 +85,9 @@ begin
         commit;
     end loop;
 end $$;
--- warm-up, then a VACUUM (what autovacuum does within a minute on a real server: the transient of mobs entering their lanes leaves dead index entries), then the measured ticks
+-- warm-up, then VACUUM ANALYZE (what autovacuum + autoanalyze do within a minute on a real server: the transient of mobs entering their lanes leaves dead index entries and the statistics were taken when the lane table was empty: without the ANALYZE the plans were the wrong ones for 250 ticks and a 500-cow tick cost 11 ms instead of 3.5), then the measured ticks
 call pg_temp.run(1, :warm, false);
-vacuum mc.entity, mc.entity_lane;
+vacuum analyze mc.entity, mc.entity_lane;
 call pg_temp.run(:warm + 1, :warm + :ticks, true);
 select format('%s mobs=%s items=%s where=%s walk=%s viewers=%s | cpu ms avg %s p50 %s p99 %s | wall avg %s p99 %s | ai %s phys %s trk %s pick %s | awake %s lanes %s | out rows %s KB %s | wal KB %s | load %s',
               :'label', :mobs, :items, :'where', :'walk', :viewers,
