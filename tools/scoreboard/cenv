@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Environment of the final scoreboard campaign (docs/SCOREBOARD.md "Method"): own cluster, ports and scratch in /dev/shm/sb, Rust gateway.   usage: tools/scoreboard/cenv COMMAND ARGS...
+export SCORE_OUT=/dev/shm/sb/out SCORE_PGDATA=/dev/shm/sb/pg SCORE_PGPORT=58601 SCORE_GW_PORT=58602 SCORE_VANILLA_PORT=58603 SCORE_RCON_PORT=58604
+export SCORE_VANILLA_DIR=/dev/shm/sb/vanilla SCORE_GATEWAY=rust DBCRAFT_REPORTS=${DBCRAFT_REPORTS:-$HOME/.cache/dbcraft/reports} DBCRAFT_PGDATA=/dev/shm/sb/pg DBCRAFT_PGPORT=58601
+export SCORE_JAR=${SCORE_JAR:-$HOME/.cache/dbcraft/server-26.3.jar} PGHOST=/tmp PGPORT=58601 PGUSER=postgres
+cd "$(dirname "$0")/../.."
+exec "$@"

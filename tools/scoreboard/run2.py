@@ -157,4 +157,144 @@ def scenario_world10k(srv, a):
     return out
 
 
-SCENARIOS = {"blocks": scenario_blocks, "chunkload": scenario_chunkload, "world10k": scenario_world10k}
+def _server_thread(pid):
+    import glob
+    for t in glob.glob("/proc/%d/task/*" % pid):
+        try:
+            if open(t + "/comm").read().strip() == "Server thread":
+                return t
+        except OSError:
+            pass
+    return None
+
+
+def _sched_ns(path):
+    try:
+        return int(open(path).read().split()[0])
+    except OSError:
+        return 0
+
+
+class PsqlSession:
+    """One long-lived psql session with \\timing on, like an admin's or a game script's connection (a fresh backend per statement would measure its cold plan caches, 20 ms for the first set_block)."""
+    def __init__(self):
+        self.p = subprocess.Popen(["psql", "-X", "-q", "-At", "-h", "/tmp", "-p", str(C.PGPORT), "-U", "postgres", "dbcraft"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True, bufsize=1)
+        self.p.stdin.write("\\timing on\n")
+
+    def run(self, stmt):
+        self.p.stdin.write(stmt + ";\n\\echo @@DONE@@\n")
+        self.p.stdin.flush()
+        ms = None
+        for line in self.p.stdout:
+            if line.startswith("@@DONE@@"):
+                break
+            m = re.match(r"Time: ([\d.]+) ms", line)
+            if m:
+                ms = float(m.group(1))
+        return ms
+
+    def close(self):
+        try:
+            self.p.stdin.close()
+            self.p.wait(timeout=10)
+        except Exception:
+            self.p.kill()
+
+
+def scenario_edit(srv, a):
+    """Edits with nobody in range (--n 0) or with ONE real client connected (--n 1): the statement (vanilla: RCON round trip; dbcraft: server-side time of the SQL call) and the tick
+    cost of the edit.  Each sample: wait 0.4 s, run the statement, wait 0.6 s.  Tick cost: vanilla = CPU of the Server thread over the 0.6 s after the command start minus the same
+    thread's idle CPU over a window of equal length; dbcraft = sum of ms_total of the ticks the gateway logged in that window minus the idle ticks' mean (the broadcast of the change
+    goes out in the tick that follows the statement).  The viewer is the scripted client of tests/e2e/mcclient.py at the spawn.  Same statements as scenario_blocks."""
+    sys.path.insert(0, os.path.join(C.REPO, "tests", "e2e"))
+    import mcclient as m
+    srv.start(10, 0)
+    viewer = a.n > 0
+    cl = None
+    out = {"viewer": viewer}
+    if srv.name == "vanilla":
+        rc = srv.rcon
+        rc.cmd("gamerule max_block_modifications 2000000")
+        rc.cmd("gamerule random_tick_speed 0")
+        rc.cmd("forceload add -64 -64 79 79")
+        if viewer:
+            cl = m.Client("127.0.0.1", srv.port, "Prober")
+            cl.settle(1.0, 15.0)
+        time.sleep(3)
+        st = _server_thread(srv.pid)
+        cpu = lambda: _sched_ns(st + "/schedstat") / 1e6
+        pids = []
+    else:
+        dbq("select mc.pregenerate('%s', 0, 0, 6, true)" % DIM)
+        sess = PsqlSession()
+        for i in range(60):                           # warm this session's plans like a running admin connection would have (not measured)
+            sess.run("select mc.set_block('%s', %d, -60, %d, 'minecraft:stone')" % (DIM, i % 30, i % 17))
+        for b in ("stone", "air", "stone", "air"):
+            sess.run("select mc.fill('%s', 0, -60, 0, 9, -51, 9, 'minecraft:%s')" % (DIM, b))
+        if viewer:
+            cl = m.Client("127.0.0.1", srv.port, "Prober")
+            cl.settle(1.0, 15.0)
+        time.sleep(3)
+
+    def idle_tick_ms():
+        r = dbq("select coalesce(avg(ms_total), 0) from (select ms_total from mc.server_tick_log order by tick desc limit 40) q")
+        return float(r)
+
+    def sample(cmd_v, stmt_d, reps):
+        """returns (statement ms list, tick cost ms list)"""
+        st_ms, tk_ms = [], []
+        if srv.name == "vanilla":
+            time.sleep(0.4)
+            i0 = cpu(); time.sleep(0.6); idle = cpu() - i0
+            for r in range(reps + 1):
+                time.sleep(0.4)
+                c0 = cpu(); t0 = time.perf_counter()
+                resp = srv.rcon.cmd(cmd_v(r))
+                dt = (time.perf_counter() - t0) * 1000.0
+                time.sleep(0.6)
+                c1 = cpu()
+                if r == 0:
+                    continue                      # warm-up
+                st_ms.append(dt); tk_ms.append(max(0.0, c1 - c0 - idle))
+        else:
+            base = idle_tick_ms()
+            for r in range(reps + 1):
+                time.sleep(0.4)
+                t_a = int(dbq("select coalesce(max(tick), 0) from mc.server_tick_log"))
+                ms = [sess.run(stmt_d(r))]
+                time.sleep(0.6)
+                rows = dbq("select ms_total from mc.server_tick_log where tick > %d order by tick" % t_a).split()
+                if r == 0:
+                    continue
+                st_ms.append(ms[0])
+                xs = [float(x) for x in rows if x]
+                tk_ms.append(max(0.0, sum(xs) - base * len(xs)))
+                out.setdefault("worst_tick_ms", []).append(max(xs) if xs else 0.0)
+        return st_ms, tk_ms
+
+    def blk(r, names=("stone", "gold_block")):
+        return names[r % 2]
+    # single block edits at varying positions, alternating blocks
+    def one(r):
+        x, z = (r * 7) % 90 - 45, (r * 13) % 90 - 45
+        return x, z
+    nsingle = a.edit_single
+    out["single"], out["single_tick"] = sample(lambda r: "setblock %d -60 %d minecraft:%s" % (*one(r), blk(r)),
+                                              lambda r: "select mc.set_block('%s', %d, -60, %d, 'minecraft:%s')" % (DIM, *one(r), blk(r)), nsingle)
+    out["fill1k"], out["fill1k_tick"] = sample(lambda r: "fill 0 -60 0 9 -51 9 minecraft:%s" % blk(r, ("stone", "air")),
+                                              lambda r: "select mc.fill('%s', 0, -60, 0, 9, -51, 9, 'minecraft:%s')" % (DIM, blk(r, ("stone", "air"))), a.edit_fill)
+    out["fill100k"], out["fill100k_tick"] = sample(lambda r: "fill -25 -60 -25 24 -21 24 minecraft:%s" % blk(r, ("stone", "air")),
+                                                  lambda r: "select mc.fill('%s', -25, -60, -25, 24, -21, 24, 'minecraft:%s')" % (DIM, blk(r, ("stone", "air"))), a.edit_fill)
+    for k in ("single", "fill1k", "fill100k"):
+        out[k + "_stats"] = lat_stats(out[k])
+        out[k + "_tick_stats"] = lat_stats(out[k + "_tick"])
+    if srv.name != "vanilla":
+        sess.close()
+    if cl:
+        cl.close()
+        time.sleep(1)
+    return out
+
+
+SCENARIOS = {"edit": scenario_edit, "blocks": scenario_blocks, "chunkload": scenario_chunkload, "world10k": scenario_world10k}
