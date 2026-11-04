@@ -442,16 +442,19 @@ begin
     return decode(repeat(zero, a_y) || repeat(slab, b_y - a_y + 1) || repeat(zero, 15 - b_y), 'hex');
 end $$;
 
--- Fill a box that lies inside ONE section.  Returns the number of positions that changed, or -1 when it did not handle the section (global palette: the caller falls back to
--- mc.edit_section).  It touches neither the chunk row nor the heightmaps (mc.fill does, once per chunk); it writes the section and ONE event of kind 'cells' with the
--- changed positions as a bit map (docs/WORLD.md "Block change packets"), instead of one event row per block.
+-- Fill a box that lies inside ONE section.  Returns the number of positions that changed (changed), or -1 when it did not handle the section (global palette: the caller falls back to
+-- mc.edit_section), and the changed positions as a bit map (bm; docs/WORLD.md "Block change packets" - ONE event of kind 'cells' per section instead of one row per block).  It touches
+-- neither the chunk row nor the heightmaps (mc.fill does, once per chunk) and it queues no event: mc.fill inserts the events of all its sections in ONE statement (a statement-level
+-- trigger on mc.block_event, the entity wake-up, then runs once per fill instead of once per section) and mc.fill_section below does it for one section.
+-- p_filter (null = every position of the box): only positions whose current state is one of these names are replaced (the `keep` and `replace <filter>` modes of sql/961).
 --   * A single-value section that gets another block becomes the palette [old, new] with the box fields set (no unpack); a whole section becomes a single-value section.
 --   * A palette section is edited word by word: for each row of the box (one y and z, the x range) the masks of the entries inside the box are built from table lookups,
 --     the entries equal to the new block, to an air state and to a fluid state are counted with a SWAR zero-field test (no unpacking), and the new word is
 --     (old and not mask) or (new value and mask).  A palette that outgrows its bit width is repacked once.
 -- The results (palette, bits, packed data, block and fluid counts) are those of mc.edit_section for the same blocks, except for a whole section (single value).
-create or replace function mc.fill_section(p_dim text, p_cx int, p_sy int, p_cz int, a_x int, b_x int, a_y int, b_y int, a_z int, b_z int, p_nm text, p_default_biome text)
-returns int language plpgsql volatile set plan_cache_mode = force_generic_plan as $$
+create or replace function mc.fill_section_core(p_dim text, p_cx int, p_sy int, p_cz int, a_x int, b_x int, a_y int, b_y int, a_z int, b_z int, p_nm text, p_default_biome text,
+                                                 p_filter text[], out changed int, out bm bytea)
+returns record language plpgsql volatile set plan_cache_mode = force_generic_plan as $$
 declare
     v_bc int; v_fc int; v_pal text[]; v_bits int; v_data bytea; sec_ok boolean;
     v_bpal text[]; v_bbits int; v_bdata bytea;
@@ -474,11 +477,24 @@ declare
     tc      bigint[] := '{}';                 -- ... and how many fields inside the box equal it
     n_air   int := 0;  n_fl int := 0;  nt int := 0;
     y int; z int; i0 int; i1 int; w int; ws int; lo int; hi int; mo bigint; mk bigint; old bigint; yv bigint; f bigint; t int; k int; s int; e int;
-    changed int; old_air bigint := 0; old_fl bigint := 0;
-    bm      bytea;
+    old_air bigint := 0; old_fl bigint := 0;
     xx int; idx int;
     rep     bigint;
+    fl      int[];                            -- p_filter: the palette entries (0-based) that match, null without a filter
+    frep    bigint[] := '{}';                 -- ... each in every field
+    mf      bigint;  m bigint;  mkw bigint;  feq bigint;  ch bigint;                       -- per word: fields that match / fields replaced (bit 0 each) / all bits of those / fields already the new block / fields that change
+    nrep    bigint := 0;                      -- fields replaced (the box without a filter)
+    chw     bigint[];                         -- per word: the fields that change (bit 0 each), for the bit map
+    c16     bigint;  hx text := '';  rp2 bigint;
+    filt    boolean := p_filter is not null;  -- a filter in force on a palette section
 begin
+    -- the commonest whole-section fill: a single-value section of another block.  Every position changes, so nothing has to be read: one UPDATE (docs/PERF-WORLD2.md)
+    if whole then
+        update mc.chunk_section s set block_count = case when nm_air then 0 else 4096 end, fluid_count = case when nm_fl then 4096 else 0 end, palette = array[p_nm], bits = 0, data = ''::bytea
+         where s.dimension = p_dim and s.cx = p_cx and s.cz = p_cz and s.sy = p_sy and s.bits = 0 and cardinality(s.palette) = 1 and s.palette[1] <> p_nm
+            and (p_filter is null or s.palette[1] = any (p_filter));
+        if found then changed := 4096; bm := mc.block_event_full_cells(); return; end if;
+    end if;
     select s.block_count, s.fluid_count, s.palette, s.bits, s.data, s.biome_palette, s.biome_bits, s.biome_data
       into v_bc, v_fc, v_pal, v_bits, v_data, v_bpal, v_bbits, v_bdata
       from mc.chunk_section s where s.dimension = p_dim and s.cx = p_cx and s.cz = p_cz and s.sy = p_sy for update;
@@ -486,12 +502,17 @@ begin
     if not sec_ok then
         v_bc := 0; v_fc := 0; v_pal := array['minecraft:air']; v_bits := 0; v_data := ''::bytea; v_bpal := array[p_default_biome]; v_bbits := 0; v_bdata := ''::bytea;
     end if;
-    if cardinality(v_pal) = 0 or (v_bits = 0 and cardinality(v_pal) <> 1) then return -1; end if;      -- global palette (or an unexpected single-value layout): the general path
+    if cardinality(v_pal) = 0 or (v_bits = 0 and cardinality(v_pal) <> 1) then changed := -1; return; end if;      -- global palette (or an unexpected single-value layout): the general path
     n_old := cardinality(v_pal);
     newpos := array_position(v_pal, p_nm);
+    if filt then
+        fl := array(select u.i - 1 from unnest(v_pal) with ordinality u(nm, i) where u.nm = any (p_filter));
+        if cardinality(fl) = 0 then changed := 0; return; end if;            -- nothing in the section matches
+        if v_bits = 0 then filt := false; end if;                            -- a single-value section that matches: everything in the box matches
+    end if;
 
     if v_bits = 0 then
-        if newpos is not null then return 0; end if;                       -- the section already is that block everywhere
+        if newpos is not null then changed := 0; return; end if;            -- the section already is that block everywhere
         changed := nbox;
         old_air := case when mc.is_air(v_pal[1]) then nbox else 0 end;      -- everything inside the box is the old single value
         old_fl  := case when mc.has_fluid(v_pal[1]) then nbox else 0 end;
@@ -507,7 +528,7 @@ begin
     else
         if newpos is null then
             v_pal := v_pal || p_nm; newpos := cardinality(v_pal); nb := mc.block_bits_for(newpos);
-            if nb = 16 then return -1; end if;                              -- the palette outgrows 8 bits: the global palette, the general path
+            if nb = 16 then changed := -1; return; end if;                      -- the palette outgrows 8 bits: the global palette, the general path
             if nb > v_bits then v_data := mc.pack_longs(mc.unpack_longs(v_data, v_bits, 4096), nb); v_bits := nb; end if;
         end if;
     end if;
@@ -524,6 +545,13 @@ begin
             rep := rep | (nv << (k * b));
         end loop;
         ones := ou[vpl + 1];
+        if filt then
+            for e in 1 .. cardinality(fl) loop
+                rp2 := 0; for k in 0 .. vpl - 1 loop rp2 := rp2 | (fl[e]::bigint << (k * b)); end loop;
+                frep := frep || rp2;
+            end loop;
+        end if;
+        chw := array_fill(0::bigint, array[nw]);
         if counting then
             cov := 1;
             while cov < b loop sh := least(cov, b - cov); shs := shs || sh; cov := cov + sh; end loop;
@@ -549,10 +577,7 @@ begin
         else
             words := array_fill(0::bigint, array[nw]);
         end if;
-        rep := trep[1];
-        if not counting then
-            rep := 0; for k in 0 .. vpl - 1 loop rep := rep | (nv << (k * b)); end loop;
-        end if;
+        rep := 0; for k in 0 .. vpl - 1 loop rep := rep | (nv << (k * b)); end loop;                 -- the new block in every field
 
         for y in a_y .. b_y loop
             for z in a_z .. b_z loop
@@ -567,14 +592,36 @@ begin
                     mk := fm[hi + 2] & ~fm[lo + 1];                        -- all bits of them
                     old := words[w + 1];
                     if counting then
+                        m := mo;
+                        if filt then                                       -- the fields of the box that hold one of the filter's states
+                            mf := 0;
+                            for e in 1 .. cardinality(fl) loop
+                                f := old # frep[e];
+                                foreach sh in array shs loop f := f | (f >> sh); end loop;
+                                mf := mf | ((f & ones) # ones);
+                            end loop;
+                            m := mf & mo;
+                        end if;
+                        nrep := nrep + bit_count(int8send(m));
                         for t in 1 .. nt loop
                             yv := old # trep[t];                           -- zero field = equal to the counted value
                             f := yv;
                             foreach sh in array shs loop f := f | (f >> sh); end loop;
-                            tc[t] := tc[t] + bit_count(int8send(((f & ones) # ones) & mo));
+                            f := (f & ones) # ones;
+                            if t = 1 then feq := f; end if;
+                            tc[t] := tc[t] + bit_count(int8send(f & m));
                         end loop;
+                        chw[w + 1] := chw[w + 1] | (m & ~feq);
+                        if filt then
+                            mkw := m;
+                            foreach sh in array shs loop mkw := mkw | (mkw << sh); end loop;
+                            words[w + 1] := (old & ~mkw) | (rep & mkw);
+                        else
+                            words[w + 1] := (old & ~mk) | (rep & mk);
+                        end if;
+                    else
+                        words[w + 1] := (old & ~mk) | (rep & mk);
                     end if;
-                    words[w + 1] := (old & ~mk) | (rep & mk);
                     exit when ws + vpl > i1;
                     w := w + 1;
                 end loop;
@@ -582,32 +629,45 @@ begin
         end loop;
 
         if counting then
-            changed := nbox - tc[1]::int;
+            if not filt then nrep := nbox; end if;
+            changed := nrep::int - tc[1]::int;
             for t in 2 .. 1 + n_air loop old_air := old_air + tc[t]; end loop;
             for t in 2 + n_air .. 1 + n_air + n_fl loop old_fl := old_fl + tc[t]; end loop;
-            if changed = 0 then return 0; end if;                           -- nothing differs: nothing is written, no event
-            if tc[1] = 0 then
+            if changed = 0 then return; end if;                                -- nothing differs: nothing is written, no event
+            if tc[1] = 0 and not filt then
                 bm := case when whole then mc.block_event_full_cells() else mc.box_bitmap(a_x, b_x, a_y, b_y, a_z, b_z) end;
+            elsif b = 4 then
+                -- the fields that change, one flag per field (bit 0 of each 4-bit field) of every word, packed to 16 contiguous bits (bit k = field k of the word, which is bit
+                -- w * 16 + k of the map: the low byte first) by masks and shifts; no loop over positions
+                for w in 0 .. nw - 1 loop
+                    c16 := chw[w + 1] & 1229782938247303441;                                   -- 0x1111111111111111
+                    c16 := (c16 | (c16 >> 3)) & 217020518514230019;                            -- 0x0303030303030303
+                    c16 := (c16 | (c16 >> 6)) & 4222189076152335;                              -- 0x000F000F000F000F
+                    c16 := (c16 | (c16 >> 12)) & 1095216660735;                                -- 0x000000FF000000FF
+                    c16 := (c16 | (c16 >> 24)) & 65535;
+                    hx := hx || lpad(to_hex(((c16 & 255) << 8) | (c16 >> 8)), 4, '0');
+                end loop;
+                bm := decode(hx, 'hex');
             else
-                -- only some positions of the box differed: read them off the old words
+                -- (palette entries of 5 to 8 bits do not divide the 16 positions of a word into bytes: read the positions off the old words)
                 bm := decode(repeat('00', 512), 'hex');
                 for y in a_y .. b_y loop
                     for z in a_z .. b_z loop
                         for xx in a_x .. b_x loop
                             idx := (y << 8) | (z << 4) | xx;
-                            if ((ow[idx / vpl + 1] >> ((idx % vpl) * b)) & msk) <> nv then
+                            if ((chw[idx / vpl + 1] >> ((idx % vpl) * b)) & 1) = 1 then
                                 bm := set_byte(bm, idx >> 3, get_byte(bm, idx >> 3) | (1 << (idx & 7)));
                             end if;
                         end loop;
                     end loop;
                 end loop;
             end if;
-            if whole then
+            if whole and not filt then
                 v_bc := case when nm_air then 0 else 4096 end; v_fc := case when nm_fl then 4096 else 0 end;
                 v_pal := array[p_nm]; v_bits := 0; v_data := ''::bytea;
             else
-                v_bc := v_bc - (nbox - old_air::int) + (case when nm_air then 0 else nbox end);
-                v_fc := v_fc - old_fl::int + (case when nm_fl then nbox else 0 end);
+                v_bc := v_bc - (nrep::int - old_air::int) + (case when nm_air then 0 else nrep::int end);
+                v_fc := v_fc - old_fl::int + (case when nm_fl then nrep::int else 0 end);
             end if;
         else
             -- (a single-value section that became a palette section: the counts follow from the old value)
@@ -628,13 +688,26 @@ begin
         on conflict (dimension, cx, cz, sy) do update
            set block_count = excluded.block_count, fluid_count = excluded.fluid_count, palette = excluded.palette, bits = excluded.bits, data = excluded.data;
     end if;
-    insert into mc.block_event (kind, dimension, x, y, z, old_state, new_state, cells) values ('cells', p_dim, p_cx * 16, p_sy * 16, p_cz * 16, '*', p_nm, bm);
-    return changed;
 end $$;
 
--- A fill: a box (inclusive corners).  Per section the box covers, mc.fill_section does the work; a box of at most 48 blocks in a section goes through mc.edit_section instead
+-- One section with its event (the original interface of the box fill; mc.fill calls the core and queues all its events at once).
+create or replace function mc.fill_section(p_dim text, p_cx int, p_sy int, p_cz int, a_x int, b_x int, a_y int, b_y int, a_z int, b_z int, p_nm text, p_default_biome text)
+returns int language plpgsql volatile as $$
+declare r record;
+begin
+    select * into r from mc.fill_section_core(p_dim, p_cx, p_sy, p_cz, a_x, b_x, a_y, b_y, a_z, b_z, p_nm, p_default_biome, null);
+    if r.changed > 0 then
+        insert into mc.block_event (kind, dimension, x, y, z, old_state, new_state, cells) values ('cells', p_dim, p_cx * 16, p_sy * 16, p_cz * 16, '*', p_nm, r.bm);
+    end if;
+    return r.changed;
+end $$;
+
+-- A fill: a box (inclusive corners).  Per section the box covers, mc.fill_section_core does the work; a box of at most 48 blocks in a section goes through mc.edit_section instead
 -- (per-block events, heightmaps kept exact incrementally: for a handful of blocks that is both cheaper and keeps the chunk's heightmaps valid).  Everything else flags
 -- the chunk's heightmaps for a full recompute at the next send (hm_dirty), as whole-section fills always did.  Returns the number of blocks covered.
+-- The 'cells' events of all sections are queued by ONE insert at the end (their order is the order of the sections written).  For a section some connection can see, the fill
+-- also builds the packet the tick will send (mc.fill_packet, sql/960; the same bytes the broadcast would build) and stores it in the event: the encoding happens in this statement,
+-- on the connection that runs it, and the tick only copies bytes.  Nobody in range: nothing is encoded (a viewer who arrives before the tick gets it built by the broadcast).
 create or replace function mc.fill(p_dim text, x1 int, y1 int, z1 int, x2 int, y2 int, z2 int, p_block text) returns int language plpgsql volatile as $$
 declare
     d       mc.dimension%rowtype;
@@ -648,7 +721,11 @@ declare
     covered int := 0;
     n_box   int;
     r       int;
-    secs    int;                                   -- sections of the current chunk written by mc.fill_section
+    secs    int;                                   -- sections of the current chunk written by mc.fill_section_core
+    fr      record;
+    watched boolean;                               -- can some connection see the current chunk (null = not asked yet)
+    st      int;                                   -- the block state id (for the packets)
+    ev_y    int[] := '{}'; ev_cx int[] := '{}'; ev_cz int[] := '{}'; ev_bm bytea[] := '{}'; ev_pkt bytea[] := '{}'; ne int := 0;          -- the events of the cells path
 begin
     select * into d from mc.dimension where name = p_dim;
     if not found then raise exception 'unknown dimension %', p_dim; end if;
@@ -657,7 +734,7 @@ begin
     select p_dim, cx, cz from generate_series(lo_x >> 4, hi_x >> 4) cx, generate_series(lo_z >> 4, hi_z >> 4) cz on conflict do nothing;
     for v_cx in (lo_x >> 4) .. (hi_x >> 4) loop
       for v_cz in (lo_z >> 4) .. (hi_z >> 4) loop
-        secs := 0;
+        secs := 0; watched := null;
         for v_sy in (lo_y >> 4) .. (hi_y >> 4) loop
             a_x := greatest(lo_x, v_cx * 16); b_x := least(hi_x, v_cx * 16 + 15);
             a_y := greatest(lo_y, v_sy * 16); b_y := least(hi_y, v_sy * 16 + 15);
@@ -666,8 +743,15 @@ begin
             covered := covered + n_box;
             r := -1;
             if n_box > 48 then
-                r := mc.fill_section(p_dim, v_cx, v_sy, v_cz, a_x & 15, b_x & 15, a_y & 15, b_y & 15, a_z & 15, b_z & 15, nm, d.default_biome);
-                if r > 0 then secs := secs + 1; end if;
+                select * into fr from mc.fill_section_core(p_dim, v_cx, v_sy, v_cz, a_x & 15, b_x & 15, a_y & 15, b_y & 15, a_z & 15, b_z & 15, nm, d.default_biome, null);
+                r := fr.changed;
+                if r > 0 then
+                    secs := secs + 1; ne := ne + 1;
+                    if watched is null then watched := mc.chunk_watched(v_cx, v_cz); end if;
+                    if watched and st is null then st := mc.block_state_id(nm); end if;
+                    ev_cx := array_append(ev_cx, v_cx); ev_y := array_append(ev_y, v_sy); ev_cz := array_append(ev_cz, v_cz); ev_bm := array_append(ev_bm, fr.bm);
+                    ev_pkt := array_append(ev_pkt, case when watched then mc.fill_packet(v_cx, v_sy, v_cz, fr.bm, st) end);
+                end if;
             end if;
             if r = -1 then
                 idxs := array(select mc.section_idx(x, y, z) from generate_series(a_x, b_x) x, generate_series(a_y, b_y) y, generate_series(a_z, b_z) z order by z, y, x);      -- /fill's order: x fastest, then y, then z
@@ -679,6 +763,10 @@ begin
         end if;
       end loop;
     end loop;
+    if ne > 0 then
+        insert into mc.block_event (kind, dimension, x, y, z, old_state, new_state, cells, pkt)
+        select 'cells', p_dim, e.cx * 16, e.sy * 16, e.cz * 16, '*', nm, e.bm, e.pkt from unnest(ev_cx, ev_y, ev_cz, ev_bm, ev_pkt) with ordinality e(cx, sy, cz, bm, pkt, o) order by e.o;
+    end if;
     return covered;
 end $$;
 
