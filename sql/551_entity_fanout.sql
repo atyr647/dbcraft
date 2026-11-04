@@ -73,7 +73,8 @@ end $$;
 create or replace function mc.entity_tracker(p_tick bigint, p_ids int[]) returns int language plpgsql volatile as $$
 declare n1 int := 0; n2 int := 0;
 begin
-    -- 1. new entities: appear for everybody who can see their cell; their sent-state base is where they are now
+    -- 1. new entities: appear for everybody who can see their cell; their sent-state base is where they are now (one probe of the partial index: usually there are none)
+    if exists (select 1 from mc.entity e where e.last_sent_tick = 0) then
     with ne as materialized (
         select e.id, e.cx, e.cz, p.tracking_chunks as trk,
                mc.epkt_appear(e.id, e.uuid, e.type, e.type_id, e.x, e.y, e.z, e.vx, e.vy, e.vz, e.yaw, e.pitch, e.data) as pkt
@@ -91,6 +92,7 @@ begin
           from ne where e.id = ne.id returning e.id
     )
     select (select count(*) from upd) into n1;
+    end if;
 
     -- 2. movement of the entities processed this tick
     if cardinality(p_ids) > 0 then

@@ -69,23 +69,26 @@ from (
 vacuum analyze mc.entity; vacuum analyze mc.entity_lane; analyze mc.player;
 create temp table _t (tick int, cpu float8, wall float8, ai float8, phys float8, trk float8, pick float8, awake int, rows_out int, bytes_out bigint, wal bigint);
 -- one transaction per tick (COMMIT in the loop), as the server runs it: in one big transaction every update of a row inserted by the same transaction would also run its foreign-key check
-create procedure pg_temp.run(p_ticks int, p_warm int) language plpgsql as $$
+create procedure pg_temp.run(p_from int, p_to int, p_rec boolean) language plpgsql as $$
 declare a bigint[]; b bigint[]; t0 timestamptz; l0 pg_lsn; l1 pg_lsn; r record; tk bigint;
 begin
-    for tk in 1..(p_ticks + p_warm) loop
+    for tk in p_from..p_to loop
         truncate mc.play_out;
         l0 := pg_current_wal_lsn(); a := tickbench.sched(); t0 := clock_timestamp();
         perform mc.entity_tick(tk);
         b := tickbench.sched(); l1 := pg_current_wal_lsn();
-        select * into r from mc.entity_tick_log where tick = tk;
-        if tk > p_warm then
+        if p_rec then
+            select * into r from mc.entity_tick_log where tick = tk;
             insert into _t select tk, (b[1] - a[1]) / 1e6, extract(epoch from clock_timestamp() - t0) * 1000, r.ms_ai, r.ms_physics, r.ms_tracker, r.ms_pickup, r.awake,
                                   (select count(*) from mc.play_out), (select coalesce(sum(octet_length(data)), 0) from mc.play_out), (l1 - l0)::bigint;
         end if;
         commit;
     end loop;
 end $$;
-call pg_temp.run(:ticks, :warm);
+-- warm-up, then a VACUUM (what autovacuum does within a minute on a real server: the transient of mobs entering their lanes leaves dead index entries), then the measured ticks
+call pg_temp.run(1, :warm, false);
+vacuum mc.entity, mc.entity_lane;
+call pg_temp.run(:warm + 1, :warm + :ticks, true);
 select format('%s mobs=%s items=%s where=%s walk=%s viewers=%s | cpu ms avg %s p50 %s p99 %s | wall avg %s p99 %s | ai %s phys %s trk %s pick %s | awake %s lanes %s | out rows %s KB %s | wal KB %s | load %s',
               :'label', :mobs, :items, :'where', :'walk', :viewers,
               round(avg(cpu)::numeric, 2), round((percentile_cont(0.5) within group (order by cpu))::numeric, 2), round((percentile_cont(0.99) within group (order by cpu))::numeric, 2),
