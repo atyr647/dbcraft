@@ -100,6 +100,9 @@ class Client(asyncio.Protocol):
         self.heading = random.uniform(0, 2 * math.pi)
         self.turn_at = 0
         self.rtts = []
+        self.rtt_log = []        # (wall clock seconds when the chat was sent, round trip ms): the probe's samples with their time
+        self.sent_wall = 0.0
+        self.next_send = 0.0
         self.pending_token = None
         self.sent_at = 0.0
         self.disconnect_info = None
@@ -212,6 +215,7 @@ class Client(asyncio.Protocol):
             elif name in ("minecraft:player_chat", "minecraft:system_chat"):
                 if self.pending_token and self.pending_token in body:
                     self.rtts.append((time.perf_counter() - self.sent_at) * 1000.0)
+                    self.rtt_log.append((self.sent_wall, self.rtts[-1]))
                     self.pending_token = None
             elif name == "minecraft:disconnect":
                 self.failed = "disconnect in play"
@@ -239,6 +243,7 @@ class Client(asyncio.Protocol):
     def send_chat(self, token):
         self.pending_token = token.encode()
         self.sent_at = time.perf_counter()
+        self.sent_wall = time.time()
         body = string(token) + struct.pack(">q", int(time.time() * 1000)) + struct.pack(">q", 0) + b"\x00" + varint(0) + b"\x00\x00\x00" + b"\x00"
         self.send("minecraft:chat", body)
 
@@ -268,6 +273,9 @@ async def main():
     ap.add_argument("--bound", type=float, default=0.0, help="walkers turn back when they pass +-bound blocks (0 = they walk on: they leave the explored area)")
     ap.add_argument("--hold", type=float, default=30.0)
     ap.add_argument("--probe", action="store_true", help="add one chat-echo round-trip probe client")
+    ap.add_argument("--probe-interval", type=float, default=1.0, help="seconds between the probe's chat messages (a new one is sent only after the previous came back, or after 10 s)")
+    ap.add_argument("--probes", type=int, default=1, help="with --probe: how many probe clients (named Probe<first>, Probe<first>_1, ...); each chats every --probe-interval seconds, evenly staggered.  "
+                    "Vanilla kicks a player for chat spam above about one message per second, so a finer time resolution needs several probes")
     ap.add_argument("--no-go", action="store_true", help="do not wait for GO on stdin")
     ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args()
@@ -276,9 +284,9 @@ async def main():
     clients = []
     t0 = time.perf_counter()
 
-    async def open_client(i, delay, probe=False):
+    async def open_client(i, delay, probe=False, pk=0):
         await asyncio.sleep(delay)
-        name = ("Probe%d" % args.first) if probe else "%s%d" % (args.prefix, i)
+        name = (("Probe%d" % args.first) + ("_%d" % pk if pk else "")) if probe else "%s%d" % (args.prefix, i)
         c = Client(i, name, args, args.port, probe)
         clients.append(c)
         try:
@@ -291,7 +299,8 @@ async def main():
         delay = (k / max(1, args.n)) * args.join_spread
         tasks.append(asyncio.ensure_future(open_client(args.first + k, delay)))
     if args.probe:
-        tasks.append(asyncio.ensure_future(open_client(900000 + args.first, 0.0, True)))
+        for k in range(args.probes):
+            tasks.append(asyncio.ensure_future(open_client(900000 + args.first + k, 0.0, True, k)))
     movers = set(random.sample(range(args.n), int(round(args.n * args.moving)))) if args.moving > 0 else set()
 
     ticking = {"on": False}
@@ -326,6 +335,7 @@ async def main():
             for c in failed:
                 d["failures"][c.failed] = d["failures"].get(c.failed, 0) + 1
             d["rtt_ms"] = [r for c in clients if c.probe for r in c.rtts]
+            d["rtt_log"] = [[round(t, 3), round(r, 2)] for c in clients if c.probe for t, r in c.rtt_log]
             reasons = {}
             for c in failed:
                 if c.disconnect_info:
@@ -358,15 +368,25 @@ async def main():
     if not args.no_go:
         await loop.run_in_executor(None, sys.stdin.readline)
 
-    # ---- steady state
+    # ---- steady state (ends after --hold seconds, or when the runner writes STOP)
+    stop_fut = loop.run_in_executor(None, sys.stdin.readline) if not args.no_go else None
     hold_end = time.perf_counter() + args.hold
     n = 0
-    while time.perf_counter() < hold_end:
-        await asyncio.sleep(1.0)
-        for c in clients:
-            if c.probe and c.alive and c.pending_token is None and c.state == "play":
+    probes = [c for c in clients if c.probe]
+    t_go = time.perf_counter()
+    for k, c in enumerate(probes):
+        c.next_send = t_go + (k / max(1, len(probes))) * args.probe_interval
+    while time.perf_counter() < hold_end and not (stop_fut is not None and stop_fut.done()):
+        await asyncio.sleep(0.02 if probes else 1.0)
+        now = time.perf_counter()
+        for c in probes:
+            if c.alive and c.state == "play" and now >= c.next_send and (c.pending_token is None or now - c.sent_at > 10.0):
+                if c.pending_token is not None:                 # the echo never came back: count it as a 10 s round trip
+                    c.rtts.append(10000.0)
+                    c.rtt_log.append((c.sent_wall, 10000.0))
                 n += 1
-                c.send_chat("p%d_%d" % (args.first, n))
+                c.send_chat("p%d_%d_%d" % (args.first, n, id(c) % 997))
+                c.next_send = max(c.next_send + args.probe_interval, now)
     await asyncio.sleep(0.5)
     final = summary(final=True)
     print(json.dumps({"event": "DONE", **final}), flush=True)

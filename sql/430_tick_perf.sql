@@ -21,6 +21,7 @@ declare r record; n int; handled int[] := net.handled_play_ids_c(); known int[] 
         i_te int := mc.sid('client_tick_end'); i_pos int := mc.sid('move_player_pos'); i_pr int := mc.sid('move_player_pos_rot');
         both_ids int[] := array[i_ka, i_tp]; keep_te boolean := current_setting('dbcraft.quiet_tick', true) = 'off';          -- sql/800: the switch queues every client_tick_end again
 begin
+    perform set_config('dbcraft.tick_t0', clock_timestamp()::text, true);       -- sql/791: when this tick started (mc.deliver_ready_chunks spends what is left of dbcraft.tick-budget-ms)
     perform net.join_gate();                          -- sql/790: admission gate for logins (parks/releases hello packets; a no-op when nothing is queued or the budget is off)
     delete from net.batch;
     with t as (delete from net.inbox returning conn_id, seq, payload),
@@ -71,13 +72,44 @@ begin
                               teleport_ok = c.teleport_ok or ev.tp_hit
           from ev where c.conn_id = ev.conn_id and (ev.ka_hit or (ev.tp_hit and not c.teleport_ok));
     end if;
-    for r in select conn_id, payload from net.batch order by conn_id, seq loop
+    -- Join entry budget (sql/920, docs/PERF-STORM.md): the packet that makes a connection enter play (finish_configuration: mc.on_join, the entry burst, the first chunks) is the
+    -- expensive step of a login, 15-20 ms.  Once this tick has spent dbcraft.join-entry-budget-ms in this function (25; off = never) further entries are put back into
+    -- net.inbox with their sequence numbers and run in the next tick, oldest first; the first dbcraft.join-entry-free (1) of a tick always run, so a login never starves, and a
+    -- connection that has waited longer than dbcraft.join-max-wait-s is never held back.  What a held-back connection sent after the entry packet waits behind it.  A client
+    -- waiting for its `login` packet sends nothing, so nothing is lost; the bytes a joiner receives do not change, only the tick they are produced in.
+    declare jb_ms numeric; jb_free int; jb_wait numeric; i_fc int; t_pf timestamptz := clock_timestamp(); n_entry int := 0; held bigint[] := '{}';
+            d_c bigint[] := '{}'; d_s bigint[] := '{}'; d_p bytea[] := '{}';
+    begin
+    if exists (select 1 from net.batch where conn_id in (select conn_id from net.conn where state = 'configuration')) then
+        select nullif(case when lower(value) in ('off', '0', '-1', '') then null else value end, '')::numeric into jb_ms from mc.server_property where key = 'dbcraft.join-entry-budget-ms';
+        if jb_ms is not null then
+            jb_free := coalesce((select value::int from mc.server_property where key = 'dbcraft.join-entry-free'), 1);
+            jb_wait := coalesce((select value::numeric from mc.server_property where key = 'dbcraft.join-max-wait-s'), 20);
+            i_fc := net.pkt('configuration', 'serverbound', 'minecraft:finish_configuration');
+        end if;
+    end if;
+    for r in select b.conn_id, b.seq, b.payload, c.connected_at,
+                    (jb_ms is not null and c.state = 'configuration' and net.pid(b.payload) = i_fc) as entry
+               from net.batch b left join net.conn c on c.conn_id = b.conn_id order by b.conn_id, b.seq loop
+        if jb_ms is not null then
+            if r.conn_id = any (held)
+               or (r.entry and n_entry >= jb_free and extract(epoch from clock_timestamp() - t_pf) * 1000 > jb_ms
+                   and extract(epoch from now() - r.connected_at) < least(25, jb_wait)) then
+                held := held || r.conn_id; d_c := d_c || r.conn_id; d_s := d_s || r.seq; d_p := d_p || r.payload;
+                continue;
+            end if;
+            if r.entry then n_entry := n_entry + 1; end if;
+        end if;
         begin
             perform net.handle(r.conn_id, r.payload);
         exception when others then
             perform net.fail(r.conn_id, sqlerrm);
         end;
     end loop;
+    if cardinality(d_c) > 0 then
+        insert into net.inbox (conn_id, seq, payload) select u.c, u.s, u.p from unnest(d_c, d_s, d_p) u(c, s, p);
+    end if;
+    end;
     return n;
 end $$;
 

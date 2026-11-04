@@ -182,8 +182,12 @@ end $$;
 ------------------------------------------------------------------------------------------------ the hooks, on top of the queue
 -- net.hook_chunks (called when a player enters play): the chunks of the square that exist now, as bodies, nearest first.  The ones that do not exist are
 -- generated at once (inline) or queued (async) and arrive through mc.deliver_ready_chunks.  Set-based: no per-chunk call.
+-- sql/920 (docs/PERF-STORM.md): only the nearest dbcraft.join-chunks-inline chunks (default 49 = the whole square at view distance 2) are returned for the burst of the join;
+-- the rest of the square is recorded as wanted and sent in the following ticks by mc.deliver_ready_chunks (nearest first, batches of at most dbcraft.chunk-batch-max,
+-- like vanilla's chunk sender).  A square of 529 chunks at view distance 10 was 3.7 MB, about 80 ms of database time, inside ONE tick per joiner.  0 = everything inline (the old behaviour).
 create or replace function net.hook_chunks(p_conn bigint, p_cx int, p_cz int, p_radius int) returns setof bytea language plpgsql volatile as $$
 declare r int := p_radius + 1; dim text := 'minecraft:overworld'; r_cx int[]; r_cz int[]; r_d int[];
+        inl int := coalesce(nullif(mc.prop('dbcraft.join-chunks-inline'), '')::int, 0); lim int;
 begin
     if not mc.world_ready() then
         raise notice 'net.hook_chunks: world reference data is not loaded (run tools/load_world_ref.py); no chunks sent to connection %', p_conn;
@@ -195,12 +199,23 @@ begin
       from generate_series(-r, r) dx cross join generate_series(-r, r) dz
      where not exists (select 1 from mc.chunk c where c.dimension = dim and c.cx = p_cx + dx and c.cz = p_cz + dz);
     if r_cx is not null then perform mc.want_chunks(p_conn::int, dim, r_cx, r_cz, r_d, false); end if;
+    lim := case when inl > 0 and (2 * r + 1) * (2 * r + 1) > inl then inl else 2147483647 end;
+    if lim < 2147483647 then
+        -- the rest of the square (everything after the nearest `lim`) is wanted: mc.deliver_ready_chunks sends it in the next ticks, nearest first (set-based insert: 5 ms
+        -- through mc.want_chunks' unnest and ON CONFLICT DO UPDATE, 1.5 ms like this; the missing ones are already in the queue above and may be wanted rows already)
+        insert into mc.chunk_wanted (conn_id, dimension, cx, cz, dist)
+        select p_conn, dim, p_cx + s.dx, p_cz + s.dz, s.dx * s.dx + s.dz * s.dz
+          from (select dx, dz, row_number() over (order by dx * dx + dz * dz, dx, dz) o from generate_series(-r, r) dx cross join generate_series(-r, r) dz) s
+         where s.o > lim
+        on conflict (conn_id, dimension, cx, cz) do nothing;
+    end if;
     return query
     select mc.packet_body(coalesce(k.packet, mc.chunk_packet(dim, c.cx, c.cz)))
-      from generate_series(-r, r) dx cross join generate_series(-r, r) dz
-      join mc.chunk c on c.dimension = dim and c.cx = p_cx + dx and c.cz = p_cz + dz
+      from (select dx, dz, row_number() over (order by dx * dx + dz * dz, dx, dz) o from generate_series(-r, r) dx cross join generate_series(-r, r) dz) s
+      join mc.chunk c on c.dimension = dim and c.cx = p_cx + s.dx and c.cz = p_cz + s.dz
       left join mc.chunk_cache k on k.dimension = c.dimension and k.cx = c.cx and k.cz = c.cz and k.version = c.version and not c.dirty and not c.hm_dirty
-     order by dx * dx + dz * dz, dx, dz;
+     where s.o <= lim
+     order by s.dx * s.dx + s.dz * s.dz, s.dx, s.dz;
 end $$;
 
 -- Chunk streaming for players that crossed a chunk border (tick step 6), plus delivery of everything that became ready.  Same packets, same order as

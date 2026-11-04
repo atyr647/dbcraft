@@ -231,7 +231,7 @@ def wait_quiet(max_busy, wait_s):
 
 # ---------------------------------------------------------------------------------------------------------------------------- load generator
 class LoadGens:
-    def __init__(self, port, n, moving, vd, join_spread, ready_timeout, hold, procs=None, probe=True, first0=0, bound=0):
+    def __init__(self, port, n, moving, vd, join_spread, ready_timeout, hold, procs=None, probe=True, first0=0, bound=0, prefix="Bot", probe_interval=1.0, probes=1):
         self.procs = []
         self.q = queue.Queue()
         per = 110
@@ -242,11 +242,12 @@ class LoadGens:
         for i, sz in enumerate(sizes):
             args = [sys.executable, LOADGEN, "--port", str(port), "--n", str(sz), "--first", str(first), "--join-spread", str(join_spread),
                     "--moving", str(moving), "--ready-timeout", str(ready_timeout), "--hold", str(hold), "--expect-chunks", str(chunks_expected(vd)),
-                    "--seed", str(100 + i), "--view-distance", str(vd), "--bound", str(bound)]
-            self.names += ["Bot%d" % j for j in range(first, first + sz)]
+                    "--seed", str(100 + i + first0), "--view-distance", str(vd), "--bound", str(bound), "--prefix", prefix,
+                    "--probe-interval", str(probe_interval), "--probes", str(probes)]
+            self.names += ["%s%d" % (prefix, j) for j in range(first, first + sz)]
             if probe and i == 0:
                 args.append("--probe")
-                self.names.append("Probe%d" % first)
+                self.names += ["Probe%d" % first] + ["Probe%d_%d" % (first, k) for k in range(1, probes)]
             p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
             self.procs.append(p)
             threading.Thread(target=self._reader, args=(i, p), daemon=True).start()
@@ -279,6 +280,15 @@ class LoadGens:
             except Exception:
                 pass
 
+    def stop(self):
+        """End the steady-state phase now (the load generator then prints DONE)."""
+        for p in self.procs:
+            try:
+                p.stdin.write("STOP\n")
+                p.stdin.flush()
+            except Exception:
+                pass
+
     def close(self):
         for p in self.procs:
             try:
@@ -290,11 +300,11 @@ class LoadGens:
 def merge_done(done):
     """Combine the DONE records of several load generator processes."""
     out = {"clients": 0, "in_play": 0, "ready": 0, "failed": 0, "rx_bytes": 0, "join_to_play_s": [], "join_to_last_chunk_s": [], "chunks_per_client": [],
-           "rtt_ms": [], "failures": {}}
+           "rtt_ms": [], "rtt_log": [], "failures": {}}
     for d in done.values():
         for k in ("clients", "in_play", "ready", "failed", "rx_bytes"):
             out[k] += d.get(k, 0)
-        for k in ("join_to_play_s", "join_to_last_chunk_s", "chunks_per_client", "rtt_ms"):
+        for k in ("join_to_play_s", "join_to_last_chunk_s", "chunks_per_client", "rtt_ms", "rtt_log"):
             out[k] += d.get(k, [])
         for f, c in d.get("failures", {}).items():
             out["failures"][f] = out["failures"].get(f, 0) + c
@@ -401,7 +411,76 @@ def scenario_storm(srv, a):
         lg.close()
 
 
-SCENARIOS = {"idle0": scenario_idle0, "pop": scenario_pop, "storm": scenario_storm}
+def scenario_storm2(srv, a):
+    """A login storm into a server that already has players: --online players (idle, ticking like real clients, plus --probes chat probes that chat once a
+    second each, evenly staggered) are in play, settled; then --n clients connect within one second.  Reported: the server's tick during the storm (dbcraft:
+    its own per-tick log; vanilla: /tick query windows polled twice a second), how long the storm took (all joined, all chunks), and what the players who were
+    ALREADY online felt: the chat round trip of the probes before, during and after the storm, and whether any online client was dropped."""
+    n_on = a.online
+    on_names = ["On%d" % i for i in range(n_on)] + ["Probe0"] + ["Probe0_%d" % k for k in range(1, a.probes)]
+    storm_names = ["Bot%d" % i for i in range(a.n)]
+    srv.start(a.vd, n_on + a.n, on_names + storm_names, a.spread)
+    pregen_s = srv.pregenerate((a.spread + 15) // 16 + a.vd + 2)
+    time.sleep(2.0)
+    on = LoadGens(srv.port, n_on, 0.0, a.vd, 2.0, a.ready_timeout, 900, procs=1, probe=True, probe_interval=1.0, probes=a.probes, prefix="On")
+    storm = None
+    try:
+        ready = on.wait_event("READY", a.ready_timeout + 60)
+        if len(ready) < len(on.procs):
+            raise RuntimeError("online group not ready")
+        on.go()
+        time.sleep(a.settle)
+        srv.window_begin()
+        c0, t_storm = srv.cpu(), time.time()
+        storm = LoadGens(srv.port, a.n, 0.0, a.vd, 1.0, a.ready_timeout, 5, probe=False, prefix="Bot")
+        stop = threading.Event()
+
+        def poller():
+            while not stop.is_set():
+                srv.window_poll()
+                time.sleep(0.5 if srv.name == "vanilla" else 5.0)
+        th = threading.Thread(target=poller, daemon=True)
+        th.start()
+        sready = storm.wait_event("READY", a.ready_timeout + 60)
+        t_end = time.time()
+        stop.set()
+        r = srv.window_end()
+        if len(sready) < len(storm.procs):
+            raise RuntimeError("storm: load generators not ready")
+        r.update({"storm_total_s": t_end - t_storm, "time_to_ready_s": max(d["t"] for d in sready.values()), "ready_clients": sum(d["ready"] for d in sready.values()),
+                  "timed_out": any(d.get("timed_out") for d in sready.values()), "cpu_s_total": srv.cpu() - c0, "mem_mib": srv.mem(), "online": n_on + a.probes})
+        if srv.name != "vanilla":
+            rows = dbq("select ms_total from mc.server_tick_log where tick > %d order by tick" % srv.t0_tick)
+            r["tick_series_ms"] = [round(float(x), 1) for x in rows.split() if x]
+        storm.go()
+        done = storm.wait_event("DONE", 60)
+        r.update(client_summary(merge_done(done)))
+        time.sleep(a.after)
+        t_stop = time.time()
+        on.stop()
+        odone = on.wait_event("DONE", 60)
+        om = merge_done(odone)
+        log = om.get("rtt_log", [])
+        def seg(lo, hi):
+            xs = [rt for (t, rt) in log if lo <= t < hi]
+            if not xs:
+                return None
+            d = C.stats(xs)
+            return {"n": d["n"], "p50": d["p50"], "p95": d["p95"], "p99": d["p99"], "max": d["max"], "mean": d["mean"]}
+        r["online_before"] = seg(t_storm - a.settle, t_storm)
+        r["online_during"] = seg(t_storm - 0.5, t_end)          # a chat sent just before the storm is still in flight when it starts
+        r["online_after"] = seg(t_end, t_stop)
+        r["online_failed"] = om.get("failed", 0)
+        r["online_failures"] = om.get("failures", {})
+        r["online_rtt_log_storm"] = [[round(t - t_storm, 2), rt] for (t, rt) in log if t_storm - 3 <= t < t_end + 3]
+        return r
+    finally:
+        on.close()
+        if storm:
+            storm.close()
+
+
+SCENARIOS = {"idle0": scenario_idle0, "pop": scenario_pop, "storm": scenario_storm, "storm2": scenario_storm2}
 
 
 def main():
@@ -417,6 +496,9 @@ def main():
     ap.add_argument("--settle", type=float, default=8.0)
     ap.add_argument("--join-spread", type=float, default=20.0)
     ap.add_argument("--ready-timeout", type=float, default=240.0)
+    ap.add_argument("--after", type=float, default=20.0, help="storm2: seconds the online probes keep measuring after the storm")
+    ap.add_argument("--online", type=int, default=12, help="storm2: players already online (idle bots), besides the chat probes")
+    ap.add_argument("--probes", type=int, default=8, help="storm2: chat probes already online (each chats once a second)")
     ap.add_argument("--servers", default="vanilla,dbcraft")
     ap.add_argument("--dbmode", default="default")
     ap.add_argument("--quiet-wait", type=float, default=float(os.environ.get("SCORE_QUIET_WAIT", 180)),
