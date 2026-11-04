@@ -26,7 +26,7 @@ when nothing is due and nobody is online (0.07 ms measured).  Without the derive
   `Shapes.mergedFaceOccludes` for all pairs of the 338 distinct shapes (69,038 occluding pairs).  Nothing is simulated.  The block tags come from the datapack rows the client's tag packet is built from.
 * **Block changes from outside** (a player, a command, SQL) are noticed by a statement trigger on `mc.block_event` (`mc.dyn_on_events`) and handled **inside the same statement**, like
   vanilla's `setBlock`: a torch placed on nothing is not removed (vanilla keeps it until a neighbour changes), a torch whose support is removed is gone before the call returns.
-  Cells that are not near anything dynamic are filtered with one section read per neighbour, so an ordinary building edit costs 0.2 ms more.  The trigger reads the sections fresh (`mc.dyn_nocache`): a `/fill` records the events of a chunk before it bumps the chunk's version, and a cached section can be older than the rows (this once dropped the fluid ticks of every chunk of a multi-chunk fill but the first).
+  Cells that are not near anything dynamic are filtered with one section read per neighbour, so an ordinary building edit costs 0.2 ms more.  The trigger reads the sections fresh (`mc.dyn_nocache`): a `/fill` records the events of a chunk before it bumps the chunk's version, and a cached section can be older than the rows (this once dropped the fluid ticks of every fill after the first whose sections were cached, and of every chunk but the first of a multi-chunk fill).
 * **`mc.tick_core`** gets one line, `perform mc.dyn_step(cur);` (sql/837, after the visibility refresh).  `mc.dyn_step` is wrapped in an exception handler: a failure rolls back that
   step, is recorded in `mc.error_log` and does not stop the tick.
 * **Quiet writes.**  Vanilla's `setBlock` sends no break effect; only `destroyBlock` does.  The engine's writes are re-recorded as one-position `cells` events (which the broadcast
@@ -116,23 +116,29 @@ How measured.  **CPU time of the backend (`/proc/<pid>/stat`), not wall clock** 
 resolution, one transaction per tick as the server does, caches reset before each run.  Vanilla: the real 26.3 server, CPU of its `Server thread` (`/proc/<pid>/task/<tid>/stat`),
 `gamerule random_tick_speed 0` against `3` in alternation, and the water layer; its JIT warms up during the first run, so the range of two runs is given.
 
-### A big flow: 40 x 40 water source layer dropped 10 blocks (5,065 water cells afterwards), 120 ticks
+### A big flow: 40 x 40 water source layer dropped 10 blocks (1,600 sources, 20,592 water cells at the end: the columns stay), 120 ticks
 
 | | CPU for the 120 ticks | worst tick |
 |---|---|---|
 | **vanilla 26.3** (two runs; the server thread also spends about 1.7 ms per tick on its own at idle, 0.2 s of these totals) | 0.50 to 0.97 s | about 40 ms per tick in the waves; the tick that runs the `/fill` itself 100 to 200 ms |
-| dbcraft at the start of this round | 9.3 to 9.8 s | 1.1 to 1.3 s |
-| dbcraft now (`mc.dyn_step` + the broadcast, vanilla's 65,536 cap, nothing capped) | **1.9 to 2.0 s** | 150 to 190 ms |
+| dbcraft at the start of this round | 39 to 40 s | 8 to 9 s |
+| dbcraft now (`mc.dyn_step` + the broadcast, vanilla's 65,536 cap, nothing capped) | **9.6 to 10.9 s** | 0.9 to 1.2 s |
 
-4.8 times cheaper than it was, still about 2 to 4 times vanilla.  Where the time went and what was done: 80 % of it was the slope search (211,000 recursive calls of a 16-argument
-PL/pgSQL function, 2.9 million helper calls in all) for a flow that never had a hole to find: it is skipped when no cell below the search diamond is anything but a full block (9.3 to 4.4 s);
-the rest was spread over the per-item loop (about 100 microseconds CPU per fluid tick), the pending-tick check, decoding the sections again every tick (the engine now updates its
-section cache with its own change log), and `mc.cells_positions`, which scanned 4,096 bits for each of the 3,500 recorded changes (0.4 ms each).  What is left is mostly the PL/pgSQL work
-per fluid tick: about 9,000 fluid ticks by vanilla's rules (52 % of them change nothing, which cannot be known without evaluating them in order), 2 ms of dyn_run set-up per run.  A
-further cut needs the item loop itself in a faster language, not more tuning.  **dbcraft is not at or below vanilla for this burst.**
+3.9 times cheaper than it was, **still 10 to 20 times vanilla.  dbcraft is not at or below vanilla for a burst of this size, and this round did not get it there.**  (Both dbcraft rows end in
+the same 20,592 cells; the fill is issued as nine chunk-aligned `mc.fill` calls with the section cache cleared in between for the old code, which dropped the ticks of every fill after
+the first when its sections were cached: see the trigger bullet above.  An earlier version of this table measured only the first chunk's 256 sources, 5,065 cells, for that reason: 9.3 s then,
+1.9 s with the work below, against vanilla's figures for 1,600 sources; those numbers are retired.)
+
+Where the time went and what was done: most of it was the slope search (recursive calls of a 16-argument PL/pgSQL function, millions of helper calls) for a flow that never has a hole to
+find: it is skipped when no cell below the search diamond is anything but a full block; then the per-item loop, the pending-tick check (now a hash set), decoding the sections again every tick
+(the engine now updates its section cache with its own change log), and `mc.cells_positions`, which scanned 4,096 bits for each of the 19,000 recorded changes (0.4 ms each; now only the
+non-zero bytes).  What is left is mostly the PL/pgSQL work per fluid tick (about 0.1 ms CPU each, tens of thousands of fluid ticks by vanilla's rules, half of which change nothing, which
+cannot be known without evaluating them in order), the write-back and the broadcast of 20,000 changes.  A further cut needs the item loop itself in a faster language, not more tuning.
+Worst tick: the first waves (1,600 sources and 1,600 falling columns in one tick), 0.9 to 1.2 s against vanilla's 40 ms.
 
 The cap: dbcraft's `dbcraft.dynamics-max-ticks` is now vanilla's 65,536 per kind per tick with vanilla's semantics (the ticks over the limit stay queued in order).  The earlier default
-of 500 hid the cost by delaying ticks, which also changed the result at a given tick; that is gone.
+of 500 hid the cost by delaying ticks, which also changed the result at a given tick; that is gone.  Lower it (for example to 2,000) to spread a burst over more ticks at the price of a
+slower flow, if a long tick matters more than vanilla's timing.
 
 ### Standing cost of random ticks with 500 players (nothing scheduled)
 
