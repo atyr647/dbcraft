@@ -77,7 +77,22 @@ class Vanilla:
             self.gc_off = 0
 
     def window_poll(self):
-        s = self.sample()
+        """A saturated vanilla can leave an RCON command unanswered for minutes (found in the 10-minute soak: 300 s of silence ended the whole cell): poll with a short timeout, count the
+        misses (reported as rcon_timeouts) and reconnect, instead of failing the run."""
+        try:
+            self.rcon.sock.settimeout(20)
+            s = self.sample()
+        except (OSError, ConnectionError):
+            self.rcon_timeouts = getattr(self, "rcon_timeouts", 0) + 1
+            try:
+                self.rcon.sock.close()
+            except OSError:
+                pass
+            try:
+                self.rcon = C.Rcon(timeout=20)
+            except (OSError, ConnectionError):
+                time.sleep(5)
+            return
         if s:
             self.samples.append(s)
 
@@ -98,8 +113,8 @@ class Vanilla:
     def window_end(self):
         s = self.samples
         if not s:
-            return {}
-        r = {"mspt_mean": sum(x["avg"] for x in s) / len(s), "mspt_p50": C.percentile([x["p50"] for x in s], 50),
+            return {"rcon_timeouts": getattr(self, "rcon_timeouts", 0), "samples": 0}
+        r = {"rcon_timeouts": getattr(self, "rcon_timeouts", 0), "mspt_mean": sum(x["avg"] for x in s) / len(s), "mspt_p50": C.percentile([x["p50"] for x in s], 50),
              "mspt_p95": C.percentile([x["p95"] for x in s], 50), "mspt_p99": C.percentile([x["p99"] for x in s], 50),
              "mspt_worst_window_p99": max(x["p99"] for x in s), "mspt_worst_window_avg": max(x["avg"] for x in s), "samples": len(s)}
         r["series_avg_ms"] = [round(x["avg"], 2) for x in s]          # one value per /tick query (100 ticks): how the tick time moves over the window (JVM warm-up)
@@ -245,6 +260,18 @@ def wait_quiet(max_busy, wait_s):
         if good >= 3:
             return time.time() - t0, True
     return time.time() - t0, False
+
+
+def wait_load(max_load, wait_s):
+    """The final campaign's gate (docs/SCOREBOARD.md): before every cell wait until the 1-minute load average is at most max_load, up to wait_s seconds.
+    Returns (waited_s, reached).  The load average includes the cell before this one winding down, so it is the strictest test of 'the machine is quiet'."""
+    t0 = time.time()
+    while True:
+        if C.load_snapshot()["load1"] <= max_load:
+            return time.time() - t0, True
+        if time.time() - t0 >= wait_s:
+            return time.time() - t0, False
+        time.sleep(5.0)
 
 
 # ---------------------------------------------------------------------------------------------------------------------------- load generator
@@ -526,10 +553,15 @@ def main():
     ap.add_argument("--after", type=float, default=20.0, help="storm2: seconds the online probes keep measuring after the storm")
     ap.add_argument("--online", type=int, default=12, help="storm2: players already online (idle bots), besides the chat probes")
     ap.add_argument("--probes", type=int, default=8, help="storm2: chat probes already online (each chats once a second)")
+    ap.add_argument("--edit-single", type=int, default=40, help="edit: single-block samples")
+    ap.add_argument("--edit-fill", type=int, default=6, help="edit: samples of each fill size")
     ap.add_argument("--servers", default="vanilla,dbcraft")
     ap.add_argument("--dbmode", default="default")
     ap.add_argument("--quiet-wait", type=float, default=float(os.environ.get("SCORE_QUIET_WAIT", 180)),
                     help="max seconds to wait before each run for the machine to go quiet (0 = never wait; runs after the wait are flagged quiet_reached=false)")
+    ap.add_argument("--load-max", type=float, default=float(os.environ.get("SCORE_LOAD_MAX", 0)),
+                    help="campaign gate: wait before each cell until the 1-minute load average is at most this (0 = off; replaces --quiet-wait)")
+    ap.add_argument("--load-wait", type=float, default=float(os.environ.get("SCORE_LOAD_WAIT", 900)), help="max seconds to wait for --load-max")
     ap.add_argument("--quiet-busy", type=float, default=0.30, help="CPU busy fraction below which the machine counts as quiet")
     ap.add_argument("--tag", default="")
     ap.add_argument("--out", default=os.path.join(C.OUT, "results.jsonl"))
@@ -542,7 +574,10 @@ def main():
     for rep in range(a.reps):
         for server in a.servers.split(","):
             srv = make(server, a.dbmode)
-            waited, quiet_ok = (0.0, True) if a.quiet_wait <= 0 else wait_quiet(a.quiet_busy, a.quiet_wait)
+            if a.load_max > 0:
+                waited, quiet_ok = wait_load(a.load_max, a.load_wait)
+            else:
+                waited, quiet_ok = (0.0, True) if a.quiet_wait <= 0 else wait_quiet(a.quiet_busy, a.quiet_wait)
             snap0 = C.load_snapshot()
             t_wall = time.time()
             rec = {"scenario": a.scenario, "server": server + (":" + a.dbmode if server == "dbcraft" else ""), "n": a.n, "moving": a.moving, "vd": a.vd,
