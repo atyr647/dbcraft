@@ -7,6 +7,8 @@ header of `sql/800_idle_tick.sql`, the gateways (`gateway/src/gateway.rs`, `sql/
 
 ## Result
 
+> **Correction ([PERF-IDLE2.md](PERF-IDLE2.md)):** the "CPU cores" of the `rust / default` rows below are the PostgreSQL processes only; the gateway process (not a child of the postmaster) was left out of the measurement (0.002-0.03 cores, growing with the players).  The `plpython` rows are right.  PERF-IDLE2.md re-measures with the gateway included.
+
 Same machine (4 vCPUs shared with other jobs; load average 0.2 to 4.8 at the start of the runs, see "Noise"), same load generator as the scoreboard (`tools/scoreboard/loadgen.py`: idle bots that send
 `client_tick_end` each tick, one chat probe sending a message every second and timing the broadcast back), world pre-generated, view distance 10.  **Before** is the code at the start of
 this work (the commit this branch started from, its own cluster, its own gateway binary); **after** is this branch.  The two builds alternate inside every repetition (`tools/scoreboard/idle_matrix.py`), 3 repetitions of 60 s per cell,

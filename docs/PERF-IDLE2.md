@@ -6,33 +6,33 @@
 
 ## Result
 
-Same machine for everything (4 vCPUs shared with about eight other agents' jobs: **load average 2-11 at the start of the runs, see "Noise"**), Rust gateway, world pre-generated, view distance 10, idle bots that send `client_tick_end` every tick plus one chat probe (one message a second, timed
+Same machine for everything (4 vCPUs shared with about eight other agents' jobs; **the load average at the start of the cells was 0.2-7, median 2-3, see "Noise"**), Rust gateway, world pre-generated, view distance 10, idle bots that send `client_tick_end` every tick plus one chat probe (one message a second, timed
 until its broadcast comes back).  **Before** is `046d1e2`, the commit this work started from (its own checkout, own cluster, its own gateway binary, the *same* load generator and runner); **after** is this branch; **vanilla** is the real 26.3 server (`-Xms2G -Xmx2G`).
-The three alternate inside every repetition (the order rotates), 3 repetitions of 60 s per cell (`tools/scoreboard/idle2_matrix.py`); medians with [min-max].  CPU is **every process of the cluster plus the gateway process** (see the correction below).  A 200-player "before" run in which 98 clients were dropped (read timeouts during the join storm) is excluded: two runs.
+The three alternate inside every repetition (the order rotates), 3 repetitions of 60 s per cell (`tools/scoreboard/idle2_matrix.py`); medians with [min-max].  CPU is **every process of the cluster plus the gateway process** (see the correction below).
+One "after" cell (200 players, repetition 1) could not start its gateway (`Address already in use`: a harness collision) and was run again; it is the slowest of the three.
 
 | players | server | runs | tick mean ms | tick p99 ms | CPU cores | chat p50 ms | chat p99 ms | load before |
 |---|---|---|---|---|---|---|---|---|
-| 0 | vanilla | 3 | 0.40 [0.36-0.47] | 4.0 [3.1-4.0] | 0.017 [0.017-0.018] | - | - | 8.5 [7.4-8.9] |
-| 0 | before | 3 | 0.14 [0.12-0.14] | 0.5 [0.4-0.5] | 0.030 [0.028-0.033] | - | - | 5.8 [5.5-9.8] |
-| 0 | **after** | 3 | 0.09 [0.08-0.09] | 0.1 [0.1-0.2] | **0.015 [0.012-0.017]** | - | - | 9.2 [9.2-10.9] |
-| 50 | vanilla | 3 | 56.65 [48.61-67.19] | 107.8 [94.8-169.7] | 1.141 [1.000-1.145] | 30 [28-37] | 90 [89-99] | 8.1 [3.4-8.6] |
-| 50 | before | 3 | 4.41 [3.58-5.11] | 23.9 [12.1-30.9] | 0.113 [0.112-0.135] | 16 [8-28] | 40 [23-76] | 10.9 [4.6-11.4] |
-| 50 | **after** | 3 | 4.36 [4.28-4.49] | 25.4 [24.2-28.1] | **0.098 [0.097-0.124]** | 17 [14-18] | 53 [40-58] | 7.0 [3.7-10.8] |
-| 200 | vanilla | 3 | 149.25 [79.10-250.75] | 284.0 [146.2-674.3] | 0.967 [0.594-1.312] | 100 [62-196] | 130 [124-333] | 2.8 [2.1-8.2] |
-| 200 | before | 2 | 6.18 [5.47-6.88] | 25.2 [20.2-30.2] | 0.205 [0.194-0.216] | 25 [14-37] | 73 [63-83] | 5.0 [4.9-5.0] |
-| 200 | **after** | 3 | 5.30 [4.89-7.25] | 20.2 [16.0-42.4] | **0.177 [0.154-0.197]** | 19 [14-59] | 52 [32-117] | 3.4 [2.6-11.0] |
+| 0 | vanilla | 3 | 0.41 [0.41-0.46] | 1.1 [1.0-3.7] | 0.020 [0.019-0.021] | - | - | 3.9 [0.2-5.0] |
+| 0 | before | 3 | 0.16 [0.14-0.16] | 0.6 [0.5-0.6] | 0.041 [0.038-0.044] | - | - | 3.2 [1.3-4.0] |
+| 0 | **after** | 3 | 0.12 [0.10-0.13] | 0.2 [0.1-0.2] | **0.019 [0.016-0.022]** | - | - | 2.6 [0.5-7.0] |
+| 50 | vanilla | 3 | 47.24 [46.95-49.98] | 81.8 [78.8-88.0] | 1.122 [1.096-1.237] | 29 [29-37] | 73 [72-77] | 1.6 [0.3-2.2] |
+| 50 | before | 3 | 3.90 [3.66-3.95] | 13.7 [13.6-13.8] | 0.147 [0.135-0.149] | 10 [8-13] | 25 [25-31] | 2.3 [0.4-5.3] |
+| 50 | **after** | 3 | 3.11 [2.97-3.25] | 9.9 [9.5-9.9] | **0.114 [0.106-0.119]** | 8 [8-11] | 24 [22-26] | 2.5 [0.5-2.6] |
+| 200 | vanilla | 3 | 74.94 [69.41-163.38] | 147.9 [135.4-352.9] | 1.431 [0.975-1.452] | 51 [43-78] | 108 [90-264] | 1.0 [0.7-1.1] |
+| 200 | before | 3 | 5.68 [5.41-5.81] | 18.2 [17.6-20.8] | 0.231 [0.228-0.244] | 15 [14-25] | 39 [38-55] | 2.9 [2.6-2.9] |
+| 200 | **after** | 3 | 5.01 [4.62-6.46] | 13.0 [11.2-24.8] | **0.195 [0.169-0.207]** | 14 [13-35] | 37 [31-88] | 2.0 [1.3-3.3] |
 
-"Tick" is vanilla's own `/tick query` and, for dbcraft, `ms_total` of `mc.server_tick_log` (the SQL tick).  **These runs have the code of the commit of "queue truncation once a second" still at its old behaviour (`dbcraft.tick-truncate-bytes = 0`); the tail change below
-(default 1 MiB) was measured separately, after the matrix, and is not in these rows.**
+"Tick" is vanilla's own `/tick query` and, for dbcraft, `ms_total` of `mc.server_tick_log` (the SQL tick).  An earlier pass of the same matrix, on a busier machine (load 3-11) and with the queue-truncation setting of the tail section still at its old behaviour, gave the same picture
+(empty server 0.015 [0.012-0.017] after, 0.030 before, 0.017 vanilla; 50 players 0.098 / 0.113 / 1.14; 200 players 0.177 / 0.205 / 0.97 with tick means 4.4 / 4.4 / 57 and 5.3 / 6.2 / 149 ms): its raw lines are in the results file too.
 
 **What this says, plainly.**
 
-* **Empty server: CPU 0.015 [0.012-0.017] against vanilla's 0.017 [0.017-0.018], and 0.030 before.**  Half of the previous cost is gone (2x), and the loss is closed *on these numbers*: the ranges touch at 0.017, so call it a tie to a small win, not a clear one; the
-  machine's noise at this size is about 0.003 cores (the idle load of the box).  Tick time: 0.09 ms against vanilla's 0.40 ms.  Per process (the "Where the CPU went" section): the tick connection 0.0133 -> 0.0073, the two generators 0.0058 -> 0, the gateway 0.0025 -> 0.0018.
-* **50 and 200 idle players: probably 13-14% less CPU than before (0.113 -> 0.098, 0.205 -> 0.177; the ranges overlap) and 6-11 times less than vanilla** (1.14 and 0.97 cores; vanilla's tick on this overloaded box is 57 and 149 ms: its numbers are 1.5-4 times what PERF-IDLE.md measured on a quieter day, so the ratio flatters dbcraft; the earlier session had
-  0.88-0.96 and 1.35-1.41).  The gain at these sizes is small because the cost is the full tick (2.7 ms at 200 players, phases owned by other tracks) and 4,000 socket reads a second in the gateway (0.028 cores), neither of which this work could remove.  The tick is 0.9-1.0x of before (4.36 against 4.41 ms; 5.3 against 6.2).
-* **Chat with idle players, scripted client (only `client_tick_end` ahead of the chat): 17 ms (50 players), 19 ms (200) against vanilla's 30 and 100, p99 53 and 52 against 90 and 130; before this work 16 and 25 / 40 and 73: no difference at 50, inside the noise at 200.**  (Both columns for dbcraft are the lane; the numbers
-  are 3-4 times PERF-IDLE.md's 4-9 ms: the machine, not the code: its SQL for one chat message is 6-12 ms here.)
+* **Empty server: 0.019 [0.016-0.022] cores against vanilla's 0.020 [0.019-0.021]: a tie, and half of the 0.041 it was** (the earlier pass: 0.015 against 0.017 and 0.030).  The loss against vanilla is closed to within what these measurements can resolve (the machine's own noise at this size is about 0.003 cores); the
+  claim "at or below vanilla" holds on the medians (0.019 < 0.020, 0.015 < 0.017) but not beyond the ranges.  Tick time: 0.12 ms against vanilla's 0.41.  Per process ("Where the CPU of an empty server was"): the tick connection 0.0133 -> 0.0073, the two generators 0.0058 -> 0, the gateway 0.0025 -> 0.0018.
+* **50 and 200 idle players: 22% and 16% less CPU than before (0.147 -> 0.114, 0.231 -> 0.195; the ranges do not overlap) and 9.8 and 7.3 times less than vanilla** (1.12 and 1.43 cores; vanilla's tick is 47 and 75 ms, with a p99 of 82 and 148).  The tick is 20% shorter at 50 players (3.11 against 3.90 ms) and 12% at 200 (5.01 against 5.68),
+  its p99 28% and 29% shorter (9.9 against 13.7, 13.0 against 18.2 ms), without any change to what the phases do: it is the guards, the once-a-second trims and, at 200 players, the truncate bound (the tail section).  What is not gone: the cost is still the full tick (2.7 ms at 200 players in `pg_stat_statements`, a dozen phases owned by other tracks) and 4,000 socket reads a second in the gateway (0.028 cores).
+* **Chat with idle players, scripted client (only `client_tick_end` ahead of the chat): p50 8 ms at 50 players and 14 at 200 against vanilla's 29 and 51, p99 24 and 37 against 73 and 108; before this work 10 and 15 / 25 and 39** (the lane was already there; the change is a few ms at p50, inside the ranges at 200).
 
 ### Chat from real clients (new)
 
@@ -53,16 +53,21 @@ An earlier run with 3 repetitions (and one with a probe that was kicked by my ow
 
 At 200 idle players the slowest SQL ticks of a steady minute were **all the first tick of a second** (position 0 of the 20 ticks of a second, mean 13-21 ms against 4-5 for the others, `by_residue` in the result files; the next tick, position 1, 9-13 ms), and their time was in `net.process` (8-26 ms), not in
 work: the tick truncates `mc.play_in_work` and `net.batch` (game time 19 mod 20) and `mc.play_out` (0 mod 20) once a second **whenever they were written** (sql/435: DELETE leaves dead rows), and **a TRUNCATE invalidates every cached plan that mentions the table, so the next tick plans them again** (`pg_stat_statements`:
-`delete from mc.server_tick_log ...` 0.11 ms of planning on every call, and a `net.drain_outbox()` straight after a `truncate net.outbox` took 9-13 ms against 0.4-0.6 in a quick test in one session on the busy machine).  New setting `dbcraft.tick-truncate-bytes` (default 1 MiB, `0` is the old behaviour): the queues are truncated only when they are bigger than that.
-`tail_matrix.py`, 200 idle players, 3 repetitions each, alternating, steady state only:
+`delete from mc.server_tick_log ...` 0.11 ms of planning on every call, and a `net.drain_outbox()` straight after a `truncate net.outbox` took 9-13 ms against 0.4-0.6 in a quick test in one session on the busy machine).  New setting `dbcraft.tick-truncate-bytes` (default **256 KiB**, `0` is the old behaviour): the queues are truncated only when they are bigger than that.
+`tail_matrix.py`, 200 idle players, alternating, steady state only (the three values of a cell are its repetitions in order):
 
-| `dbcraft.tick-truncate-bytes` | SQL tick mean ms | SQL tick p99 ms | gateway tick mean ms | gateway tick p99 ms | ticks over 50 ms (of ~1,120) | CPU cores |
-|---|---|---|---|---|---|---|
-| 0 (every second) | 5.60 / 6.47 / 5.43 | 20.6 / 29.8 / 18.3 | 8.39 / 11.49 / 7.87 | 30.5 / 42.6 / 25.3 | 1 / 7 / 0 | 0.22 / 0.18 / 0.22 |
-| **1,048,576** | 4.46 / 4.83 / 4.21 | 13.0 / 18.1 / 11.6 | 6.93 / 8.69 / 6.58 | 19.4 / 25.9 / 17.8 | 0 / 2 / 0 | 0.20 / 0.17 / 0.19 |
+| `dbcraft.tick-truncate-bytes` | SQL tick mean ms | SQL tick p99 ms | gateway tick mean ms | gateway tick p99 ms | ticks over 50 ms (of ~1,120) | CPU cores | first tick of a second, mean ms |
+|---|---|---|---|---|---|---|---|
+| 0 (every second; before) | 5.60 / 6.47 / 5.43 | 20.6 / 29.8 / 18.3 | 8.39 / 11.49 / 7.87 | 30.5 / 42.6 / 25.3 | 1 / 7 / 0 | 0.22 / 0.18 / 0.22 | 14.3 / 20.9 / 13.4 |
+| 1,048,576 | 4.46 / 4.83 / 4.21 | 13.0 / 18.1 / 11.6 | 6.93 / 8.69 / 6.58 | 19.4 / 25.9 / 17.8 | 0 / 2 / 0 | 0.20 / 0.17 / 0.19 | 6.4 / 7.0 / 6.2 |
+| **262,144 (the default)**, a second series | 4.40 / 5.71 | 15.3 / 21.6 | 6.96 / 9.95 | 21.8 / 31.8 | 0 / 0 | 0.20 / 0.19 | 8.4 / 9.2 |
+| 0, the same second series | 4.68 / 6.82 | 15.4 / 30.2 | 6.99 / 11.66 | 24.3 / 45.8 | 0 / 7 | 0.20 / 0.19 | 12.4 / 21.1 |
 
-(the three values are the three repetitions in order; "gateway tick" is the whole tick as the Rust gateway saw it, from `tools/scoreboard/tick_tail.py`: statements, the read of the drain, the socket writes).  p99 -36%, mean -17%, and the position-0 spike is gone (mean 6.2-7.0 ms for position 0, the time packet for 200 players, against 13-21).
-@@TAILB@@
+("gateway tick" is the whole tick as the Rust gateway saw it, from `tools/scoreboard/tick_tail.py`: statements, the read of the drain, the socket writes.)  With the truncate every second the first tick of the second costs 13-21 ms against 4-5 for the others
+(`mc.server_tick_log` by position in the second, in the result files) and the slowest ticks of a minute are all of them; a bound of 1 MiB removes the effect (p99 -36%, mean -17%), 256 KiB most of it (p99 -10% and -30% in two repetitions: the second series is the noisier one, load 1.1-4.4).
+**Walking players do not gain**: with 50 walkers (`tailB`, 3 repetitions, 1 MiB against 0) the queues are bigger than the bound every second anyway, the p99 of the gateway tick is 37.8-41.9 against 38.2-46.0 ms, and the *mean* is worse with the 1 MiB bound (SQL tick 14.1-14.8 against 11.9-13.7 ms, CPU 0.43-0.45 against 0.40-0.43):
+a bigger table is read dead rows and all by every tick.  That is why the default is the smaller bound: idle players get the benefit, walkers keep the old behaviour (their queues are over 256 KiB each second).  The first tick of the second is still the worst for walkers (25 ms against 12, the time packet and the truncate), which this setting cannot fix.
+The keep-alive round did **not** show up as a tail source: no slow tick sits at a position that is a multiple of the keep-alive period, the answers cost 0.5 ms a call (`pg_stat_statements`), and the first keep-alive of every player is 15 s after its join so the rounds are spread over the join spread.
 
 ## A correction to the numbers of PERF-IDLE.md (read this first)
 
@@ -135,10 +140,10 @@ Both gateways read the list from `net.urgent_neutral_play_ids()` at start (resta
 
 ## What did not work, what was not done
 
-* **The first matrix was thrown away.**  It ran while I ran the SQL test suite in the *same cluster* as the "after" server (the test databases are clones in the cluster, so their sessions counted as the server's CPU: 0.39 and -8.67 cores in two cells), and after I changed a function of the server mid-run.  The kernel's memory cgroup is shared
-  by all the agents' jobs: it killed a vanilla JVM (2.2 GB) in the first pass.  The second pass is what the table has; tests run in a cluster of their own (port 59751) since.
+* **Two earlier passes of the matrix were not the record.**  The first ran while I ran the SQL test suite in the *same cluster* as the "after" server (the test databases are clones in the cluster, so their sessions counted as the server's CPU: 0.39 and -8.67 cores in two cells), and after I changed a function of the server mid-run.  The kernel's memory cgroup is shared
+  by all the agents' jobs: it killed a vanilla JVM (2.2 GB) in the first pass.  The second pass (busy machine, truncate bound still 0) is summarised under the table; the third, on a machine that had become quiet, with the final code, is the table.  Tests run in a cluster of their own (port 59751) since.
 * **The chat lane's effect did not show at 3 repetitions** (see above): 270 chats per build was not enough on a loaded box, 360 were; the 3-repetition run also had a probe that my own load generator got kicked (two position packets in one window): the probe silently stopped sending after a few chats.
-* **The 50/200-player CPU is only 13-14% lower**, not "trimmed further" in the way an empty server was: what is left (`pg_stat_statements`, 200 idle players, per call on a busy machine: `net.stream_chunks` 0.66 ms, `mc.refresh_visibility` 0.32, `mc.survival_moves` 0.29, `mc.survival_entities` 0.26, `mc.keepalive_due` 0.19, `net.join_gate` 0.19, `mc.deliver_ready_chunks` 0.17,
+* **The 50/200-player CPU is 22% and 16% lower**, not "trimmed further" in the way an empty server was: what is left (`pg_stat_statements`, 200 idle players, per call on a busy machine: `net.stream_chunks` 0.66 ms, `mc.refresh_visibility` 0.32, `mc.survival_moves` 0.29, `mc.survival_entities` 0.26, `mc.keepalive_due` 0.19, `net.join_gate` 0.19, `mc.deliver_ready_chunks` 0.17,
   `mc.broadcast_block_events`, `mc.moves_idle` ...) is a dozen phases of 0.1-0.7 ms each, **owned by other tracks** (login storms, visibility, world performance, survival) and not mine to rewrite; the same transaction-id trick can in principle skip a phase when nothing has changed since it last found nothing to do, but it needs a per-phase proof
   that the phase's own output depends on nothing but the tables and not on the tick number (keep-alive and survival do), which I did not do.  The gateway's 4,000 reads a second per 200 players could be batched by waking later (a 200 microsecond coalescing delay would cut the context switches 4 times for 0.2 ms of chat latency); not tried.
 * **Not re-measured: the PL/Python gateway** (its `client_tick_end` filter is implemented and compiled in, but `tests/e2e/run_all.sh` and the gateway's CPU at 200 idle players were not run with it in this session: see "Tests").
@@ -148,17 +153,17 @@ Both gateways read the list from `net.urgent_neutral_play_ids()` at start (resta
 
 ## What is still a loss, and what is still not known
 
-* **Empty server CPU: a tie, not a win** (0.015 against 0.017, ranges touching).  Vanilla's number is the machine's floor for a JVM at rest; ours is 20 wake-ups a second of two processes.  Further saving would be "skip ticks": not done, because the tick number is the world's clock and observable.
-* **Tick time at 50 and 200 idle players** is 4.4 and 5.3 ms against vanilla's 57 and 149 here, a win; but the **p99** (20-25 ms SQL, 20-30 ms as the gateway sees it) is still mostly the once-a-second work (the time packet for 200 players, the log trim) and the join storm (tick of 0.3-1.6 s while 200 clients log in: not this track).
+* **Empty server CPU: a tie, not a win** (0.019 against 0.020 in the record pass, 0.015 against 0.017 in the earlier one; the ranges overlap).  Vanilla's number is the machine's floor for a JVM at rest; ours is 20 wake-ups a second of two processes.  Further saving would be "skip ticks": not done, because the tick number is the world's clock and observable.
+* **Tick time at 50 and 200 idle players** is 3.1 and 5.0 ms against vanilla's 47 and 75 here, a win; but the **p99** (10 and 13 ms SQL, 20-30 ms as the gateway sees it at 200 players) is still mostly the once-a-second work (the time packet for 200 players, the log trim) and the join storm (tick of 0.3-1.6 s while 200 clients log in: not this track).
 * **The lane still waits when the tick is near** (39% of the realistic chats); its price is its SQL cost (`mc.chat_broadcast`: 2.9 ms at 50 players on a quiet machine, 6 here).
-* **Chat p99** has not moved (73 -> 76 ms): it is the longest tick, as before.  The truncation bound removed the commonest long tick; the keep-alive round did **not** show up as a tail source in these runs (no slow tick sits at a keep-alive position; the answers cost 0.5 ms a call).
-* **Walking players** (`tail B`): see the table; the p99 of a tick with 50 walkers is the movement work, not the queues.  200 walkers were not re-measured.
-* **Vanilla's numbers on this box are not vanilla's**: its mean tick of 57-149 ms with idle players is the JVM starved by the other jobs (earlier sessions: 37-57).  Read the dbcraft columns as measured and the vanilla columns as "what vanilla did on the same overloaded box".
+* **Chat p99** with the realistic client has not moved (73 -> 76 ms; scripted client 25 -> 24 and 39 -> 37 ms): it is the longest tick, as before.  The truncation bound removed the commonest long tick; the keep-alive round did **not** show up as a tail source in these runs (no slow tick sits at a keep-alive position; the answers cost 0.5 ms a call).
+* **Walking players**: the tail experiment above (50 walkers) shows no gain from the truncate bound and a first tick of the second at twice the others; 200 walkers were not re-measured, and the scoreboard's 200-walking-players row (docs/SOAK.md) is not something this work touched.
+* **Vanilla's numbers on this box are not vanilla's quiet-machine numbers**: its mean tick of 47-75 ms with idle players (37-57 in earlier sessions) and its 0.97-1.43 cores are what the JVM did next to the other jobs.  Read the dbcraft columns as measured and the vanilla columns as "what vanilla did on the same box in the same hour" (the cells alternate).
 
 ## Noise, and how far to trust the numbers
 
-* The load average at the start of the cells was 2-11 (it is recorded per run, `load_before`, and is in the table); other agents ran vanilla servers, PostgreSQL clusters and test suites throughout.  CPU numbers are cores over 60 s windows from `/proc` (10 ms resolution: about 0.0002 cores), per-call costs are pgbench at 200 calls a second,
-  3 repetitions per cell, medians and ranges; **a difference inside the ranges is not a result** (the empty-server CPU against vanilla; the chat p50 at 50 and 200 scripted players).  The 13-14% CPU gain at 50/200 players is **inside the overlapping ranges** (0.097-0.124 against 0.112-0.135 at 50; 0.154-0.197 against 0.194-0.216 at 200): read it as "probably"; the realistic-chat runs (4 repetitions, 0.108-0.124 against 0.126-0.151) and the truncate runs (-8%) point the same way.
+* The load average at the start of the cells was 0.2-7 in the record pass (3-11 in the earlier one; it is recorded per run, `load_before`, and is in the table); other agents ran vanilla servers, PostgreSQL clusters and test suites throughout.  CPU numbers are cores over 60 s windows from `/proc` (10 ms resolution: about 0.0002 cores), per-call costs are pgbench at 200 calls a second,
+  3 repetitions per cell, medians and ranges; **a difference inside the ranges is not a result** (the empty-server CPU against vanilla; the chat p50 at 50 and 200 scripted players).  The CPU gain at 50/200 players has non-overlapping ranges in the record pass (0.106-0.119 against 0.135-0.149; 0.169-0.207 against 0.228-0.244), overlapping ones in the earlier busy pass (0.097-0.124 against 0.112-0.135), and the realistic-chat runs (4 repetitions, 0.108-0.124 against 0.126-0.151) agree.
 * The chat percentiles of a 60 s cell rest on about 60 chats; the realistic comparison pools 360.
 * Vanilla ran with `-Xms2G -Xmx2G` as in the scoreboard; one JVM was killed by the shared memory cgroup in the thrown-away pass and one 'rcon closed' run was repeated.
 * dbcraft's cluster is the dev cluster (`fsync = off`, `synchronous_commit = off`, in `/dev/shm`), as in the scoreboard; vanilla's world is on tmpfs too.
