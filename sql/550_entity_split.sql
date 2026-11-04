@@ -76,8 +76,10 @@ begin
                  from (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from unnest(p_dim, p_x, p_y, p_z) u(dimension, x, y, z)) ev, mc.entity_lane l0
                 where l0.id = e.id and not l0.auto and e.lane_until > 0 and e.dimension = ev.dimension and e.cx between ev.ecx - 2 and ev.ecx + 2 and e.cz between ev.ecz - 2 and ev.ecz + 2 returning e.id)
     delete from mc.entity_lane l using u where l.id = u.id;
+    perform mc.entity_auto_catchup(lt, array(select l.id from mc.entity_lane l join (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from unnest(p_dim, p_x, p_y, p_z) u(dimension, x, y, z)) ev
+                                              on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 4 and ev.ecx + 4 and l.cz between ev.ecz - 4 and ev.ecz + 4));
     perform mc.entity_auto_end(array(select l.id from mc.entity_lane l join (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from unnest(p_dim, p_x, p_y, p_z) u(dimension, x, y, z)) ev
-                                       on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 2 and ev.ecx + 2 and l.cz between ev.ecz - 2 and ev.ecz + 2), lt, lt);
+                                       on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 3 and ev.ecx + 3 and l.cz between ev.ecz - 3 and ev.ecz + 3), lt, lt);
 end $$;
 
 ------------------------------------------------------------------------------------------------ the trigger: in split mode a command instead of an UPDATE of B's rows
@@ -104,9 +106,13 @@ begin
                  from (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from new_ev) ev, mc.entity_lane l0
                 where l0.id = e.id and not l0.auto and e.lane_until > 0 and e.dimension = ev.dimension and e.cx between ev.ecx - 2 and ev.ecx + 2 and e.cz between ev.ecz - 2 and ev.ecz + 2 returning e.id)
     delete from mc.entity_lane l using u where l.id = u.id;
-    -- autonomous lanes (sql/940): the state after the last entity tick (the clock row: this may run in another session than the entity tick)
+    -- autonomous lanes (sql/940): the state after the last entity tick (the clock row: this may run in another session than the entity tick).  Lanes within three chunks of the event end.  The cell in
+    -- the lane row of a lazy lane may be one chunk behind its mob: the lanes within four are caught up first, so that the cells are exact when the lanes within three are chosen.
+    perform mc.entity_auto_catchup(coalesce((select c.last_tick from mc.entity_clock c), lt),
+                                   array(select l.id from mc.entity_lane l join (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from new_ev) ev
+                                          on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 4 and ev.ecx + 4 and l.cz between ev.ecz - 4 and ev.ecz + 4));
     perform mc.entity_auto_end(array(select l.id from mc.entity_lane l join (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from new_ev) ev
-                                       on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 2 and ev.ecx + 2 and l.cz between ev.ecz - 2 and ev.ecz + 2),
+                                       on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 3 and ev.ecx + 3 and l.cz between ev.ecz - 3 and ev.ecz + 3),
                                coalesce((select c.last_tick from mc.entity_clock c), lt), coalesce((select c.last_tick from mc.entity_clock c), lt));
     return null;
 end $$;

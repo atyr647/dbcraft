@@ -1,0 +1,4 @@
+rep 1 | sim3/2000v mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 12.01 p50 10.25 p99 29.75 | wall avg 16.08 p99 38.53 | ai 15.07 phys 0.06 trk 0.10 pick 0.20 | awake 314 lanes 2000 | out rows 1 KB 4 | wal KB 0 | load 3.20
+rep 1 | sim10/2000v mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 11.09 p50 9.81 p99 27.78 | wall avg 13.36 p99 34.66 | ai 12.51 phys 0.05 trk 0.08 pick 0.15 | awake 323 lanes 2000 | out rows 1 KB 4 | wal KB 0 | load 3.27
+rep 2 | sim3/2000v mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 13.08 p50 9.80 p99 31.69 | wall avg 17.13 p99 45.10 | ai 15.96 phys 0.05 trk 0.08 pick 0.29 | awake 314 lanes 2000 | out rows 1 KB 4 | wal KB 0 | load 3.41
+rep 2 | sim10/2000v mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 10.89 p50 9.08 p99 31.08 | wall avg 13.26 p99 33.99 | ai 12.33 phys 0.06 trk 0.08 pick 0.19 | awake 311 lanes 2000 | out rows 1 KB 4 | wal KB 0 | load 3.45

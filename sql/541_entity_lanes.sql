@@ -79,9 +79,12 @@ end $$;
 create or replace function mc.entity_mask_invalidate() returns trigger language plpgsql as $$
 begin
     if tg_op = 'DELETE' then
+        -- a floor summary that lanes may stand on: the lanes around that are behind are replayed against the floor as it was first (sql/940)
+        if exists (select 1 from mc.entity_floor f where f.dimension = old.dimension and f.cx = old.cx and f.cz = old.cz) then perform mc.entity_auto_floor_change(old.dimension, old.cx, old.cz); end if;
         delete from mc.solid_mask where dimension = old.dimension and cx = old.cx and cz = old.cz and sy = old.sy;
         delete from mc.entity_floor where dimension = old.dimension and cx = old.cx and cz = old.cz;
     else
+        if exists (select 1 from mc.entity_floor f where f.dimension = new.dimension and f.cx = new.cx and f.cz = new.cz) then perform mc.entity_auto_floor_change(new.dimension, new.cx, new.cz); end if;
         delete from mc.solid_mask where dimension = new.dimension and cx = new.cx and cz = new.cz and sy = new.sy;
         delete from mc.entity_floor where dimension = new.dimension and cx = new.cx and cz = new.cz;
     end if;
@@ -134,7 +137,7 @@ $$;
 
 -- Start lanes for the candidates among p_ids whose whole footprint lies on uniform floors at their feet level.  Returns how many started.
 create or replace function mc.entity_lane_try(p_tick bigint, p_ids int[]) returns int language plpgsql volatile
-set enable_hashjoin = off set enable_mergejoin = off as $$
+set enable_hashjoin = off set enable_mergejoin = off set plan_cache_mode = force_generic_plan as $$
 declare n int := 0; ids int[]; gus bigint[]; evs int[]; sls int[];
 begin
     if p_ids is null or cardinality(p_ids) = 0 or not mc.entity_lanes_enabled() then return 0; end if;
@@ -379,6 +382,8 @@ begin
       from (select ch.conn, ch.ncx + dx as cx, ch.ncz + dz as cz, ch.ncx as nx, ch.ncz as nz
               from unnest(cc, ncx, ncz, ocx, ocz) ch(conn, ncx, ncz, ocx, ocz), generate_series(-vr, vr) dx, generate_series(-vr, vr) dz
              where ch.ocx is null or abs(ch.ncx + dx - ch.ocx) > vr or abs(ch.ncz + dz - ch.ocz) > vr) q;
+    -- lazy lanes (sql/940) near the cells that enter a view are brought up to date first: the announcement below reads their entity rows and delta bases
+    if ad_conn is not null then perform mc.entity_auto_catchup(p_tick - 1, mc.entity_auto_lanes_near(p_tick - 1, ncx, ncz, vr + 1)); end if;
     if rm_conn is not null then
         -- what leaves the view: the entities in the cells that left it, within their tracking range of the OLD centre, are removed
         insert into mc.play_out (conn_id, data)
@@ -411,6 +416,9 @@ begin
     insert into mc.entity_viewer_cell (conn_id, cx, cz, r)
     select ch.conn, ch.ncx, ch.ncz, vr from unnest(cc, ncx, ncz) ch(conn, ncx, ncz)
     on conflict (conn_id) do update set cx = excluded.cx, cz = excluded.cz, r = excluded.r;
+    -- lanes that nobody could see (lazy, sql/940) and are now within reach of a viewer's new cell are simulated tick by tick from this tick on
+    update mc.entity_lane l set lazy = false
+     where l.auto and l.lazy and exists (select 1 from unnest(ncx, ncz) c(x, z) where greatest(abs(l.cx - c.x), abs(l.cz - c.z)) <= least(l.trk, vr) + 1);
     return n;
 end $$;
 
