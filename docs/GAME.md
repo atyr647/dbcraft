@@ -59,7 +59,7 @@ text derived from the graph with Brigadier's smart-usage algorithm); `/say` `/se
 * the `commands` packet for permission levels 0, 1, 2, 3 and 4 (`tests/sql/810`; level 0 against a recording from a different server run than the one the graph was loaded from);
 * a recorded session of 392 steps with six players (operators Op1 to Op4 of levels 1 to 4, Bob and Cy plain), run on the real server and on dbcraft (`tests/e2e/record_commands.sh`,
   `compare_commands.py`): **2,316 of 2,316 player/step pairs identical, 1,665 packets**.  Compared: every `system_chat` and `disguised_chat`, the `commands` packet, `player_abilities`,
-  the game-mode `game_event`, the permission-level `entity_event` and every `container_set_slot`.  The steps cover every implemented command with its failures, 132
+  the game-mode `game_event`, the permission-level `entity_event` (its entity id masked: ids depend on who joined before) and every `container_set_slot`.  The steps cover every implemented command with its failures, 132
   steps that use selectors (forms and errors), every permission level's `/help`, all 58 game rules' defaults, `/op` and `/deop` with the tree swap, the operator broadcast and
   `send_command_feedback`, `/give` stacking, `/clear`, `/tp` in all its forms (absolute, `~`, `^`, rotation, destination, several targets), `/ban` with the kick;
 * what the session needed to learn (all now in the code): a `/gamemode` that changes nothing is silent; `/tp` `~` is relative to the executor and sends the offsets with relative flags

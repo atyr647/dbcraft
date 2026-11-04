@@ -5,7 +5,7 @@ the same session.
 usage: tests/e2e/compare_commands.py VANILLA_PREFIX OURS_PREFIX [--steps cmd_steps.py] [-v]     (prefixes of the files cmd_probe.py wrote: <prefix>_<Player>.jsonl)
 
 Compared byte for byte, in order: the packets this layer is responsible for - system_chat, disguised_chat, commands, change_difficulty, player_abilities, the
-game mode game_event (event 3), the permission-level entity_event (24..28) and container_set_slot.  Everything else vanilla sends (entity metadata, sounds,
+game mode game_event (event 3), the permission-level entity_event (24..28, entity id masked) and container_set_slot.  Everything else vanilla sends (entity metadata, sounds,
 item entities, recipe book, waypoints ...) is outside the layer and not compared.  What may legitimately differ is masked:
   * values of the run: the world seed, clock totals, game times, positions of players (each server places a joiner differently) - the text is masked, the shape is not
   * container_set_slot state ids and sequences are compared as they are
@@ -68,6 +68,7 @@ def _string_root(e):
 
 def masked(e, label):
     n = e["name"].replace("minecraft:", "")
+    if n == "entity_event": return "entity_event:%d" % body(e)[-1]       # the entity id is the server's own (ids depend on who joined before)
     if n == "commands": return "commands:" + cmdtree.canonical(body(e))          # the order of /gamerule's children is a hash order (differs per run of the real server)
     if n == "system_chat":
         t = _string_root(e)
