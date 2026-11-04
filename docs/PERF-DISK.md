@@ -65,14 +65,14 @@ All numbers in MiB of `pg_total_relation_size` of the five world tables (what th
 
 | World | Before | After (as generated / imported) | After `tools/compact_world.sh` | Vanilla |
 |---|---|---|---|---|
-| 10,000 flat chunks | 92.63 | **16.14** (1,692 B/chunk; WAL while generating 64.1 -> 21.7 MiB) | (existing database with 10,000 old flat chunks: see below) | **62.09** whole folder; 4,096 B per chunk stored |
-| 2,000 noise chunks | 46.59 | XXNOISE | XXNOISEC | 7.84 (own export, a lower bound) |
+| 10,000 flat chunks | 92.63 | **16.14** (1,692 B/chunk; WAL while generating 64.1 -> 21.7 MiB) | 16.14 (nothing to gain: generated compact) | **62.09** whole folder; 4,096 B per chunk stored |
+| 2,000 noise chunks | 46.59 | 19.90 (3,039 of the 10,433 bytes a chunk are free space the generator's updates left in `mc.chunk`, see section 6) | **13.34** (6,992 B/chunk) | 7.84 (own export, a lower bound; 4,096 B/chunk) |
 | imported vanilla world, 780 chunks, cache empty | 43.93 | 17.84 (the importer writes lz4 rows) | **13.35** | 17.08 whole folder / 7.23 the 780 chunks alone |
 | the same, after every chunk was sent once (cache warm) | 54.45 | 24.35 | | |
 
 Per table, per chunk, flat world, bytes including indexes: `chunk_section` 4,162 -> 380, `chunk` 2,797 -> 329, `chunk_cache` 2,114 -> 455, `chunk_light` 638 -> 525; total 9,713 -> 1,692.
 
-Existing databases: `tools/compact_world.sh --apply-sql` (applies `sql/245`, `291`, `950`, rewrites every row, `VACUUM FULL`s): XXEXIST
+Existing databases: `tools/compact_world.sh --apply-sql` (applies `sql/245`, `291`, `950`, rewrites every row, `VACUUM FULL`s) took the 10,000-chunk flat database of the *old* tree from **92.66 to 27.02 MiB** (1.3 s of rewrite, 0.3 s of `VACUUM FULL`).  It stays above the 16.14 of a freshly generated world because the old cache rows keep their 1,100-byte compressed frames (`select mc.trim_chunk_cache(interval '0')` and let them refill, or regenerate).
 
 ## 5. Hot-path cost of the change (CPU time, `tests/bench/world/` style; A = the tree before, B = after, alternated, 6 rounds each, medians, ranges in brackets)
 
@@ -89,7 +89,14 @@ Existing databases: `tools/compact_world.sh --apply-sql` (applies `sql/245`, `29
 | cold build of a real terrain chunk packet (imported, 300 chunks, CPU) | 6.27 / 5.92 ms | 5.85 / 5.59 ms (as imported), 5.72 / 5.91 ms (compacted) | | the heightmap read sites were fixed first |
 | noise generation, 2,000 chunks | 24.5 s wall (12.2 ms/chunk), WAL 37.7 MiB | 19.5 s (9.7 ms/chunk), WAL 25.4 MiB | | wall time on a loaded machine |
 
-XXTICK
+The tick (`tests/bench/tick/ab.sh`, 200 players, 30 x 30 chunks generated and cached, view distance 10, 4 alternated runs of 100 ticks after 20 of warm-up; medians, (min-max) of the four runs; load average 11 to 17 on the machine):
+
+| 200 players | tick wall avg ms (before / after) | on-CPU avg ms | `chunks` phase ms | verdict |
+|---|---|---|---|---|
+| 20% walking | 41.4 (37.6-45.2) / 42.4 (39.1-44.6) | 9.0 (8.4-9.9) / 9.3 (9.1-9.9) | 5.7 (3.9-6.5) / 7.0 (4.9-7.3) | within noise (+3% CPU, ranges overlap) |
+| 100% walking | 79.1 (75.1-84.8) / 84.5 (60.2-99.4) | 26.9 (22.8-34.4) / 23.8 (19.5-32.4) | 19.5 (17.3-32.6) / 23.4 (11.2-36.3) | within noise (the CPU median is lower, the wall median higher, the ranges are 20 ms wide) |
+
+The tick reads sections only through the block-edit phases (`blocks` 0.2-0.4 ms) and chunks only through the cache; neither moved.  I did not rerun the 10-minute 200-player soak of `docs/SOAK.md`.
 
 ## 6. Decisions, and what did not work
 
@@ -143,4 +150,4 @@ select mc.generate_batch('minecraft:overworld', array_agg(x), array_agg(z)) from
 checkpoint;  select sum(pg_total_relation_size(c.oid)) from pg_class c where c.relnamespace = 'mc'::regnamespace and c.relname in ('chunk','chunk_section','chunk_light','chunk_cache','block_entity');
 ```
 Vanilla: `tools/scoreboard/run2.py` `scenario_world10k` (or the same RCON recipe by hand); the region statistics were read with a 30-line script over the region headers.  The A/B
-timing scripts are `tests/bench/edit/single_edit.sql` and `tests/bench/world/perf_chunks.sql` (the CPU variants used here are in the commit message of this work's benchmark commit).
+timing scripts are in `tests/bench/disk/` (`hot.sql` + `ab_hot.py` for the table of section 5, `generate_and_size.py` and `sizes.sql` for section 4, `cold_build.sql`).

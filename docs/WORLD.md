@@ -197,8 +197,14 @@ about 100,000 blocks (the hash arithmetic is bounded, the tests stop at 4,000 bl
 | `mc.block_event` | block changes for the tick to broadcast (the only unlogged table; transient): one row per changed block (`kind = 'block'`) or one per section a fill changed (`kind = 'cells'`, a 512-byte bit map of the positions) |
 | `mc.flat_layer` | the flat generator's layers per dimension (default: bedrock, 2 dirt, grass_block) |
 
-World data is **not** unlogged.  `mc.chunk_section` uses `fillfactor 70`, `toast_tuple_target 8160` and `STORAGE MAIN` so sections stay inline (byte loops over a detoasted
-value are quadratic, see `docs/COMPRESSION.md`).  A section with no palette growth is 0.2 to 3 KB; the largest seen was 7.2 KB.
+World data is **not** unlogged.  Since `sql/950` the world tables are on the **compact storage profile** (docs/PERF-DISK.md): every variable-length column of `mc.chunk_section` is
+`STORAGE MAIN` (compressed inside the row, never moved to the TOAST table: byte loops over a detoasted value are quadratic, see `docs/COMPRESSION.md`) and lz4-compressed when
+written, `toast_tuple_target 512`, fillfactor 90; `mc.chunk`'s heightmaps are `MAIN` with `toast_tuple_target 128` (a row under 2,032 bytes is never compressed, so a flat chunk
+inherits the compressed arrays of its template), `mc.chunk_light` is `MAIN`, `mc.chunk_cache` has fillfactor 100.  The stored row of a flat section is 270 bytes (2,285 before), a
+flat chunk costs 1,692 bytes on disk with its light rows, cache row and indexes.  `select mc.set_world_storage('legacy')` puts the original settings back
+(fillfactor 70, nothing compressed); `tools/compact_world.sh` rewrites an existing database (pglz, then `VACUUM FULL`).  **A function that loops over a section's `data` / `palette`
+or a chunk's heightmaps held in a variable must decompress it once first** (`v := v || ''::bytea`, `array_cat(v, '{}')`): a compressed value stays compressed in a PL/pgSQL
+variable and every use decompresses it again (PERF-DISK.md section 6).  A section with no palette growth is 0.2 to 3 KB uncompressed; the largest seen was 7.2 KB.
 
 ## API
 
@@ -251,7 +257,7 @@ Measured on the 4-core dev container with other benchmark processes running, so 
 | `chunk_packet_body`, real terrain chunk (24 sections, about 11 palette) | 16 to 20 ms |
 | `compute_heightmaps` in full, flat / real terrain | 4 to 5 ms / 44 to 49 ms (only after a whole-section fill or on import) |
 | `compute_light`, flat / real terrain | about 1 ms / 1.7 to 2.3 ms |
-| storage: flat chunk / real terrain chunk (all section rows) | 2.4 KB / 40.5 KB on average (palette sections average 3.4 KB, single-value 173 B) |
+| storage: flat chunk / real terrain chunk (all section rows) | **uncompressed, before `sql/950`:** 2.4 KB / 40.5 KB on average (palette sections average 3.4 KB, single-value 173 B).  **Now, whole chunk on disk** (all four tables, indexes included; re-measured, PERF-DISK.md): flat 1,692 B (was 9,713); imported vanilla terrain 17.9 KB after `tools/compact_world.sh`, 23.9 KB as imported (was 59 KB), 32.7 KB with the packet cache; `dbcraft:noise` 7.0 KB compacted (was 24.4 KB) |
 
 ### Large fills (sql/210 `mc.fill_section`, measured for this change)
 
@@ -330,7 +336,7 @@ performance bugs in the view itself were fixed on the way (the palette air flags
 
 ## Gaps and next steps
 
-* **Compression.**  `mc.chunk_cache` holds the uncompressed framed packet.  `docs/COMPRESSION.md` describes the plan (per-section deflate fragments, an RLE-style encoder
+* **Packet compression.**  `mc.chunk_cache` holds the uncompressed framed packet (stored pglz-compressed, plus the compressed frame `packet_z` since sql/440).  `docs/COMPRESSION.md` describes the plan (per-section deflate fragments, an RLE-style encoder
   in SQL or a tiny native function); nothing of it is built here.
 * **Block entity NBT** is stored as the raw network bytes, not as a readable representation.  Editing or inspecting a chest means decoding bytes.
 * **No biome editing API** (sections carry biomes; nothing sets them after generation), no vanilla terrain generator (flat, and the seeded `dbcraft:noise` above, which is not vanilla's: no caves, ores, trees), no structures.
