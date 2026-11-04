@@ -54,6 +54,12 @@ def main():
                 t0 = time.time()
                 r = subprocess.run(cmd, cwd=cwd, env=e, capture_output=True, text=True)
                 last = (r.stdout.strip().splitlines() or [r.stderr.strip()[-300:]])[-1]
+                if kind == "dbcraft":                      # the gateway's own log (its shutdown line has the lean ticks and what became of every chat frame): one file per cell
+                    try:
+                        import shutil
+                        shutil.copy(os.path.join(env["SCORE_OUT"], "gateway.log"), "/dev/shm/dbc-idle2-gwlog-%s.log" % tag.replace(":", "_"))
+                    except OSError:
+                        pass
                 print("%s  %.0fs  %s" % (tag, time.time() - t0, last), flush=True)
 
 
