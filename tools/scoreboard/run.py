@@ -164,11 +164,22 @@ class Dbcraft:
             "from (select n, random() * %d - %d as x, random() * %d - %d as z from (values %s) v(n)) q, mc.game_state gs "
             "on conflict (uuid) do nothing" % (2 * spread, spread, 2 * spread, spread, vals))
 
+    def gateway_pid(self):
+        """The Rust gateway is a process of its own, not a child of the postmaster (the PL/Python one is a backend inside the tree).  Its pid file is written by dbcraft.sh.
+        Before docs/PERF-IDLE2.md the runner left it out, so 'CPU' of the Rust rows in docs/PERF-IDLE.md is the cluster only."""
+        try:
+            p = int(open(os.path.join(C.OUT, "gateway.pid")).read().split()[0])
+            return p if os.path.exists("/proc/%d" % p) and "dbcraft-gateway" in open("/proc/%d/cmdline" % p).read() else 0
+        except (OSError, ValueError):
+            return 0
+
     def cpu(self):
-        return C.tree_cpu(self.pid)[0]
+        g = self.gateway_pid()
+        return C.tree_cpu(self.pid)[0] + (C.proc_cpu(g)[0] if g else 0.0)
 
     def mem(self):
-        return tree_pss(self.pid)
+        g = self.gateway_pid()
+        return tree_pss(self.pid) + (pss_mib(g) if g else 0.0)
 
     def window_begin(self):
         self.t0_tick = int(dbq("select coalesce(max(tick), 0) from mc.server_tick_log") or 0)
@@ -231,7 +242,7 @@ def wait_quiet(max_busy, wait_s):
 
 # ---------------------------------------------------------------------------------------------------------------------------- load generator
 class LoadGens:
-    def __init__(self, port, n, moving, vd, join_spread, ready_timeout, hold, procs=None, probe=True, first0=0, bound=0):
+    def __init__(self, port, n, moving, vd, join_spread, ready_timeout, hold, procs=None, probe=True, first0=0, bound=0, realistic=0.0):
         self.procs = []
         self.q = queue.Queue()
         per = 110
@@ -242,7 +253,7 @@ class LoadGens:
         for i, sz in enumerate(sizes):
             args = [sys.executable, LOADGEN, "--port", str(port), "--n", str(sz), "--first", str(first), "--join-spread", str(join_spread),
                     "--moving", str(moving), "--ready-timeout", str(ready_timeout), "--hold", str(hold), "--expect-chunks", str(chunks_expected(vd)),
-                    "--seed", str(100 + i), "--view-distance", str(vd), "--bound", str(bound)]
+                    "--seed", str(100 + i), "--view-distance", str(vd), "--bound", str(bound), "--realistic", str(realistic)]
             self.names += ["Bot%d" % j for j in range(first, first + sz)]
             if probe and i == 0:
                 args.append("--probe")
@@ -290,11 +301,11 @@ class LoadGens:
 def merge_done(done):
     """Combine the DONE records of several load generator processes."""
     out = {"clients": 0, "in_play": 0, "ready": 0, "failed": 0, "rx_bytes": 0, "join_to_play_s": [], "join_to_last_chunk_s": [], "chunks_per_client": [],
-           "rtt_ms": [], "failures": {}}
+           "rtt_ms": [], "rtt_detail": [], "failures": {}}
     for d in done.values():
         for k in ("clients", "in_play", "ready", "failed", "rx_bytes"):
             out[k] += d.get(k, 0)
-        for k in ("join_to_play_s", "join_to_last_chunk_s", "chunks_per_client", "rtt_ms"):
+        for k in ("join_to_play_s", "join_to_last_chunk_s", "chunks_per_client", "rtt_ms", "rtt_detail"):
             out[k] += d.get(k, [])
         for f, c in d.get("failures", {}).items():
             out["failures"][f] = out["failures"].get(f, 0) + c
@@ -310,6 +321,8 @@ def client_summary(m):
     if m["rtt_ms"]:
         r = C.stats(m["rtt_ms"])
         s.update({"rtt_n": r["n"], "rtt_p50": r["p50"], "rtt_p95": r["p95"], "rtt_p99": r["p99"], "rtt_max": r["max"]})
+        if m.get("rtt_detail"):
+            s["rtt_detail"] = m["rtt_detail"]          # [rtt ms, [kinds sent ahead of the chat]] per probe chat (--realistic only)
     if m["join_to_last_chunk_s"]:
         j = C.stats(m["join_to_last_chunk_s"])
         s.update({"join_all_chunks_p50_s": j["p50"], "join_all_chunks_p95_s": j["p95"], "join_all_chunks_max_s": j["max"]})
@@ -342,7 +355,7 @@ def scenario_pop(srv, a):
     srv.start(a.vd, a.n, first_names, a.spread)
     pregen_s = srv.pregenerate((a.spread + 15) // 16 + a.vd + 2)
     time.sleep(2.0)
-    lg = LoadGens(srv.port, a.n, a.moving, a.vd, a.join_spread, a.ready_timeout, a.hold, bound=a.bound)
+    lg = LoadGens(srv.port, a.n, a.moving, a.vd, a.join_spread, a.ready_timeout, a.hold, bound=a.bound, realistic=a.realistic)
     try:
         ready = lg.wait_event("READY", a.ready_timeout + 60)
         if len(ready) < len(lg.procs):
@@ -412,6 +425,7 @@ def main():
     ap.add_argument("--vd", type=int, default=10)
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--hold", type=float, default=45.0)
+    ap.add_argument("--realistic", type=float, default=0.0, help="extra traffic of real clients (player_input, punch, player_command, ...) scaled by this factor; the chat probe sends some of it before every chat")
     ap.add_argument("--bound", type=float, default=0.0, help="walkers stay within +-bound blocks (inside the pre-generated area); 0 = unbounded")
     ap.add_argument("--spread", type=int, default=480, help="players spawn within +-spread blocks of the origin")
     ap.add_argument("--settle", type=float, default=8.0)

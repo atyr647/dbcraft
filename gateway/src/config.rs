@@ -31,7 +31,7 @@ pub struct Config {
     /// schema-qualified tables, separated by commas or spaces: the tables that grow by DELETE/UPDATE and that autovacuum is too slow for (default: see below)
     pub maintenance_tables: String,
     /// a tick that has no input for the database (no new socket, no inbound frame, no key response, no verdict, no closed socket) runs the tick function and one probe
-    /// (net.gateway_pending) instead of the full statement set, and writes the statistics row every 10th tick instead of every tick.  docs/PERF-IDLE.md
+    /// (net.gateway_pending) instead of the full statement set, and writes the statistics row every 20th tick (once a second) instead of every tick.  docs/PERF-IDLE.md
     pub lean_ticks: bool,
     /// serverbound chat frames are handled between ticks (net.urgent_chat) when the next tick is far enough away; false = they wait for the tick like every other frame
     pub urgent_chat: bool,
@@ -42,6 +42,16 @@ pub struct Config {
     pub urgent_reserve_ms: u64,
     /// at most this many urgent runs between two ticks (a chat flood must not starve the tick)
     pub urgent_max_per_tick: u32,
+    /// chunk generator threads with connections of their own (`call mc.run_generator_until_idle`, sql/970), woken by the tick's probe when chunk requests exist and parked otherwise;
+    /// 0 = none (inline generation, or generator loops started by hand: `call mc.run_generator()`).  Only useful with `dbcraft.chunk-generation = async`.  docs/PERF-IDLE2.md
+    pub generators: usize,
+    /// chunks one generator call takes per batch
+    pub generator_batch: u32,
+    /// a generator thread parks after this many milliseconds without a request
+    pub generator_exit_idle_ms: u32,
+    /// when not empty: a file the gateway writes at shutdown with one line per tick (milliseconds since start, the whole tick in milliseconds as the gateway saw it -- statements, drain,
+    /// socket writes --, lean or full, late): the tail of the tick as the game experiences it, which mc.server_tick_log (the SQL part only) does not show.  docs/PERF-IDLE2.md
+    pub tick_log: String,
 }
 
 /// Tables vacuumed by the maintenance thread.  NEVER a table the tick TRUNCATEs (mc.play_out, mc.play_in_work, net.batch, mc.pending_ack, mc.block_actor, mc.play_in): a
@@ -90,6 +100,10 @@ impl Default for Config {
             skip_tick_end: true,
             urgent_reserve_ms: 4,
             urgent_max_per_tick: 4,
+            generators: 0,
+            generator_batch: 64,
+            generator_exit_idle_ms: 1500,
+            tick_log: String::new(),
         }
     }
 }
@@ -149,6 +163,10 @@ impl Config {
                 "skip_tick_end" => num!(skip_tick_end, k, v),
                 "urgent_reserve_ms" => num!(urgent_reserve_ms, k, v),
                 "urgent_max_per_tick" => num!(urgent_max_per_tick, k, v),
+                "generators" => num!(generators, k, v),
+                "generator_batch" => num!(generator_batch, k, v),
+                "generator_exit_idle_ms" => num!(generator_exit_idle_ms, k, v),
+                "tick_log" => self.tick_log = v.clone(),
                 other => return Err(format!("unknown setting {other:?}")),
             }
         }
@@ -174,6 +192,9 @@ impl Config {
         if self.prelogin_max_frame == 0 || self.prelogin_max_frame > 2_097_151 {
             return Err("prelogin_max_frame must be between 1 and 2097151".into());
         }
+        if self.generators > 64 || self.generator_batch == 0 || self.generator_batch > 4096 {
+            return Err("generators must be at most 64 and generator_batch between 1 and 4096".into());
+        }
         if self.maintenance_s > 3600 {
             return Err("maintenance_s must be at most 3600 (0 turns the maintenance off)".into());
         }
@@ -195,6 +216,7 @@ impl Config {
             "database_url", "listen", "tick_ms", "tick_fn", "max_connections", "max_connections_per_ip", "new_connections_per_ip_per_sec", "login_attempts_per_ip_per_min",
             "read_timeout_s", "max_pending_bytes", "prelogin_max_frame", "prelogin_max_bytes", "session_url", "session_timeout_ms", "session_workers", "session_retries",
             "rsa_bits", "inbox_mode", "maintenance_s", "maintenance_tables", "lean_ticks", "urgent_chat", "skip_tick_end", "urgent_reserve_ms", "urgent_max_per_tick",
+            "generators", "generator_batch", "generator_exit_idle_ms", "tick_log",
         ] {
             if let Some(v) = env(&format!("DBCRAFT_GW_{}", key.to_ascii_uppercase())) {
                 over.insert(key.to_string(), v);

@@ -9,10 +9,10 @@
 //! behind a tick that holds a table) and ANALYZE (fresh statistics: a stale plan once cost a 4 s tick).  Errors are counted and logged, never fatal.
 
 use crate::ffi::pq::Pg;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// "a.b, c.d  e.f" -> ["a.b", "c.d", "e.f"].  The caller has validated the list (config::valid_table_list); this only splits.
 pub fn split_tables(list: &str) -> Vec<String> {
@@ -26,8 +26,30 @@ pub fn build_statement_sql(tables: &[String]) -> String {
     format!("select format('vacuum (analyze, skip_locked) %s', string_agg(t, ', ')) from unnest(string_to_array('{list}', ',')) t where to_regclass(t) is not null")
 }
 
+/// the stop request: the thread sleeps on the condition variable until the next pass is due (no wake-ups in between: a 200 ms sleep loop was five wake-ups a second)
+struct StopFlag {
+    stopped: Mutex<bool>,
+    cv: Condvar,
+}
+
+impl StopFlag {
+    fn is_set(&self) -> bool {
+        *self.stopped.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    fn set(&self) {
+        *self.stopped.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.cv.notify_all();
+    }
+    /// Sleeps up to `d`; returns true when a stop was requested.
+    fn sleep(&self, d: Duration) -> bool {
+        let g = self.stopped.lock().unwrap_or_else(|e| e.into_inner());
+        let (g, _) = self.cv.wait_timeout_while(g, d, |s| !*s).unwrap_or_else(|e| e.into_inner());
+        *g
+    }
+}
+
 pub struct Maintenance {
-    stop: Arc<AtomicBool>,
+    stop: Arc<StopFlag>,
     passes: Arc<AtomicU64>,
     errors: Arc<AtomicU64>,
     handle: Option<thread::JoinHandle<()>>,
@@ -35,7 +57,7 @@ pub struct Maintenance {
 
 impl Maintenance {
     pub fn spawn(database_url: &str, every_s: u64, tables: &str) -> Maintenance {
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(StopFlag { stopped: Mutex::new(false), cv: Condvar::new() });
         let passes = Arc::new(AtomicU64::new(0));
         let errors = Arc::new(AtomicU64::new(0));
         let (url, list) = (database_url.to_string(), split_tables(tables));
@@ -44,9 +66,9 @@ impl Maintenance {
         Maintenance { stop, passes, errors, handle }
     }
 
-    /// Stops the thread (it notices within 200 ms, or when the vacuum in progress ends) and returns (passes, errors).
+    /// Stops the thread (it notices at once, or when the vacuum in progress ends) and returns (passes, errors).
     pub fn stop(mut self) -> (u64, u64) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.set();
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
@@ -65,16 +87,13 @@ fn pass(db: &mut Pg, sql: &str) -> Result<bool, String> {
     }
 }
 
-fn run(url: String, every_s: u64, tables: Vec<String>, stop: Arc<AtomicBool>, passes: Arc<AtomicU64>, errors: Arc<AtomicU64>) {
+fn run(url: String, every_s: u64, tables: Vec<String>, stop: Arc<StopFlag>, passes: Arc<AtomicU64>, errors: Arc<AtomicU64>) {
     let sql = build_statement_sql(&tables);
     let mut db: Option<Pg> = None;
-    let mut next = Instant::now() + Duration::from_secs(every_s);
-    while !stop.load(Ordering::Relaxed) {
-        thread::sleep(Duration::from_millis(200));
-        if Instant::now() < next {
-            continue;
+    while !stop.is_set() {
+        if stop.sleep(Duration::from_secs(every_s)) {
+            break;
         }
-        next = Instant::now() + Duration::from_secs(every_s);
         if db.as_ref().map(|d| !d.is_ok()).unwrap_or(true) {
             match Pg::connect(&url) {
                 Ok(c) => db = Some(c),

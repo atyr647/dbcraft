@@ -32,6 +32,16 @@ extern "C" {
         param_formats: *const c_int,
         result_format: c_int,
     ) -> *mut PGresult;
+    fn PQprepare(conn: *mut PGconn, stmt_name: *const c_char, query: *const c_char, n_params: c_int, param_types: *const c_uint) -> *mut PGresult;
+    fn PQexecPrepared(
+        conn: *mut PGconn,
+        stmt_name: *const c_char,
+        n_params: c_int,
+        param_values: *const *const c_char,
+        param_lengths: *const c_int,
+        param_formats: *const c_int,
+        result_format: c_int,
+    ) -> *mut PGresult;
     fn PQresultStatus(res: *const PGresult) -> c_int;
     fn PQresultErrorMessage(res: *const PGresult) -> *const c_char;
     fn PQclear(res: *mut PGresult);
@@ -98,9 +108,73 @@ impl<'a> Param<'a> {
     }
 }
 
+/// The parameter arrays libpq wants, built from `Param`s.  Text-format values are copied with a NUL terminator; binary ones are borrowed.
+struct Marshalled {
+    texts: Vec<Vec<u8>>,
+    types: Vec<c_uint>,
+    values: Vec<*const c_char>,
+    lengths: Vec<c_int>,
+    formats: Vec<c_int>,
+}
+
+impl Marshalled {
+    fn n(&self) -> c_int {
+        self.types.len() as c_int
+    }
+
+    fn new(params: &[Param]) -> Result<Marshalled, PgError> {
+        if params.len() > i32::MAX as usize {
+            return Err(PgError("too many parameters".into()));
+        }
+        let n = params.len();
+        let mut m = Marshalled { texts: Vec::with_capacity(n), types: Vec::with_capacity(n), values: Vec::with_capacity(n), lengths: Vec::with_capacity(n), formats: Vec::with_capacity(n) };
+        for p in params {
+            m.types.push(p.oid);
+            match p.val {
+                None => {
+                    m.values.push(std::ptr::null());
+                    m.lengths.push(0);
+                    m.formats.push(0);
+                }
+                Some(b) if p.binary => {
+                    if b.len() > i32::MAX as usize {
+                        return Err(PgError("parameter too large".into()));
+                    }
+                    m.values.push(b.as_ptr() as *const c_char);
+                    m.lengths.push(b.len() as c_int);
+                    m.formats.push(1);
+                }
+                Some(b) => {
+                    if b.contains(&0) {
+                        return Err(PgError("text parameter contains NUL".into()));
+                    }
+                    let mut v = Vec::with_capacity(b.len() + 1);
+                    v.extend_from_slice(b);
+                    v.push(0);
+                    m.texts.push(v);
+                    m.values.push(std::ptr::null()); // patched below once `texts` stops growing
+                    m.lengths.push(0);
+                    m.formats.push(0);
+                }
+            }
+        }
+        // second pass: point text parameters at their NUL-terminated copies (texts no longer reallocates)
+        let mut ti = 0;
+        for (i, p) in params.iter().enumerate() {
+            if p.val.is_some() && !p.binary {
+                m.values[i] = m.texts[ti].as_ptr() as *const c_char;
+                ti += 1;
+            }
+        }
+        Ok(m)
+    }
+}
+
 pub struct Pg {
     conn: *mut PGconn,
     url: CString,
+    /// names of the statements prepared on the current connection (a reset forgets them)
+    prepared: Vec<String>,
 }
 
 // A connection is used by exactly one thread at a time (the loop thread owns it); libpq connections may move between threads.
@@ -122,7 +196,7 @@ impl Pg {
         }
         // SAFETY: valid connection; the callback ignores its arguments.
         unsafe { PQsetNoticeProcessor(conn, Some(ignore_notice), std::ptr::null_mut()) };
-        Ok(Pg { conn, url })
+        Ok(Pg { conn, url, prepared: Vec::new() })
     }
 
     pub fn is_ok(&self) -> bool {
@@ -134,6 +208,7 @@ impl Pg {
     pub fn reset(&mut self) -> bool {
         // SAFETY: valid connection.
         unsafe { PQreset(self.conn) };
+        self.prepared.clear();
         let _ = &self.url;
         self.is_ok()
     }
@@ -164,57 +239,34 @@ impl Pg {
     /// Parameterised query.  `binary_result`: ask for binary-format columns (bigint = 8 bytes big-endian, bytea = raw bytes, boolean = 1 byte, text = the bytes).
     pub fn query(&mut self, sql: &str, params: &[Param], binary_result: bool) -> Result<PgResult, PgError> {
         let c = CString::new(sql).map_err(|_| PgError("SQL contains NUL".into()))?;
-        if params.len() > i32::MAX as usize {
-            return Err(PgError("too many parameters".into()));
-        }
-        let n = params.len();
-        let mut texts: Vec<Vec<u8>> = Vec::with_capacity(n); // NUL-terminated copies for text-format parameters
-        let mut types: Vec<c_uint> = Vec::with_capacity(n);
-        let mut values: Vec<*const c_char> = Vec::with_capacity(n);
-        let mut lengths: Vec<c_int> = Vec::with_capacity(n);
-        let mut formats: Vec<c_int> = Vec::with_capacity(n);
-        for p in params {
-            types.push(p.oid);
-            match p.val {
-                None => {
-                    values.push(std::ptr::null());
-                    lengths.push(0);
-                    formats.push(0);
-                }
-                Some(b) if p.binary => {
-                    if b.len() > i32::MAX as usize {
-                        return Err(PgError("parameter too large".into()));
-                    }
-                    values.push(b.as_ptr() as *const c_char);
-                    lengths.push(b.len() as c_int);
-                    formats.push(1);
-                }
-                Some(b) => {
-                    if b.contains(&0) {
-                        return Err(PgError("text parameter contains NUL".into()));
-                    }
-                    let mut v = Vec::with_capacity(b.len() + 1);
-                    v.extend_from_slice(b);
-                    v.push(0);
-                    texts.push(v);
-                    values.push(std::ptr::null()); // patched below once `texts` stops growing
-                    lengths.push(0);
-                    formats.push(0);
-                }
-            }
-        }
-        // second pass: point text parameters at their NUL-terminated copies (texts no longer reallocates)
-        let mut ti = 0;
-        for (i, p) in params.iter().enumerate() {
-            if p.val.is_some() && !p.binary {
-                values[i] = texts[ti].as_ptr() as *const c_char;
-                ti += 1;
-            }
-        }
-        // SAFETY: all arrays have `n` elements; every non-null value pointer stays valid (borrowed slices / `texts`) until the call returns; libpq copies what it needs.
+        let m = Marshalled::new(params)?;
+        // SAFETY: all arrays have `n` elements; every non-null value pointer stays valid (borrowed slices / `m.texts`) until the call returns; libpq copies what it needs.
         let res = unsafe {
-            PQexecParams(self.conn, c.as_ptr(), n as c_int, types.as_ptr(), values.as_ptr(), lengths.as_ptr(), formats.as_ptr(), if binary_result { 1 } else { 0 })
+            PQexecParams(self.conn, c.as_ptr(), m.n(), m.types.as_ptr(), m.values.as_ptr(), m.lengths.as_ptr(), m.formats.as_ptr(), if binary_result { 1 } else { 0 })
         };
+        self.wrap(res, binary_result)
+    }
+
+    /// Prepares `sql` under `name` once per connection (the server parses and plans it once; docs/PERF-IDLE2.md: an idle tick is two statements 20 times a second).
+    /// `types` are the parameter type oids.  Does nothing when the statement is already prepared on this connection.
+    pub fn prepare(&mut self, name: &str, sql: &str, types: &[u32]) -> Result<(), PgError> {
+        if self.prepared.iter().any(|n| n == name) {
+            return Ok(());
+        }
+        let (n, c) = (CString::new(name).map_err(|_| PgError("name contains NUL".into()))?, CString::new(sql).map_err(|_| PgError("SQL contains NUL".into()))?);
+        // SAFETY: valid connection, NUL-terminated strings, `types` has `types.len()` entries.
+        let res = unsafe { PQprepare(self.conn, n.as_ptr(), c.as_ptr(), types.len() as c_int, if types.is_empty() { std::ptr::null() } else { types.as_ptr() }) };
+        self.wrap(res, false)?;
+        self.prepared.push(name.to_string());
+        Ok(())
+    }
+
+    /// Runs a statement prepared with `prepare` (same parameter and result conventions as `query`).
+    pub fn query_prepared(&mut self, name: &str, params: &[Param], binary_result: bool) -> Result<PgResult, PgError> {
+        let c = CString::new(name).map_err(|_| PgError("name contains NUL".into()))?;
+        let m = Marshalled::new(params)?;
+        // SAFETY: as in `query`; the statement name is NUL-terminated.
+        let res = unsafe { PQexecPrepared(self.conn, c.as_ptr(), m.n(), m.values.as_ptr(), m.lengths.as_ptr(), m.formats.as_ptr(), if binary_result { 1 } else { 0 }) };
         self.wrap(res, binary_result)
     }
 

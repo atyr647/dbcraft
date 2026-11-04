@@ -1,6 +1,7 @@
 -- Idle cost, part 2: what a gateway needs to skip the tick's statements when nothing happens, and the urgent chat lane.  See docs/PERF-IDLE.md.
 --
---   net.gateway_pending(p_after)   bit 1: the outbox holds bytes or a connection is closing (net.drain_outbox() has something to hand over); bit 2: net.gateway_ctl(p_after) has rows.
+--   net.gateway_pending(p_after)   bit 1: the outbox holds bytes or a connection is closing (net.drain_outbox() has something to hand over); bit 2: net.gateway_ctl(p_after) has rows;
+--                                  bit 4: mc.chunk_request has a row (a chunk generator has work: sql/970, gateway/src/generators.rs).
 --                                  One probe instead of drain_outbox + gateway_ctl: a gateway that sent no input to the database in a tick can call the tick alone and this, and
 --                                  only drain when it says so.  PL/pgSQL (cached plan): about 20 microseconds.
 --   mc.drain_play_out(cur)         the drain step of mc.server_tick (mc.play_out -> net.outbox, in generation order; connections with compression re-framed), as a function so
@@ -17,8 +18,14 @@
 
 create or replace function net.gateway_pending(p_after bigint default 0) returns int language plpgsql volatile as $$
 begin
+    -- sql/800: the quiet tick of THIS transaction found nobody connected, the outbox and the chunk request queue empty (so no closing connection and no control row either, net.conn_ctl follows net.conn)
+    if current_setting('dbcraft.quiet_xid', true) = pg_current_xact_id_if_assigned()::text then
+        perform set_config('dbcraft.quiet_xid', '', false);          -- used up: a second call in this transaction probes (something may have been written since the tick)
+        return 0;
+    end if;
     return (case when exists (select 1 from net.outbox) or exists (select 1 from net.conn where closing) then 1 else 0 end)
-         + (case when exists (select 1 from net.conn_ctl k where k.ctl_seq > p_after) then 2 else 0 end);
+         + (case when exists (select 1 from net.conn_ctl k where k.ctl_seq > p_after) then 2 else 0 end)
+         + (case when exists (select 1 from mc.chunk_request) then 4 else 0 end);
 end $$;
 
 create or replace function mc.drain_play_out() returns int language plpgsql volatile as $$

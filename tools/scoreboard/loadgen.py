@@ -6,7 +6,11 @@ walks) one move_player_pos per tick at a realistic speed in a random heading tha
 and skips the rest of every frame, so one process carries a few hundred clients.
 
 usage (one process; the runner starts several for big N):
-  loadgen.py --port P --n N --first I --prefix Bot --join-spread S --moving F --ready-timeout T --hold H [--probe] [--no-walk-after-ready]
+  loadgen.py --port P --n N --first I --prefix Bot --join-spread S --moving F --ready-timeout T --hold H [--probe] [--no-walk-after-ready] [--realistic R]
+--realistic R (default 0 = the old behaviour: client_tick_end and move_player_pos only): what a real client sends besides that, scaled by R (1 = a busy player): player_input when a walker
+changes direction, punch (swing), player_command (sprint start/stop), set_carried_item (hotbar scroll), move_player_pos_rot; and the chat probe sends 1 to 3 of those kinds shortly BEFORE
+every chat (0 to 50 ms, uniformly: they land in the same 50 ms window as the chat with the probability that real traffic would), recording which ones, so the chat round trip can be
+reported by what stood ahead of it (docs/PERF-IDLE2.md, "Chat from real clients").
 Protocol with the runner on stdout/stdin (one JSON object per line):
   {"event":"READY", ...}   all (or --ready-frac of the) clients are in play and their chunks have stopped arriving   -> runner replies "GO\n"
   {"event":"DONE", ...}    after --hold seconds of steady state (clients keep their tick traffic and walking), final statistics
@@ -104,6 +108,11 @@ class Client(asyncio.Protocol):
         self.sent_at = 0.0
         self.disconnect_info = None
         self.t_failed = None
+        self.eid = 0
+        self.rtt_detail = []                 # (rtt ms, tuple of the kinds sent ahead of the chat)
+        self.extras = ()
+        self.next_event = 0.0
+        self.sprinting = False
 
     # ---- connection
     def connection_made(self, tr):
@@ -209,9 +218,12 @@ class Client(asyncio.Protocol):
                 self.send("minecraft:chunk_batch_received", struct.pack(">f", 20.0))
             elif name == "minecraft:login":
                 self.t_play = time.perf_counter()
+                if len(body) >= 4:
+                    self.eid = struct.unpack(">i", body[:4])[0]
             elif name in ("minecraft:player_chat", "minecraft:system_chat"):
                 if self.pending_token and self.pending_token in body:
                     self.rtts.append((time.perf_counter() - self.sent_at) * 1000.0)
+                    self.rtt_detail.append((self.rtts[-1], self.extras))
                     self.pending_token = None
             elif name == "minecraft:disconnect":
                 self.failed = "disconnect in play"
@@ -234,7 +246,42 @@ class Client(asyncio.Protocol):
                 self.heading = math.atan2(-self.z, -self.x) + random.uniform(-0.6, 0.6)
                 self.turn_at = now + random.uniform(2.0, 5.0)
             out += frame("play", "minecraft:move_player_pos", struct.pack(">dddB", self.x, self.y, self.z, 1))
+        if self.args.realistic > 0:
+            out += self.background_events(now)
         self.tr.write(out)
+
+    # ---- what a real client sends besides client_tick_end and movement (names are the protocol's)
+    def extra_packet(self, kind):
+        if kind == "player_input":
+            return frame("play", "minecraft:player_input", bytes([random.choice([0x00, 0x01, 0x41, 0x11, 0x21])]))
+        if kind == "punch":
+            return frame("play", "minecraft:punch", varint(0))
+        if kind == "player_command":
+            self.sprinting = not self.sprinting
+            return frame("play", "minecraft:player_command", varint(self.eid) + varint(1 if self.sprinting else 2) + varint(0))
+        if kind == "set_carried_item":
+            return frame("play", "minecraft:set_carried_item", struct.pack(">h", random.randrange(9)))
+        if kind == "move_player_pos_rot":
+            return frame("play", "minecraft:move_player_pos_rot", struct.pack(">dddffB", self.x, self.y, self.z, random.uniform(0, 360), random.uniform(-30, 30), 1))
+        raise ValueError(kind)
+
+    EXTRA_KINDS = ("player_input", "punch", "player_command", "set_carried_item", "move_player_pos_rot")
+
+    def background_events(self, now):
+        """With --realistic R: an occasional extra packet from an ordinary client (a few per client and minute at R = 1, more while walking)."""
+        r = self.args.realistic
+        if r <= 0 or now < self.next_event:
+            return b""
+        self.next_event = now + random.expovariate(r * (0.25 if self.walk else 0.08))
+        return self.extra_packet(random.choice(self.EXTRA_KINDS)) if random.random() < 0.7 else b""
+
+    def send_chat_with_extras(self, token, loop):
+        """The probe under --realistic: 1 to 3 extra packets, each 0 to 50 ms before the chat."""
+        kinds = tuple(random.choice(self.EXTRA_KINDS) for _ in range(random.randint(1, 3)))
+        self.extras = kinds
+        for k in kinds:
+            loop.call_later(random.uniform(0.0, 0.05), lambda k=k: self.alive and self.tr.write(self.extra_packet(k)))
+        loop.call_later(0.0505, lambda: self.alive and self.send_chat(token))
 
     def send_chat(self, token):
         self.pending_token = token.encode()
@@ -268,6 +315,7 @@ async def main():
     ap.add_argument("--bound", type=float, default=0.0, help="walkers turn back when they pass +-bound blocks (0 = they walk on: they leave the explored area)")
     ap.add_argument("--hold", type=float, default=30.0)
     ap.add_argument("--probe", action="store_true", help="add one chat-echo round-trip probe client")
+    ap.add_argument("--realistic", type=float, default=0.0, help="extra traffic of a real client (player_input, punch, player_command, ...) scaled by this factor; the probe sends some of it just before every chat")
     ap.add_argument("--no-go", action="store_true", help="do not wait for GO on stdin")
     ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args()
@@ -326,6 +374,7 @@ async def main():
             for c in failed:
                 d["failures"][c.failed] = d["failures"].get(c.failed, 0) + 1
             d["rtt_ms"] = [r for c in clients if c.probe for r in c.rtts]
+            d["rtt_detail"] = [[round(r, 2), list(k)] for c in clients if c.probe for r, k in c.rtt_detail]
             reasons = {}
             for c in failed:
                 if c.disconnect_info:
@@ -366,7 +415,10 @@ async def main():
         for c in clients:
             if c.probe and c.alive and c.pending_token is None and c.state == "play":
                 n += 1
-                c.send_chat("p%d_%d" % (args.first, n))
+                if args.realistic > 0:
+                    c.send_chat_with_extras("p%d_%d" % (args.first, n), loop)
+                else:
+                    c.send_chat("p%d_%d" % (args.first, n))
     await asyncio.sleep(0.5)
     final = summary(final=True)
     print(json.dumps({"event": "DONE", **final}), flush=True)

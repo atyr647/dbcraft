@@ -7,7 +7,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 # SCORE_PGDATA / SCORE_PGPORT / SCORE_GW_PORT / SCORE_OUT move the cluster, the gateway port and the log directory (several measurements on one machine);
-# SCORE_GATEWAY=rust runs gateway/target/dbcraft-gateway (calling mc.server_tick() or, after `tickmode batched`, the wrapper) instead of the PL/Python net.run.
+# SCORE_GATEWAY=rust runs gateway/target/dbcraft-gateway (calling mc.server_tick() or, after `tickmode batched`, the wrapper) instead of the PL/Python net.run; its chunk generators are threads of the
+# gateway (DBCRAFT_GW_GENERATORS, SCORE_GENERATORS, default 2) unless SCORE_PSQL_GENERATORS=1 starts `call mc.run_generator(64, 5)` loops in psql sessions as the older gateway needs.
 export DBCRAFT_PGDATA=${SCORE_PGDATA:-/tmp/dbcraft-pg-score} DBCRAFT_PGPORT=${SCORE_PGPORT:-54599}
 PORT=${SCORE_GW_PORT:-25643}
 OUTD=${SCORE_OUT:-/tmp/scoreboard}
@@ -60,7 +61,9 @@ SQL
     if [ "${SCORE_GATEWAY:-plpython}" = rust ]; then
       DBCRAFT_GW_DATABASE_URL="host=/tmp port=$DBCRAFT_PGPORT user=postgres dbname=dbcraft" DBCRAFT_GW_LISTEN="0.0.0.0:$PORT" \
         DBCRAFT_GW_MAX_CONNECTIONS_PER_IP=0 DBCRAFT_GW_NEW_CONNECTIONS_PER_IP_PER_SEC=0 DBCRAFT_GW_LOGIN_ATTEMPTS_PER_IP_PER_MIN=0 DBCRAFT_GW_TICK_FN="${SCORE_TICKFN:-mc.server_tick()}" \
+        DBCRAFT_GW_GENERATORS="$([ -n "${SCORE_PSQL_GENERATORS:-}" ] && echo 0 || echo "${SCORE_GENERATORS:-2}")" \
         nohup gateway/target/dbcraft-gateway > "$LOG" 2>&1 &
+      echo $! > $OUTD/gateway.pid     # the Rust gateway is not a child of the postmaster: the runner adds its CPU to the cluster's (tools/scoreboard/run.py)
     else
       (nohup $PSQL -c "call net.run($PORT)" > "$LOG" 2>&1 &)
     fi
@@ -69,10 +72,14 @@ SQL
       sleep 0.2
     done
     $PSQL -c "update mc.generator_control set stop = false"
-    for g in 1 2; do
-      (nohup $PSQL -c "call mc.run_generator(64, 5)" > $OUTD/generator$g.log 2>&1 &)
-    done
-    echo "dbcraft gateway listening on $PORT (+2 chunk generator connections)"
+    if [ "${SCORE_GATEWAY:-plpython}" = rust ] && [ -z "${SCORE_PSQL_GENERATORS:-}" ]; then
+      echo "dbcraft gateway listening on $PORT (+${SCORE_GENERATORS:-2} chunk generator threads of the gateway, parked while idle)"
+    else
+      for g in 1 2; do
+        (nohup $PSQL -c "call mc.run_generator(64, 5)" > $OUTD/generator$g.log 2>&1 &)
+      done
+      echo "dbcraft gateway listening on $PORT (+2 chunk generator connections)"
+    fi
     ;;
   stop)
     $PSQL -c "update mc.generator_control set stop = true" > /dev/null 2>&1 || true

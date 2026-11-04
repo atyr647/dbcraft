@@ -35,29 +35,56 @@ begin return net.handled_play_ids(); end $$;
 create or replace function net.known_play_ids_c() returns int[] language plpgsql immutable parallel safe as $$
 begin return (select coalesce(array_agg(protocol_id), '{}') from ref.packet where state = 'play' and direction = 'serverbound'); end $$;
 
+-- The predicate is 17 probes of (mostly empty) queue tables: 0.13 ms of an idle tick that is otherwise 0.15 ms (docs/PERF-IDLE2.md).  A quiet tick therefore also records, in two session settings,
+-- when nothing at all has changed since its probes: every one of those tables can only change by a transaction that has a transaction id, and a snapshot's xmax is
+-- (the newest completed id) + 1.  The tick takes its own id M first (it writes the clock anyway) and then a snapshot; if that snapshot's xmax is M and its xmin is M too, then no
+-- transaction with an id below M is running, and if the next tick's snapshot has xmax M + 1 then nothing with an id has completed since (a transaction with a higher id raises xmax when it commits or
+-- aborts; one that has not completed is invisible anyway).  The mark `dbcraft.quiet_mark` = M + 1 is only written in that case, and the next tick, seeing xmax = mark, skips the probes.
+-- Not applied when this transaction already has an id (it may have written to a probed table itself: tests and admin scripts that write and then tick in one transaction), when the
+-- hook says no, or with the switch off.  An aborted transaction restores the old mark (a mark that is too old can only make a probe run).  Differences from the probes: none -- tests/sql/970.
+--   dbcraft.quiet_xid = the id of the transaction of the last quiet tick: net.gateway_pending uses it (the outbox and the control rows are empty when nobody is connected and the outbox probe said so).
 create or replace function mc.tick_quiet() returns boolean language plpgsql volatile as $$
+declare m bigint; mx bigint; sn pg_snapshot; q boolean; fresh boolean;
 begin
     if current_setting('dbcraft.quiet_tick', true) = 'off' then return false; end if;
-    return not exists (select 1 from net.conn)
-       and not exists (select 1 from net.inbox)
-       and not exists (select 1 from mc.player where conn_id is not null)
-       and not exists (select 1 from mc.play_in)
-       and not exists (select 1 from net.auth_result)
-       and not exists (select 1 from net.join_parked)
-       and not coalesce((select active from net.join_gate_state), false)
-       and not exists (select 1 from mc.kick)
-       and not exists (select 1 from mc.play_out)
-       and not exists (select 1 from mc.chunk_wanted)
-       and not exists (select 1 from mc.block_event)
-       and not exists (select 1 from mc.pending_ack)
-       and not exists (select 1 from mc.block_actor)
-       and not exists (select 1 from net.batch)
-       and not exists (select 1 from net.play_inbox)
-       and mc.entity_mode() = 'off'
-       and not mc.tick_extra_pending();
+    fresh := pg_current_xact_id_if_assigned() is null;
+    m := pg_current_xact_id()::text::bigint;
+    sn := pg_current_snapshot();
+    mx := pg_snapshot_xmax(sn)::text::bigint;
+    if fresh and current_setting('dbcraft.quiet_mark', true) = mx::text then
+        q := true;
+    else
+        q := not exists (select 1 from net.conn)
+         and not exists (select 1 from net.inbox)
+         and not exists (select 1 from mc.player where conn_id is not null)
+         and not exists (select 1 from mc.play_in)
+         and not exists (select 1 from net.auth_result)
+         and not exists (select 1 from net.join_parked)
+         and not coalesce((select active from net.join_gate_state), false)
+         and not exists (select 1 from mc.kick)
+         and not exists (select 1 from mc.play_out)
+         and not exists (select 1 from mc.chunk_wanted)
+         and not exists (select 1 from mc.block_event)
+         and not exists (select 1 from mc.pending_ack)
+         and not exists (select 1 from mc.block_actor)
+         and not exists (select 1 from net.batch)
+         and not exists (select 1 from net.play_inbox)
+         and not exists (select 1 from net.outbox)
+         and not exists (select 1 from mc.chunk_request)
+         and mc.entity_mode() = 'off';
+    end if;
+    if q and not mc.tick_extra_pending() then
+        perform set_config('dbcraft.quiet_mark', case when fresh and mx = m and pg_snapshot_xmin(sn) = pg_snapshot_xmax(sn) then (m + 1)::text else '' end, false);
+        perform set_config('dbcraft.quiet_xid', m::text, false);
+        return true;
+    end if;
+    perform set_config('dbcraft.quiet_mark', '', false);
+    return false;
 end $$;
 
 -- p_truncate: the default tick (mc.server_tick) empties its queues with TRUNCATE once a second when they were written; the batched tick only ever DELETEs
+-- The log row is written once a second (the tick whose game_time is a multiple of 20), not every tick: a row costs 0.09 ms, more than the whole rest of an idle tick, and a quiet tick
+-- has no phases to report.  ms_total is the time of this tick's own step up to that point (what every quiet tick costs), as before.  (docs/PERF-IDLE2.md)
 create or replace function mc.tick_quiet_step(p_truncate boolean) returns bigint language plpgsql volatile as $$
 declare cur bigint; t0 timestamptz := clock_timestamp();
 begin
@@ -71,10 +98,10 @@ begin
             if pg_relation_size('mc.play_out') > 0 and mc.entity_mode() <> 'split' then truncate mc.play_out; end if;
         end if;
         delete from mc.server_tick_log where tick < cur - 6000;
+        insert into mc.server_tick_log (tick, frames_in, players, frames_out, ms_total, ms_process, ms_game, ms_blocks, ms_chunks, ms_drain)
+        values (cur, 0, 0, 0, extract(epoch from clock_timestamp() - t0) * 1000, 0, 0, 0, 0, 0)
+        on conflict (tick) do nothing;
     end if;
-    insert into mc.server_tick_log (tick, frames_in, players, frames_out, ms_total, ms_process, ms_game, ms_blocks, ms_chunks, ms_drain)
-    values (cur, 0, 0, 0, extract(epoch from clock_timestamp() - t0) * 1000, 0, 0, 0, 0, 0)
-    on conflict (tick) do nothing;
     return cur;
 end $$;
 

@@ -6,6 +6,7 @@
 mod config;
 mod ffi;
 mod gateway;
+mod generators;
 mod json;
 mod keypkt;
 mod limits;

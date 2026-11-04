@@ -8,7 +8,7 @@
 create or replace function t.idle_reset() returns void language plpgsql as $$
 begin
   truncate net.conn_ctl, net.conn, net.inbox, net.outbox, net.play_inbox, net.batch, mc.play_out, mc.play_in, mc.play_in_work, mc.visible, mc.kick, mc.pending_ack, mc.block_actor,
-           mc.block_event, mc.chunk_wanted, net.auth_result, net.join_parked, mc.server_tick_log, mc.tick_log, mc.error_log;
+           mc.block_event, mc.chunk_wanted, net.auth_result, net.join_parked, mc.server_tick_log, mc.tick_log, mc.error_log, mc.chunk_request;
   delete from mc.player;
   update net.join_gate_state set active = false;
   update mc.game_state set game_time = 0, day_time = 0;
@@ -41,6 +41,8 @@ select t.quiet_flip('a block event', 'insert into mc.block_event (dimension, x, 
 select t.quiet_flip('a pending acknowledgement', 'insert into mc.pending_ack (conn_id, sequence) values (1, 1)', 'truncate mc.pending_ack');
 select t.quiet_flip('a block actor', 'insert into mc.block_actor (dimension, x, y, z, conn_id) values (''minecraft:overworld'', 0, 0, 0, 1)', 'truncate mc.block_actor');
 select t.quiet_flip('a frame in the connection layer''s batch', 'insert into net.batch (conn_id, seq, payload) values (1, 1, ''\x00'')', 'truncate net.batch');
+select t.quiet_flip('a frame in the outbox', 'insert into net.outbox (conn_id, data) values (1, ''\x00'')', 'truncate net.outbox');
+select t.quiet_flip('a chunk request', 'insert into mc.chunk_request (dimension, cx, cz, prio) values (''minecraft:overworld'', 0, 0, 0)', 'truncate mc.chunk_request');
 select t.quiet_flip('entities switched on', 'update mc.server_property set value = ''inline'' where key = ''dbcraft.entity-mode''', 'update mc.server_property set value = ''off'' where key = ''dbcraft.entity-mode''');
 create or replace function mc.tick_extra_pending() returns boolean language sql immutable as $$ select true $$;
 select t.is_true('the hook makes the tick not quiet', not mc.tick_quiet());
@@ -67,29 +69,31 @@ begin
     execute 'select ' || p_fn;
     perform * from net.drain_outbox();
   end loop;
-  r := t.idle_state() || '|' || (select count(*) from mc.server_tick_log);
+  r := t.idle_state();                                                      -- the log rows are compared separately: the quiet tick writes one a second, the full tick one per tick (sql/800)
   perform set_config('dbcraft.quiet_tick', 'on', false);
   return r;
 end $$;
 select t.eq('default tick, 45 ticks: quiet and full leave the same state', t.idle_run('mc.server_tick()', 45, false), t.idle_run('mc.server_tick()', 45, true));
 select t.eq('batched tick, 45 ticks: quiet and full leave the same state', t.idle_run('mc.server_tick_batched()', 45, false), t.idle_run('mc.server_tick_batched()', 45, true));
 select t.idle_run('mc.server_tick()', 45, false) as expect_state \gset
-select t.eq('...which is: the clock at 52 (day time 45), nothing queued, a log row per tick', :'expect_state'::text, '52/45|0|0|0|0|0|0|45'::text);
+select t.eq('...which is: the clock at 52 (day time 45), nothing queued', :'expect_state'::text, '52/45|0|0|0|0|0|0'::text);
+select t.is_true('the quiet tick writes one log row a second (the ticks whose game time is a multiple of 20: 20 and 40 of 8..52)', (select count(*) from mc.server_tick_log) = 2 and (select array_agg(tick order by tick) from mc.server_tick_log) = array[20, 40]::bigint[]);
 select t.is_true('the quiet tick writes no game tick_log row', (select count(*) from mc.tick_log) = 0);
 select t.idle_run('mc.server_tick()', 45, true) as full_state \gset
 select t.is_true('the full tick does (that is the documented difference)', (select count(*) from mc.tick_log) = 45);
+select t.is_true('...and logs every tick in mc.server_tick_log (45 rows against the quiet tick''s 2)', (select count(*) from mc.server_tick_log) = 45);
 select t.is_true('the once-a-second housekeeping emptied the claimed-packet file in the quiet tick too',
   (select t.idle_run('mc.server_tick()', 20, false)) is not null and pg_relation_size('mc.play_in_work') = 0);
-select t.is_true('the log keeps its last 6,001 ticks', (select count(*) from mc.server_tick_log) = 20);
+select t.is_true('the quiet tick logs once a second: one row for 20 ticks', (select count(*) from mc.server_tick_log) = 1);
 create or replace function t.idle_log_trim() returns boolean language plpgsql as $$
 begin
   perform t.idle_reset();
   insert into mc.server_tick_log (tick) select g from generate_series(-100, 6500) g;
   update mc.game_state set game_time = 6499;
   for i in 1 .. 25 loop perform mc.server_tick(); end loop;
-  return (select count(*) from mc.server_tick_log) between 6001 and 6021 and (select min(tick) from mc.server_tick_log) >= 6524 - 6000 - 21;
+  return (select count(*) from mc.server_tick_log) = 5982 and (select min(tick) from mc.server_tick_log) = 520;     -- housekeeping at 6500 and 6520 (the last one keeps ticks from 520), one row at 6520
 end $$;
-select t.is_true('the quiet tick trims the log (once a second)', t.idle_log_trim());
+select t.is_true('the quiet tick trims the log to the last 6,000 ticks (once a second)', t.idle_log_trim());
 
 ------------------------------------------------------------------------------------------------ 3. moves_idle
 create or replace function t.mi_digest() returns text language sql as $$

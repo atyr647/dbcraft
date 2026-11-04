@@ -17,7 +17,10 @@
 --   * a tick with nothing for the database (no new socket, no inbound frame, no closed socket) runs only `select mc.server_tick()` and one probe (net.gateway_pending); the outbox is
 --     drained when the probe says it holds bytes, and the control row is written every 10th such tick (the stop flag is looked at then);
 --   * serverbound chat frames are handled between ticks (net.urgent_chat, then a drain) when the next tick is far enough away: the Rust gateway's urgent lane, same rules.
---   (Not done here, unlike the Rust gateway: dropping client_tick_end frames of idle players; this gateway does not know which connections are in play.)
+--   * client_tick_end frames of connections in play that sent fewer than two position packets in the tick are not given to the database (the Rust gateway's skip_tick_end; the play state
+--     of a connection comes from net.gateway_ctl, read when net.gateway_pending says there are control rows).  Before docs/PERF-IDLE2.md this gateway queued 200 of them a tick at 200 idle
+--     players: 6.8 ms of its tick.
+--   * the kinds that may stand ahead of a chat without making it wait come from net.urgent_neutral_play_ids() (sql/971), like the Rust gateway's.
 --
 -- What it deliberately does NOT do: no encryption and no Mojang session check (online mode is the production gateway's job; this procedure refuses to
 -- start while the `online-mode` property is true) and no deflate (SQL has no deflate, so outbound packets are never compressed: it refuses to start while
@@ -47,7 +50,7 @@ ls = socket.socket(); ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 ls.bind((p_bind, p_port)); ls.listen(4096); ls.setblocking(False)
 sel.register(ls, selectors.EVENT_READ, None)
 
-conns = {}          # id -> dict(sock, ip, inb, outb, thr, closing, last_rx)
+conns = {}          # id -> dict(sock, ip, inb, outb, thr, closing, last_rx, play)
 next_id = 1
 
 prep_connect = plpy.prepare("select net.on_connect($1, $2::inet)", ["bigint", "text"])
@@ -57,7 +60,9 @@ prep_tick    = plpy.prepare("select mc.server_tick() as t", [])
 prep_drain   = plpy.prepare("select conn_id, data, close from net.drain_outbox()", [])
 prep_comp    = plpy.prepare("select conn_id, compression from net.conn where compression >= 0", [])
 prep_ctl     = plpy.prepare("update net.gateway_control set ticks = ticks + $4, last_tick_ms = $1, max_tick_ms = greatest(coalesce(max_tick_ms, 0), $5), late_ticks = late_ticks + $2, connections = $3 returning stop", ["float8", "int", "int", "int", "float8"])
-prep_pending = plpy.prepare("select net.gateway_pending(0) & 1 as p", [])
+prep_pending = plpy.prepare("select net.gateway_pending($1) as p", ["bigint"])
+prep_ctlrows = plpy.prepare("select conn_id, ctl_seq, state from net.gateway_ctl($1)", ["bigint"])
+last_ctl = 0
 
 # the urgent chat lane (sql/801): packet ids of the serverbound frames it has to tell apart; disabled when net.urgent_chat does not exist
 urgent_ok = False
@@ -66,6 +71,12 @@ try:
                      "mc.sid('move_player_pos_rot') as n3, mc.sid('move_player_rot') as n4, mc.sid('move_player_status_only') as n5, to_regprocedure('net.urgent_chat(bigint[],bytea[])') is not null as ok")[0]
     if r["ok"] and None not in (r["chat"], r["c1"], r["c2"], r["n1"], r["n2"], r["n3"], r["n4"], r["n5"]):
         U_CHAT, U_CMD, U_NEUTRAL = r["chat"], (r["c1"], r["c2"]), (r["n1"], r["n2"], r["n3"], r["n4"], r["n5"])
+        U_TICK_END, U_POS, U_POSROT = r["n1"], r["n2"], r["n3"]
+        try:
+            extra = plpy.execute("select case when to_regprocedure('net.urgent_neutral_play_ids()') is not null then net.urgent_neutral_play_ids() end as a")[0]["a"] or []
+        except Exception:
+            extra = []
+        U_NEUTRAL = frozenset(U_NEUTRAL) | (frozenset(extra) - {U_CHAT} - frozenset(U_CMD))
         prep_urgent = plpy.prepare("select coalesce(array_to_string(net.urgent_chat($1, $2), ','), '') as u", ["bigint[]", "bytea[]"])
         urgent_ok = True
 except Exception:
@@ -95,8 +106,8 @@ def frame_pid(b):
     return None
 
 def urgent_candidates():
-    """Indices into ids/payloads of the chat frames that may be handled now: no command ahead of them (any connection), nothing but chat, client_tick_end or movement ahead of them from
-    their own connection.  Whether a connection is in play is the database's to say (net.urgent_chat hands the others back)."""
+    """Indices into ids/payloads of the chat frames that may be handled now: no command ahead of them (any connection), nothing but chat or a neutral kind (client_tick_end, movement and the
+    kinds of net.urgent_neutral_play_ids) ahead of them from their own connection.  Whether a connection is in play is the database's to say (net.urgent_chat hands the others back)."""
     taken, blocked = [], set()
     for i in range(len(ids)):
         pid = frame_pid(payloads[i]); cid = ids[i]
@@ -106,6 +117,18 @@ def urgent_candidates():
             if cid not in blocked: taken.append(i)
         elif pid not in U_NEUTRAL: blocked.add(cid)
     return taken
+
+def drop_idle_tick_ends():
+    """The Rust gateway's skip_tick_end: client_tick_end frames of connections in play with fewer than two position packets in this tick are not given to the database (sql/800: it
+    ignores them), so that idle players leave the inbox empty and the tick lean."""
+    if not urgent_ok or U_TICK_END not in [frame_pid(b) for b in payloads]: return
+    pos = {}
+    for cid, b in zip(ids, payloads):
+        pid = frame_pid(b)
+        if pid == U_POS or pid == U_POSROT: pos[cid] = pos.get(cid, 0) + 1
+    keep = [i for i in range(len(ids)) if not (frame_pid(payloads[i]) == U_TICK_END and pos.get(ids[i], 0) < 2 and conns.get(ids[i], {}).get("play"))]
+    if len(keep) != len(ids):
+        ids[:] = [ids[i] for i in keep]; payloads[:] = [payloads[i] for i in keep]
 
 def run_urgent(deadline):
     nonlocal urgent_runs, urgent_cost
@@ -188,7 +211,7 @@ while True:
                     while True:
                         s, addr = ls.accept(); s.setblocking(False); s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                         cid = next_id; next_id += 1
-                        conns[cid] = {"sock": s, "ip": addr[0], "inb": bytearray(), "outb": bytearray(), "thr": -1, "closing": False, "last_rx": time.time()}
+                        conns[cid] = {"sock": s, "ip": addr[0], "inb": bytearray(), "outb": bytearray(), "thr": -1, "closing": False, "last_rx": time.time(), "play": False}
                         sel.register(s, selectors.EVENT_READ, cid); accepted.append(cid)
                 except BlockingIOError: pass
                 continue
@@ -228,6 +251,7 @@ while True:
     # ---- database work for this tick
     t_start = time.perf_counter()
     try:
+        drop_idle_tick_ends()
         lean = not accepted and not dropped and not ids
         for cid in accepted:
             if cid in conns: plpy.execute(prep_connect, [cid, conns[cid]["ip"]])
@@ -235,7 +259,13 @@ while True:
         dropped = []
         if ids: plpy.execute(prep_inbox, [ids, payloads])
         plpy.execute(prep_tick, [])
-        pending = 1 if not lean else plpy.execute(prep_pending, [])[0]["p"]
+        pend = plpy.execute(prep_pending, [last_ctl])[0]["p"]
+        pending = 1 if not lean else pend & 1
+        if pend & 2:
+            for row in plpy.execute(prep_ctlrows, [last_ctl]):
+                last_ctl = max(last_ctl, row["ctl_seq"])
+                c = conns.get(row["conn_id"])
+                if c is not None: c["play"] = row["state"] == "play"
         if pending:
             for row in plpy.execute(prep_drain, []):
                 c = conns.get(row["conn_id"])
