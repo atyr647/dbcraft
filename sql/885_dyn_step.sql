@@ -98,16 +98,18 @@ end $$;
 create or replace function mc.dyn_step(p_cur bigint) returns void language plpgsql volatile as $$
 declare mx int := coalesce(mc.prop_int('dbcraft.dynamics-max-ticks'), 65536);
 begin
-    -- idle test in ONE statement (no tick due, nothing late, nobody to random-tick for): the whole step is about this
+    -- idle test in ONE statement (no tick due, nothing late, no random-tick run this tick, no list to rebuild): the whole step is about this
     if not (select coalesce((select value <> 'off' from mc.server_property where key = 'dbcraft.dynamics'), true) and exists (select 1 from mc.dyn_vec)
-                   and (exists (select 1 from mc.block_tick where due <= p_cur) or exists (select 1 from mc.dyn_late_event)
-                        or (exists (select 1 from mc.player where conn_id is not null) and coalesce((select value::int from mc.game_rule where name = 'minecraft:random_tick_speed'), 3) > 0))) then return; end if;
+                   and (exists (select 1 from mc.block_tick where due <= p_cur) or exists (select 1 from mc.dyn_late_event) or exists (select 1 from mc.dyn_rt_dirty d where d.mt <= p_cur - coalesce((select value::int from mc.server_property where key = 'dbcraft.random-tick-quiet'), 100))
+                        or (p_cur % greatest(coalesce((select value::int from mc.server_property where key = 'dbcraft.random-tick-interval'), 4), 1) = 0
+                            and exists (select 1 from mc.player where conn_id is not null) and coalesce((select value::int from mc.game_rule where name = 'minecraft:random_tick_speed'), 3) > 0))) then return; end if;
     begin
         perform mc.dyn_release_late();
         if exists (select 1 from mc.block_tick where due <= p_cur) then
             perform mc.dyn_run_due(p_cur, 'b', mx);
             perform mc.dyn_run_due(p_cur, 'f', mx);
         end if;
+        perform mc.dyn_rt_maintain(p_cur);
         perform mc.dyn_random_ticks(p_cur);
         if exists (select 1 from mc.block_tick where kind = 'l' and due <= p_cur) then perform mc.dyn_run_landings(p_cur); end if;
     exception when others then
@@ -156,20 +158,39 @@ end $$;
 create or replace function mc.dyn_on_events() returns trigger language plpgsql volatile as $$
 declare
     v mc.dyn_vec%rowtype; e record; cur bigint; dim text; osid int; nsid int; keep boolean; k int; many boolean;
-    xs int[] := '{}'; ys int[] := '{}'; zs int[] := '{}'; auxs int[] := '{}'; kinds int[] := '{}'; n int := 0; pos int[]; p int; cx0 int; sy int; cz0 int; ci int;
-    dirs int[][] := array[[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]]; interesting int := 4 | 8 | 4096 | 65536 | 262144; dims text;
+    xs int[] := '{}'; ys int[] := '{}'; zs int[] := '{}'; auxs int[] := '{}'; aux2s int[] := '{}'; kinds int[] := '{}'; n int := 0; pos int[]; p int; cx0 int; sy int; cz0 int; ci int;
+    dirs int[][] := array[[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]]; interesting int := 4 | 8 | 4096 | 65536 | 262144; dims text; any_react boolean; any_tick boolean;
 begin
     if not mc.dyn_enabled() then return null; end if;
-    -- the random-tick lists (sql/887) of the chunks a change touches, and of the neighbours when it is within 4 cells of them (water reaches farmland, dirt grass, over a chunk border)
-    insert into mc.dyn_rt_dirty (dimension, cx, cz)
-    select distinct q.dimension, q.cx + dx.v, q.cz + dz.v
-      from (select distinct ne.dimension, ne.x >> 4 as cx, ne.z >> 4 as cz, ne.kind <> 'block' as whole,
-                   case when (ne.x & 15) < 4 then -1 when (ne.x & 15) >= 12 then 1 else 0 end as bx,
-                   case when (ne.z & 15) < 4 then -1 when (ne.z & 15) >= 12 then 1 else 0 end as bz
-              from new_ev ne) q, (values (0), (-1), (1)) dx(v), (values (0), (-1), (1)) dz(v)
-     where (dx.v = 0 or q.whole or dx.v = q.bx) and (dz.v = 0 or q.whole or dz.v = q.bz)
-    on conflict (dimension, cx, cz) do update set seq = excluded.seq;
-    if coalesce(current_setting('mc.dyn_busy', true), 'off') = 'on' then return null; end if;
+    -- Is there anything here that can react, or whose random-tick list can change?  Asked of the PALETTES of the sections the events are in (and of the face neighbours: a block event only when
+    -- it is on that face, a fill or section replacement always) and of the old and new states of the events, by name: no block of a reactive or random-ticking kind anywhere near means the
+    -- whole statement is skipped, without reading the 200 KB arrays of the engine.  An empty palette (more than 256 states: the global palette) counts as reactive.
+    select coalesce(bool_or(q.react), false), coalesce(bool_or(q.tickc), false) into any_react, any_tick from (
+        select d.react, d.tickc
+          from (select distinct ne.dimension, ne.x >> 4 as cx, ne.y >> 4 as sy, ne.z >> 4 as cz, ne.kind <> 'block' as whole,
+                       case when (ne.x & 15) = 0 then -1 when (ne.x & 15) = 15 then 1 else 0 end as bx, case when (ne.y & 15) = 0 then -1 when (ne.y & 15) = 15 then 1 else 0 end as by_,
+                       case when (ne.z & 15) = 0 then -1 when (ne.z & 15) = 15 then 1 else 0 end as bz from new_ev ne) s
+          cross join lateral (values (0, 0, 0), (-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)) o(dx, dy, dz)
+          join mc.chunk_section cs on cs.dimension = s.dimension and cs.cx = s.cx + o.dx and cs.sy = s.sy + o.dy and cs.cz = s.cz + o.dz
+          cross join lateral (select unnest(case when cardinality(cs.palette) = 0 then array['minecraft:water[level=0]', 'minecraft:grass_block[snowy=false]'] else cs.palette end) as pn) pl
+          join mc.dyn_state d on d.name = pl.pn
+         where (o.dx = 0 and o.dy = 0 and o.dz = 0) or s.whole or (o.dx = s.bx and o.dx <> 0) or (o.dy = s.by_ and o.dy <> 0) or (o.dz = s.bz and o.dz <> 0)
+        union all
+        select d.react, d.tickc from (select distinct x.nm from new_ev ne, lateral (values (ne.old_state), (ne.new_state)) x(nm)) st join mc.dyn_state d on d.name = st.nm
+    ) q;
+    if not any_react and not any_tick then return null; end if;
+    if any_tick then
+        -- the random-tick lists (sql/887) of the chunks a change touches, and of the neighbours when it is within 4 cells of them (water reaches farmland, dirt grass, over a chunk border)
+        insert into mc.dyn_rt_dirty (dimension, cx, cz, mt)
+        select distinct q.dimension, q.cx + dx.v, q.cz + dz.v, (select game_time from mc.game_state)
+          from (select distinct ne.dimension, ne.x >> 4 as cx, ne.z >> 4 as cz, ne.kind <> 'block' as whole,
+                       case when (ne.x & 15) < 4 then -1 when (ne.x & 15) >= 12 then 1 else 0 end as bx,
+                       case when (ne.z & 15) < 4 then -1 when (ne.z & 15) >= 12 then 1 else 0 end as bz
+                  from new_ev ne) q, (values (0), (-1), (1)) dx(v), (values (0), (-1), (1)) dz(v)
+         where (dx.v = 0 or q.whole or dx.v = q.bx) and (dz.v = 0 or q.whole or dz.v = q.bz)
+        on conflict (dimension, cx, cz) do update set seq = excluded.seq, mt = excluded.mt;
+    end if;
+    if not any_react or coalesce(current_setting('mc.dyn_busy', true), 'off') = 'on' then return null; end if;
     select * into v from mc.dyn_vec;
     select game_time into cur from mc.game_state;
     select count(*) > 64 into many from new_ev where kind = 'block';
@@ -187,21 +208,27 @@ begin
                 end loop;
             end if;
             if keep then
-                n := n + 1; kinds[n] := 4; xs[n] := e.x; ys[n] := e.y; zs[n] := e.z; auxs[n] := osid;
+                n := n + 1; kinds[n] := 4; xs[n] := e.x; ys[n] := e.y; zs[n] := e.z; auxs[n] := osid; aux2s[n] := 0;
             end if;
         elsif e.kind = 'cells' then
             select d.sid into nsid from mc.dyn_state d where d.name = e.new_state;
+            select d.sid into osid from mc.dyn_state d where d.name = e.old_state;
             if (v.flags[nsid + 1] & interesting) <> 0 then
                 for p in select unnest(mc.cells_positions(e.cells)) loop
                     exit when n >= 2000;
-                    n := n + 1; kinds[n] := 4; xs[n] := (e.x >> 4) * 16 + ((p >> 8) & 15); ys[n] := (e.y >> 4) * 16 + (p & 15); zs[n] := (e.z >> 4) * 16 + ((p >> 4) & 15); auxs[n] := v.k[1];
+                    n := n + 1; kinds[n] := 9; xs[n] := (e.x >> 4) * 16 + ((p >> 8) & 15); ys[n] := (e.y >> 4) * 16 + (p & 15); zs[n] := (e.z >> 4) * 16 + ((p >> 4) & 15); auxs[n] := coalesce(osid, v.k[1]); aux2s[n] := nsid;
                 end loop;
             end if;
         end if;
     end loop;
+    -- a fill: every block is placed first (kind 9), then the neighbours of every one of them are told, in the same order (kind 10)
+    k := n;
+    for p in 1 .. k loop
+        if kinds[p] = 9 then n := n + 1; kinds[n] := 10; xs[n] := xs[p]; ys[n] := ys[p]; zs[n] := zs[p]; auxs[n] := auxs[p]; aux2s[n] := 0; end if;
+    end loop;
     if n > 0 then
         perform set_config('mc.dyn_nocache', 'on', true);
-        perform mc.dyn_run(dim, cur, kinds, xs, ys, zs, auxs);
+        perform mc.dyn_run(dim, cur, kinds, xs, ys, zs, auxs, false, aux2s);
         perform set_config('mc.dyn_nocache', 'off', true);
     end if;
     return null;

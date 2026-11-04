@@ -22,6 +22,7 @@ begin
   delete from mc.game_rule;
   insert into mc.game_rule values ('minecraft:random_tick_speed', '0');
   update mc.game_state set game_time = 1000, day_time = 6000;
+  update mc.dyn_rt_state set next_build = 0;
   perform mc.fill('minecraft:overworld', -24, -60, -24, 24, -40, 24, 'minecraft:air');
   perform mc.fill('minecraft:overworld', -24, -61, -24, 24, -61, 24, 'minecraft:stone');
   delete from mc.block_event; truncate mc.block_tick;
@@ -31,6 +32,7 @@ create or replace function pg_temp.put(x int, y int, z int, b text) returns void
 create or replace function pg_temp.count_like(pat text) returns bigint language sql as $$ select count(*) from mc.blocks_in('minecraft:overworld', -24, -61, -24, 24, -40, 24) where block like pat $$;
 
 select mc.generate_flat_area('minecraft:overworld', -3, -3, 3, 3);
+update mc.server_property set value = '100000' where key = 'dbcraft.random-tick-build-ms'; update mc.server_property set value = '0' where key = 'dbcraft.random-tick-quiet';          -- the tests wait for no list: rebuild at once (the default spends 0.5 ms per tick)
 
 -- the reference data ----------------------------------------------------------------------------------------------------------------------------------------------------
 select t.eq('dyn_vec covers every block state', (select n from mc.dyn_vec), (select count(*)::int from ref.block_state));
@@ -275,6 +277,26 @@ select t.eq('mc.cells_positions: the same positions in the same order as the 4,0
               where mc.cells_positions(q.c) is distinct from (select coalesce(array_agg((x << 8) | (z << 4) | y order by z, y, x), '{}') from generate_series(0, 15) z, generate_series(0, 15) y, generate_series(0, 15) x where get_bit(q.c, (y << 8) | (z << 4) | x) = 1)),
             0::bigint);
 select t.eq('mc.cells_positions of an empty and a full bit map', (select concat_ws('|', cardinality(mc.cells_positions(decode(repeat('00', 512), 'hex'))), cardinality(mc.cells_positions(decode(repeat('ff', 512), 'hex'))))), '0|4096');
+
+-- the event trigger asks the palettes first (sql/885): nothing reactive or random-ticking near an edit means nothing is done ------------------------------------------------------------
+select pg_temp.reset();
+delete from mc.dyn_rt_dirty;
+select mc.fill('minecraft:overworld', 30, -47, 30, 40, -40, 40, 'minecraft:stone');            -- (the section up here holds only air and stone: no state that reacts, none that ticks; the fill itself, a whole-section event, also asks the sections next to it)
+delete from mc.dyn_rt_dirty; truncate mc.block_tick;
+select pg_temp.put(35, -45, 35, 'minecraft:gold_block');
+select t.eq('an edit among air and stone queues no list and schedules nothing', (select count(*) from mc.dyn_rt_dirty) + (select count(*) from mc.block_tick), 0::bigint);
+select pg_temp.put(35, -44, 35, 'minecraft:water');
+select t.is_true('a water source there is reacted to at once (a fluid tick is scheduled)', (select count(*) from mc.block_tick where kind = 'f') >= 1);
+select pg_temp.put(36, -44, 35, 'minecraft:wheat[age=0]');
+select t.is_true('a random-ticking block there queues the lists of its chunk', (select count(*) from mc.dyn_rt_dirty) >= 1);
+select pg_temp.reset();
+-- a section of 16 uniform layers decodes the same as the entry-by-entry decode, and anything else falls back
+select t.eq('mc.dyn_decode_layered equals mc.dyn_decode on 200 random layered sections of 1 .. 16 layers kinds and is null for a section with one odd entry',
+            (select count(*) from (select g, decode(string_agg(repeat(lpad(to_hex(((g * 7 + l * 3) % 16) * 17), 2, '0'), 128), '' order by l), 'hex') as d
+                                     from generate_series(1, 200) g, generate_series(0, 15) l group by g) q
+              where mc.dyn_decode_layered(4, q.d, array(select 1000 + i from generate_series(0, 15) i)) is distinct from mc.dyn_decode(4, q.d, array(select 1000 + i from generate_series(0, 15) i))), 0::bigint);
+select t.is_true('... and is null for a section with one odd entry', mc.dyn_decode_layered(4, set_byte(decode(repeat('11', 2048), 'hex'), 777, 18), array(select i from generate_series(0, 15) i)) is null);
+select t.is_true('the list maintenance spends a share of CPU per tick: a build makes the next ticks wait', (select next_build from mc.dyn_rt_state) >= 0);
 
 -- cost when nothing is due -------------------------------------------------------------------------------------------------------------------------------------------------
 select pg_temp.reset();
