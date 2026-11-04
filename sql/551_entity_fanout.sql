@@ -7,10 +7,11 @@
 
 create or replace function mc.entity_lane_step(p_tick bigint) returns int[] language plpgsql volatile
 set enable_hashjoin = off set enable_mergejoin = off as $$
-declare due int[]; sync_ids int[]; vr int := mc.prop_int('view-distance');
+declare due int[]; sync_ids int[]; auto_ids int[] := '{}'; vr int := mc.prop_int('view-distance');
 begin
-    select coalesce(array_agg(l.id), '{}') into due from mc.entity_lane l where l.slot = (p_tick % l.every)::int and l.goal_until > p_tick;
-    if cardinality(due) = 0 then return '{}'; end if;
+    if mc.entity_auto_enabled() then auto_ids := mc.entity_auto_tick(p_tick); end if;           -- the autonomous lanes (sql/940): one statement, returns the ids the generic tracker must take
+    select coalesce(array_agg(l.id), '{}') into due from mc.entity_lane l where not l.auto and l.slot = (p_tick % l.every)::int and l.goal_until > p_tick;
+    if cardinality(due) = 0 then return auto_ids; end if;
     with cur as materialized (
         select e.id, e.cx, e.cz, e.y, e.yaw, e.pitch, e.on_ground, p.tracking_chunks as trk, (p_tick - e.born_tick) as tc,
                e.x + e.gx * (p_tick - e.phys_tick) as nx, e.z + e.gz * (p_tick - e.phys_tick) as nz,
@@ -64,7 +65,7 @@ begin
           from calc c where e.id = c.id and c.sync returning e.id, c.sync
     )
     select coalesce(array_agg(ue.id), '{}') into sync_ids from ue;
-    return sync_ids;
+    return auto_ids || sync_ids;
 end $$;
 
 -- (b) the tracker for entities outside lanes (sql/542's) with one change: the remove_entities packet of an entity that changed chunk is built once per entity and joined, not built
@@ -72,7 +73,8 @@ end $$;
 create or replace function mc.entity_tracker(p_tick bigint, p_ids int[]) returns int language plpgsql volatile as $$
 declare n1 int := 0; n2 int := 0;
 begin
-    -- 1. new entities: appear for everybody who can see their cell; their sent-state base is where they are now
+    -- 1. new entities: appear for everybody who can see their cell; their sent-state base is where they are now (one probe of the partial index: usually there are none)
+    if exists (select 1 from mc.entity e where e.last_sent_tick = 0) then
     with ne as materialized (
         select e.id, e.cx, e.cz, p.tracking_chunks as trk,
                mc.epkt_appear(e.id, e.uuid, e.type, e.type_id, e.x, e.y, e.z, e.vx, e.vy, e.vz, e.yaw, e.pitch, e.data) as pkt
@@ -90,6 +92,7 @@ begin
           from ne where e.id = ne.id returning e.id
     )
     select (select count(*) from upd) into n1;
+    end if;
 
     -- 2. movement of the entities processed this tick
     if cardinality(p_ids) > 0 then

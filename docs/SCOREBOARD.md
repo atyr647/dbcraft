@@ -58,8 +58,10 @@ and it loses (or fails) on login-storm stalls and long runs with 200 moving play
 | 10,000-chunk flat world | save stall: `save-all flush` / `checkpoint` (s) | 13.65 | 0.07 | 0.005 | dbcraft |
 | 10,000-chunk flat world | `kill -9` to accepting logins (s) | 10.7 | 2.1 | 0.19 | dbcraft |
 | `kill -9` after an edit 1 s old, never saved | edit survives? | no | yes | | dbcraft (dev cluster has `fsync=off`: a power cut is NOT covered) |
-| entities (from `docs/ENTITY.md`, not re-run here) | 5,000 resting items (ms) | 53-56 | 4.4 | 0.08 | dbcraft |
-| entities (same) | 2,000 walking mobs (ms) | 44-50 | 106 | 2.2 | **vanilla** |
+| entities, re-measured for [PERF-MOBS2.md](PERF-MOBS2.md) ‡ | 5,000 resting items, viewer in range (ms per tick, CPU) | 96.9 | 1.4 | 0.014 | dbcraft |
+| entities, re-measured ‡ | 2,000 walking mobs, viewer in range (ms) | 65.6 | 10.9 | 0.17 | dbcraft |
+| entities, re-measured ‡ | 5,000 walking mobs, viewer in range (ms) | 178.6 | 18.2 | 0.10 | dbcraft |
+| entities, re-measured ‡ | 2,000 / 5,000 mobs nobody can see (ms) | 5.2 / 10.1 | 12.0 / 19.2 | 2.3 / 1.9 | **vanilla** |
 | 200 players walking inside the explored area, 10 minutes | whole run | completes (tick 55.7 ms mean, p99 199, GC 364 pauses max 43 ms, tick 50.7 -> 60.9 ms from first to last third) | **all 200 clients timed out about 4 minutes in** | | **vanilla** |
 
 ‡ **Re-measured** for [PERF-STORM.md](PERF-STORM.md) with the Rust gateway, with 20 players online (12 idle bots, 8 chat probes) before the storm, view distance 10, vanilla and dbcraft interleaved, 3 repetitions, medians; a machine at load average 7-18 throughout (other agents), vanilla heap 2 GB.
@@ -104,6 +106,11 @@ fill, while dbcraft's tick now spends 3 to 9 ms (it was 240 to 320) and the whol
    spent another 243 to 309 ms encoding the 48 section packets (docs/WORLD.md "Large fills"); **since [PERF-WORLD2.md](PERF-WORLD2.md) it spends 3 to 9 ms** (vanilla's main thread: 240 to 290 ms for command and broadcast); this scenario has no player, on either server.
 6. ~~**Disk**: a 10,000-chunk flat world is 33% bigger (82.5 against 62.1 MiB): the wire-format sections plus caches against compressed region files.~~  **Closed for flat worlds, partly for terrain** ([PERF-DISK.md](PERF-DISK.md)).  Re-measured: the tree before the change was 92.6 MiB (1.49x); rows are now compressed inside their pages (`sql/950`, the compact storage profile): **16.1 MiB, 0.26x of vanilla's 62.1 MiB** (vanilla re-run today: 65,108,563 bytes, 15,876 chunk entries of 4 KiB because it also writes the 5,060 unfinished border chunks; dbcraft needs 1,692 bytes a chunk, vanilla stores 4,096).  Measured with the scoreboard's own size query (`tools/scoreboard/run2.py`, `world_bytes`) on a cluster of its own, **not the full harness**; vanilla's number is the same recipe re-run, not the original run's.  Real terrain, same measure: the imported vanilla world (780 chunks) is 13.35 MiB after `tools/compact_world.sh` (17.84 as the importer writes it) against **17.08 MiB for vanilla's whole folder but 7.23 MiB for the 780 full chunks alone: dbcraft is 0.78x the first and 1.8x the second**; 2,000 chunks of `dbcraft:noise` are 13.34 MiB after compaction against 7.84 MiB for their export (1.7x).  **Not closed**: a terrain chunk that has been sent keeps a 14.7 KB packet cache row (24.35 MiB for the imported world with every chunk sent), `mc.trim_chunk_cache()` drops it at the price of a rebuild on the next send; and vanilla's per-chunk deflate beats per-row lz4/pglz by 1.8x on terrain.  Hot-path cost: `set_block` 0 to +3% CPU, `get_block` +3 us, `set_blocks`/`fill`/rebuild/join unchanged or faster (PERF-DISK.md section 5).
 7. **Mobs**: about 150 microseconds per awake mob against vanilla's 22 (`docs/ENTITY.md`; the worker that later optimised it reports a lower figure in its own doc).
+7. ~~**Mobs**: about 150 microseconds per awake mob against vanilla's 22.~~  **Closed where a player can see the mobs, still a loss where nobody can** ([PERF-MOBS2.md](PERF-MOBS2.md)): re-measured against the real server,
+   2,000 and 5,000 awake walking cows cost the entity tick 10.9 and 18.2 ms of CPU (5.5 and 3.6 us per mob) against 65.6 and 178.6 ms for the vanilla server thread; 5,000 resting items 1.4 against 96.9 ms.
+   Cows that no viewer's cell contains cost dbcraft 12.0 / 19.2 ms (2,000 / 5,000) against vanilla's 5.2 / 10.1: vanilla's idle cow in an unobserved region costs 2-2.6 us per tick, dbcraft's mob
+   3.8-6 us (an event is a row update through SQL), and dbcraft despawns such mobs after 600 ticks anyway.  ‡ Method and caveats: both sides CPU time, the machine loaded (vanilla's wall-clock tick times
+   unusable), 3 repetitions, vanilla and dbcraft not interleaved in the final numbers, `-Xmx1G` for vanilla; dbcraft models no pathfinding, goals, look-around, motion packets, sounds or collision.
 
 ## Where dbcraft wins
 
@@ -112,7 +119,7 @@ fill, while dbcraft's tick now spends 3 to 9 ms (it was 240 to 320) and the whol
 * **No save stall**: vanilla's `save-all flush` blocks 13.7 s with 10,000 loaded chunks; dbcraft's checkpoint runs in the background.
 * **Crash recovery 5 times faster and a 1-second-old edit survives** (vanilla loses everything since the last save).  The dev cluster runs with `fsync=off`, so
   this measures a killed process, not a power cut.
-* **Single admin edits 9 times faster** (SQL against RCON), resting-item populations 12 times cheaper.
+* **Single admin edits 9 times faster** (SQL against RCON), resting-item populations 70 times cheaper (re-measured, PERF-MOBS2.md; 12 times in the original session), and awake mobs that a player can see 6 to 10 times cheaper in CPU than the vanilla server thread.
 * **Under overload vanilla's chat round trip grows to 9-24 seconds** with 200 walking players; dbcraft's stays near 100-180 ms.  (Vanilla queues packet work behind
   its saturated main thread; I did not investigate further.)
 
@@ -142,7 +149,7 @@ fill, while dbcraft's tick now spends 3 to 9 ms (it was 240 to 320) and the whol
 
 ## What was not run
 
-* Scenario 6b (1,000 edits per tick with 100 watchers): not run.  Scenario 5 (entities with 0 and 100 players): taken from `docs/ENTITY.md`, not repeated.
+* Scenario 6b (1,000 edits per tick with 100 watchers): not run.  Scenario 5 (entities with 0 and 100 players): re-run for PERF-MOBS2.md with one viewer and with none in range (not 100 players).
 * 500 players: not run (the load generator and the loaded machine were the limit; 200 was the largest size).
 * Through the Rust gateway: not run, no built gateway existed at the time.
 * Most cells have 2 repetitions, the storms and the 10,000-chunk world 1; no confidence intervals.

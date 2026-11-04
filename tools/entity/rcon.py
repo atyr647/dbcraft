@@ -18,7 +18,7 @@ PW = os.environ.get("RCON_PW", "entitytest")
 
 class Rcon:
     def __init__(self):
-        self.sock = socket.create_connection((HOST, PORT), timeout=10)
+        self.sock = socket.create_connection((HOST, PORT), timeout=float(os.environ.get("RCON_TIMEOUT", 10)))
         self.id = 0
         self._send(3, PW)
 

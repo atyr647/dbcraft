@@ -45,7 +45,7 @@ insert into mc.entity (id, uuid, type, type_id, x, y, z, on_ground, born_tick, p
 values (5001, gen_random_uuid(), 'minecraft:cow', mc.entity_type_id('minecraft:cow'), 12.5, -60, 0.5, true, 0, 0, 0, 0, 0.125, 0, 60, 1, 0, 0, round(12.5 * 4096), round(-60 * 4096.0), round(0.5 * 4096), 0);
 select mc.entity_tick(1);
 select t.is_true('B: the cow walks in a lane', (select lane_until > 0 from mc.entity where id = 5001) and exists (select 1 from mc.entity_lane where id = 5001));
-select t.is_true('B: the lane ends one tick before the centre would leave chunk 0 (not at the end of the goal)', (select lane_until from mc.entity where id = 5001) between 27 and 29);
+select t.is_true('B: the segment of the lane ends where the centre would leave chunk 0 (not at the end of the goal): lane tick 1 + 28 steps of 0.125 from 12.5 reach x = 16', (select goal_until from mc.entity_lane where id = 5001) between 27 and 29);
 select mc.entity_tick(t) from generate_series(2, 10) t;
 select t.is_true('B: mc.entity_live is the closed form: x = 12.5 + 0.125 * (tick - phys_tick) from the row, here 12.5 + 0.125 * 10 = 13.75',
                  (select abs(x - 13.75) < 1e-9 and y = -60 and in_lane from mc.entity_live where id = 5001));
