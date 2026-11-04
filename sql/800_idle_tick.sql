@@ -85,7 +85,8 @@ begin
     if current_setting('dbcraft.quiet_tick', true) = 'off' then return false; end if;
     -- the conditions are the ones of the `mv` set of mc.apply_player_moves / mc.moves_batched (their WHERE clause without the update-interval phase: conservative)
     return not exists (select 1 from mc.play_in_work where packet_id in (i_pos, i_pr, i_rot, i_st, i_tp))
-       and not exists (select 1 from mc.player p
-                        where p.conn_id is not null
-                          and (mc.quant(p.x) <> p.sent_qx or mc.quant(p.y) <> p.sent_qy or mc.quant(p.z) <> p.sent_qz or p.yaw <> p.sent_yaw or p.pitch <> p.sent_pitch));
+       and (mc.vis_on()           -- (sql/907: with the vanilla tracker the broadcast of positions is mc.vis_move's, which keeps its own state; the classic step has nothing to send)
+            or not exists (select 1 from mc.player p
+                            where p.conn_id is not null
+                              and (mc.quant(p.x) <> p.sent_qx or mc.quant(p.y) <> p.sent_qy or mc.quant(p.z) <> p.sent_qz or p.yaw <> p.sent_yaw or p.pitch <> p.sent_pitch)));
 end $$;

@@ -1,3 +1,5 @@
+-- this test compares the join bursts of players who enter play in different ticks: with the vanilla tracker (sql/900) a later joiner's burst legitimately differs (waypoints of the players already there), so it runs with the classic broadcast
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- The join stage budget (docs/PERF-STORM.md): the packet that makes a connection enter play is held back once the tick has used its time budget, and a joiner's chunk square
 -- is sent over several ticks.  Driven through net.inbox and mc.server_tick() like a gateway, with clients that send each stage one tick after the previous.  Checked: budget
 -- off = everything at once; budget on = one entry per tick (oldest connection first) and the others wait; a connection that has waited too long is never held back; what a

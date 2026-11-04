@@ -40,7 +40,8 @@ create or replace function net.player_info_body(p_conns bigint[]) returns bytea 
 begin
     return (select '\xff'::bytea || proto.varint(count(*)::int)
                    || coalesce(string_agg(coalesce(t.head, proto.uuid(c.uuid) || proto.string(c.name) || '\x0000'::bytea)
-                                          || proto.varint(coalesce(c.gamemode, 0)) || '\x01'::bytea || proto.varint(c.latency_ms) || '\x000000'::bytea,
+                                          || proto.varint(coalesce(c.gamemode, 0)) || '\x01'::bytea || proto.varint(c.latency_ms) || '\x0000'::bytea
+                                          || proto.bool(coalesce(((c.client_info ->> 'skin_parts')::int & 64) <> 0, false)),          -- the hat layer the client reported (sql/904)
                                           ''::bytea order by c.conn_id), '\x'::bytea)
               from net.conn c left join net.conn_tab t on t.conn_id = c.conn_id
              where c.conn_id = any (p_conns));

@@ -14,6 +14,17 @@ begin
     from (select i, random() * side_chunks * 16 as px, random() * side_chunks * 16 as pz from generate_series(1, n) i) g;
   update mc.game_state set game_time = 0;
   update mc.server_property set value = '10' where key = 'view-distance';
+  -- the visibility layer (sql/900-910, dbcraft.vanilla-tracker) keeps its state per player: bots are players that were created at tick 0 and whose clients asked for the server's view distance
+  -- (a client that never asks has vanilla's default 2, a circle of 32 blocks); a no-op on a database without the layer
+  if to_regprocedure('mc.vis_on()') is not null then
+    update mc.player set trk_start = 0, trk_ground = true, trk_sync = -2, vis_wake = null,
+           view_distance_req = 10, vis_x = x, vis_z = z, wp_state = 1, wp_bx = floor(x)::int, wp_by = floor(y)::int, wp_bz = floor(z)::int, wp_cx = chunk_x, wp_cz = chunk_z,
+           attr_seen = mc.attr_std_seen(), attr_gm = gamemode, attr_spr = false, sent_equip = array['', '', '', '', '', ''], sent_held = 0, equip_dirty = false
+     where conn_id is not null;
+    insert into mc.vtrk (entity_id, base_x, base_y, base_z, sent_yb, sent_pb, sent_hb)
+    select entity_id, x, y, z, mc.angle_byte(yaw), 0, mc.angle_byte(yaw) from mc.player where conn_id is not null
+    on conflict (entity_id) do update set base_x = excluded.base_x, base_y = excluded.base_y, base_z = excluded.base_z, sent_yb = excluded.sent_yb, sent_pb = 0, sent_hb = excluded.sent_hb;
+  end if;
 end $$;
 
 create table if not exists bench.step (tick bigint primary key, gen_ms float8, drain_ms float8, out_rows int, out_bytes bigint);

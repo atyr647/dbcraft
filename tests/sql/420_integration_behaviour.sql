@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- The integrated server's behaviour, driven through net.inbox and mc.server_tick() exactly as a gateway would: settings, login checks, two players
 -- joining (ordering, no duplicates, entity ids), keep-alive and teleport forwarding, block actions, chunk streaming, kicks, compression.
 -- Needs the captures only for the datapack (skipped by the loaders' own notices if missing).

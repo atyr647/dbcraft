@@ -37,6 +37,8 @@ echo "== loading opaque play-entry packets"
 python3 tools/load_static_packets.py "$CAP"
 echo "== loading the flat world reference"
 python3 tools/load_world_ref.py
+echo "== loading the per-item components (attribute modifiers of worn and held items)"
+python3 tools/load_item_components.py || echo "NOTE: no item components (tools/bootstrap.sh makes them): worn items add no attribute modifiers"
 python3 tools/load_recipes.py
 echo "== loading the world-dynamics reference data (derived from the jar: tools/gen_dynamics.sh)"
 python3 tools/load_dynamics.py

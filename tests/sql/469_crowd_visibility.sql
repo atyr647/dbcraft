@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- mc.refresh_visibility (sql/468): recomputing only the pairs whose in-range status changed must give EXACTLY what the full recomputation (mc.refresh_visibility_full, the
 -- sql/465 code) gives: the same mc.visible, the same counts, the same packets per connection in the same order.  Random states, built the way the server builds them:
 -- a consistent visibility relation (made by the full refresh), then players cross chunk borders the way the movement update records it (the chunk before the move in

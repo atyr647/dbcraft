@@ -1,3 +1,5 @@
+-- this test compares the movement step with its older general form under the classic (simplified) broadcast of sql/431; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- The fast movement path (sql/431) must do exactly what the original does: the same mc.player rows, the same bytes in every connection's queue, the same kicks,
 -- the same counters.  Random scenarios are built, snapshotted, run through mc.apply_player_moves_general() (the original, kept verbatim), the state is
 -- restored from the snapshot and run through mc.apply_player_moves(); everything is compared.  Scenario flavours: ordinary ticks, jumps of more than 10 blocks

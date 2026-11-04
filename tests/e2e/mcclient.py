@@ -99,7 +99,7 @@ def offline_uuid(name):
 
 
 class Client:
-    def __init__(self, host, port, name, auto=True, timeout=10.0):
+    def __init__(self, host, port, name, auto=True, timeout=10.0, info=None):
         self.name, self.host, self.port = name, host, port
         self.events, self.lock, self.state, self.threshold = [], threading.Lock(), "handshake", -1
         self.pos = None
@@ -116,6 +116,8 @@ class Client:
         self._until("minecraft:login_finished", timeout)
         self.send("minecraft:login_acknowledged")
         self.state = "configuration"
+        if info is not None:                                                  # client_information in the configuration phase, as a real client sends it (language, view distance, skin layers, main hand ...)
+            self.send("minecraft:client_information", info)
         while True:
             n, body = self._until(None, timeout)
             if n == "minecraft:select_known_packs":

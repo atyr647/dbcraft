@@ -6,7 +6,7 @@
 # exit code 0 when every comparison passes.  See tests/e2e/README.md.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-E2E=${DBCRAFT_E2E_DIR:-/tmp/dbcraft-e2e}; PORT=25621
+E2E=${DBCRAFT_E2E_DIR:-/tmp/dbcraft-e2e}; PORT=${DBCRAFT_E2E_PORT:-25621}
 export DBCRAFT_PGDATA=${DBCRAFT_PGDATA:-/tmp/dbcraft-pg-int} DBCRAFT_PGPORT=${DBCRAFT_PGPORT:-54399}
 for f in vanilla_join_returning.jsonl vanilla_block_actor.jsonl vanilla_move6.jsonl vanilla_social_first.jsonl; do
   [ -f "$E2E/$f" ] || { echo "missing $E2E/$f: run tests/e2e/record_vanilla.sh first"; exit 2; }
@@ -59,6 +59,18 @@ if [ -f "$E2E/vanilla_cmd_Op4.jsonl" ]; then
   python3 tests/e2e/compare_commands.py "$E2E/vanilla_cmd" "$E2E/ours_cmd" || rc=1
 else
   echo; echo "(commands: skipped, no $E2E/vanilla_cmd_Op4.jsonl: run tests/e2e/record_commands.sh once)"
+fi
+
+step "what other players see: entity data, equipment, attributes, swings, movement, the locator bar, view distance, joins (tests/e2e/vis.sh)"
+VIS=${VIS_DIR:-/tmp/dbcraft-e2e-vis}
+if [ -f "$VIS/vanilla_pose_obs.jsonl" ]; then
+  # the scenarios run in survival with view distance 3 (what the vanilla recording used)
+  psql_ours="psql -X -q -At -h /tmp -p $DBCRAFT_PGPORT -U postgres dbcraft"
+  $psql_ours -c "update mc.server_property set value = 'survival' where key = 'gamemode'" -c "update mc.server_property set value = '3' where key in ('view-distance', 'simulation-distance')" \
+             -c "update mc.server_property set value = 'normal' where key = 'difficulty'" -c "select net.sync_settings()" > /dev/null
+  PGHOST=/tmp PGPORT=$DBCRAFT_PGPORT PGUSER=postgres PGDATABASE=dbcraft VIS_DIR=$VIS tests/e2e/vis.sh compare $PORT || rc=1
+else
+  echo "skipped: no $VIS/vanilla_pose_obs.jsonl (tests/e2e/vis.sh record makes the vanilla recordings; it starts its own vanilla server)"
 fi
 
 step "gateway status"

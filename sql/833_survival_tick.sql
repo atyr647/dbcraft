@@ -117,26 +117,36 @@ end $$;
 
 ------------------------------------------------------------------------------------------------ tracker: entity data
 create or replace function mc.survival_tracker(p_cur bigint, p_ids int[] default null) returns void language plpgsql as $$
-declare e int[]; d bytea[];
+declare e int[]; d bytea[]; vison boolean := mc.vis_on();
 begin
   -- a player row that went online without the join trigger (inserted with a connection id by a test or a tool) has nothing "sent" yet: its current values count as sent
   update mc.player set sent_health = health, sent_food = food, sent_sat_zero = (saturation = 0), sent_eh = health, sent_xp_total = xp_total, sent_score = xp_score, sent_using = false,
+         sent_flags = mc.ed_flags(shift, sprinting, gamemode), sent_pose = pose, sent_skin = skin_parts, sent_arm = main_hand,        -- (sql/900: the other entity data other players see)
          join_tick = coalesce(join_tick, p_cur)
    where conn_id is not null and sent_health is null and (p_ids is null or entity_id = any (p_ids));
-  -- one set_entity_data per player with everything that changed, entries in index order: 8 living flags, 9 health, 18 score
+  -- one set_entity_data per player with everything that changed, entries in index order: 0 flags, 6 pose, 8 living flags, 9 health, 15 main arm, 16 skin layers, 18 score
+  -- (the flags, pose, arm and skin entries only with dbcraft.vanilla-tracker: sql/900)
   select array_agg(q.eid order by q.eid), array_agg(q.pkt order by q.eid) into e, d
     from (select p.entity_id as eid,
-                 mc.cb('set_entity_data', proto.varint(p.entity_id)
-                   || case when p.sent_using is distinct from (p.use_slot is not null) then '\x0800'::bytea || proto.i8(case when p.use_slot is not null then 1 else 0 end) else '\x'::bytea end
-                   || case when p.sent_eh is distinct from p.health then '\x0903'::bytea || proto.f32(p.health) else '\x'::bytea end
-                   || case when p.sent_score is distinct from p.xp_score then '\x1201'::bytea || proto.varint(p.xp_score) else '\x'::bytea end
-                   || '\xff'::bytea) as pkt
+                 mc.pkt_entity_data(p.entity_id, mc.ed_entries(mc.ed_flags(p.shift, p.sprinting, p.gamemode), p.pose, case when p.use_slot is not null then 1 else 0 end, p.health, p.main_hand, p.skin_parts, p.xp_score,
+                     (case when vison and p.sent_flags is distinct from mc.ed_flags(p.shift, p.sprinting, p.gamemode) then 1 else 0 end)
+                   | (case when vison and p.sent_pose is distinct from p.pose then 2 else 0 end)
+                   | (case when p.sent_using is distinct from (p.use_slot is not null) then 4 else 0 end)
+                   | (case when p.sent_eh is distinct from p.health then 8 else 0 end)
+                   | (case when vison and p.sent_arm is distinct from p.main_hand then 16 else 0 end)
+                   | (case when vison and p.sent_skin is distinct from p.skin_parts then 32 else 0 end)
+                   | (case when p.sent_score is distinct from p.xp_score then 64 else 0 end))) as pkt
             from mc.player p
            where p.conn_id is not null and (p_ids is null or p.entity_id = any (p_ids))
-             and (p.sent_eh is distinct from p.health or p.sent_using is distinct from (p.use_slot is not null) or p.sent_score is distinct from p.xp_score)) q;
+             and (p.sent_eh is distinct from p.health or p.sent_using is distinct from (p.use_slot is not null) or p.sent_score is distinct from p.xp_score
+                  or (vison and (p.sent_flags is distinct from mc.ed_flags(p.shift, p.sprinting, p.gamemode) or p.sent_pose is distinct from p.pose
+                                 or p.sent_arm is distinct from p.main_hand or p.sent_skin is distinct from p.skin_parts)))) q;
   if e is null then return; end if;
   perform mc.send_players_and_viewers(e, d);
-  update mc.player p set sent_eh = p.health, sent_using = (p.use_slot is not null), sent_score = p.xp_score where p.entity_id = any (e);
+  update mc.player p set sent_eh = p.health, sent_using = (p.use_slot is not null), sent_score = p.xp_score,
+         sent_flags = case when vison then mc.ed_flags(p.shift, p.sprinting, p.gamemode) else p.sent_flags end, sent_pose = case when vison then p.pose else p.sent_pose end,
+         sent_arm = case when vison then p.main_hand else p.sent_arm end, sent_skin = case when vison then p.skin_parts else p.sent_skin end
+   where p.entity_id = any (e);
   -- the stack that was eaten is re-sent one tick after the use completed (the menu's broadcastChanges at the start of the next tick)
   insert into mc.play_out (conn_id, data)
   select p.conn_id, string_agg(mc.pkt_container_set_slot(p.inv_state, p.pend_slot, i.item, coalesce(i.count, 0)), '\x'::bytea)

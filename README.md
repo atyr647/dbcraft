@@ -67,6 +67,10 @@ The world is stored in Minecraft's own wire format (palette + packed longs per 1
   without compression).  A real client in online mode has **not** been tested (it needs a Mojang account).
 * A **survival core for players** (health, hunger, fall and void damage, death and respawn, natural regeneration, eating, experience) as set-based SQL; the damage, death, respawn,
   fall, void and eating packet sequences were recorded from the real server and are reproduced (`tests/e2e/survival_probe.py`, [docs/SURVIVAL.md](docs/SURVIVAL.md)).
+* What **other players see** is generated from rows and compared with the real server: entity data (sneaking, sprinting, pose, skin layers, main hand, health), equipment, attributes,
+  arm swings, the add-entity bundle, movement exactly as vanilla's entity tracker sends it (every second tick, position syncs, head rotation), the locator bar (waypoints), per-client
+  view distance and tracking range, the first-time and the returning join sequence, the tab list's latency and hat flag, chat and command rate limits
+  (`tests/e2e/vis.sh`, [docs/PLAYER-VISIBILITY.md](docs/PLAYER-VISIBILITY.md): what matches, what was not compared, and what it costs per tick).
 * **Containers, crafting and recipes** ([docs/CONTAINERS.md](docs/CONTAINERS.md)): the whole container-click protocol (pickup, shift, hotbar swap, drag, double click, throw, clone, state ids,
   resync), the player's 2x2 grid, the crafting table, chests (single and double), barrels, ender chests, furnaces / blast furnaces / smokers with fuel and cook time, 1,684 recipes
   generated from the jar's data, stack sizes from the generator's item components; randomized click sequences produce the same packets and the same full menu state as the real vanilla
@@ -80,7 +84,8 @@ The world is stored in Minecraft's own wire format (palette + packed longs per 1
 
 **What is missing:** most of survival gameplay (mobs and anything that attacks a player, armor, potion effects, fire, drowning, beds and respawn anchors; the player-side core -- health, hunger, fall and void damage, death, respawn, regeneration, eating, experience -- exists, see [docs/SURVIVAL.md](docs/SURVIVAL.md) for what was compared with the real server and what was not), vanilla's terrain (`dbcraft.generator = dbcraft:noise` makes believable seeded terrain with 16 real biomes, bedrock and sea level 63, but not vanilla's seeds, caves, ores, trees or structures; see [docs/WORLD.md](docs/WORLD.md)), about 70 of vanilla's 90 commands (they are in the client's command tree and answer "not implemented"), importing/exporting vanilla worlds beyond what [docs/WORLD-IMPORT.md](docs/WORLD-IMPORT.md) lists,
 vanilla mob AI and pathfinding, redstone, leaf decay and tree growth, shape-property updates (fences do not connect), item drops from broken blocks, a full light engine (sky light matches vanilla on about 76% of recorded layers), advancements and recipes
-(replayed from a capture, not generated), the first-time-player join sequence, a real-client test of online mode.
+(replayed from a capture, not generated), a real-client test of online mode, and the corners of player visibility that [docs/PLAYER-VISIBILITY.md](docs/PLAYER-VISIBILITY.md) lists as not verified
+(armor modifier order inside one attribute, azimuth waypoints beyond 332 blocks, jump and knockback movement syncs, vehicles, entity data other than the common flags, pairs re-evaluated only every 4 blocks).
 
 **Performance, honestly:** the tick is one transaction on one core.  500 moving players fit roughly in the 50 ms budget with the batched tick; a crowded spawn
 with 500 players does not, and 2,000 players do not.  Details, and what was tried and rejected, in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and `docs/PERF-*.md`.

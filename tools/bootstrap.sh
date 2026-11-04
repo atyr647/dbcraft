@@ -82,6 +82,16 @@ if have_reports; then ok "reports in $DBCRAFT_REPORTS"; elif [ "$CHECK" = 1 ]; t
   echo "$want" > "$DBCRAFT_REPORTS/.jar-sha1"; rm -rf "$work"
   ok "reports written to $DBCRAFT_REPORTS"
 fi
+# the per-item component reports came later than the other reports: a cache made before them gets them from a second generator run
+have_items() { [ -s "$DBCRAFT_REPORTS/item_components/iron_sword.json" ]; }
+if have_items; then ok "item components in $DBCRAFT_REPORTS/item_components"; elif [ "$CHECK" = 1 ]; then todo "item components ($DBCRAFT_REPORTS/item_components)"; else
+  [ -n "$JAVA" ] || { echo "Java 25 is needed to run the generator"; exit 1; }
+  work="$DBCRAFT_HOME/work"; rm -rf "$work"; mkdir -p "$work"
+  ( cd "$work" && "$JAVA" -DbundlerMainClass=net.minecraft.data.Main -jar "$DBCRAFT_SERVER_JAR" --reports --output gen ) >"$DBCRAFT_LOG/generator.log" 2>&1 \
+    || { echo "generator failed, see $DBCRAFT_LOG/generator.log"; exit 1; }
+  rm -rf "$DBCRAFT_REPORTS/item_components"; cp -r "$work/gen/reports/minecraft/components/item" "$DBCRAFT_REPORTS/item_components"; rm -rf "$work"
+  ok "item components written to $DBCRAFT_REPORTS/item_components"
+fi
 
 # the world-dynamics reference data (collision shapes, fluid states, class chains of every block state), read from the jar by tools/java/DynDump.java
 if [ "$CHECK" = 1 ]; then

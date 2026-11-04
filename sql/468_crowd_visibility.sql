@@ -11,7 +11,7 @@
 alter table mc.player add column if not exists vis_ocx int, add column if not exists vis_ocz int;
 
 create or replace function mc.refresh_visibility_full() returns table(added int, removed int) language plpgsql as $$
-declare r int := least(mc.prop_int('view-distance'), 32); d int[]; wv int[]; wt int[]; wc int[];
+declare r int := least(mc.prop_int('view-distance'), 32); d int[]; wv int[]; wt int[]; wc int[]; vison boolean := mc.vis_on();       -- (sql/900: a spectator is seen only by spectators)
 begin
   added := 0; removed := 0;
   select coalesce(array_agg(entity_id), '{}') into d from mc.player where vis_dirty and conn_id is not null;
@@ -19,10 +19,12 @@ begin
     select coalesce(array_agg(q.v), '{}'), coalesce(array_agg(q.t), '{}'), coalesce(array_agg(q.c), '{}') into wv, wt, wc
       from (select a.entity_id as v, b.entity_id as t, a.conn_id as c
               from mc.player a join mc.player b on b.entity_id <> a.entity_id and abs(a.chunk_x - b.chunk_x) <= r and abs(a.chunk_z - b.chunk_z) <= r and b.conn_id is not null
+                                                  and (not vison or b.gamemode <> 3 or a.gamemode = 3)
              where a.entity_id = any (d) and a.conn_id is not null
             union
             select a.entity_id, b.entity_id, a.conn_id
               from mc.player b join mc.player a on a.entity_id <> b.entity_id and abs(a.chunk_x - b.chunk_x) <= r and abs(a.chunk_z - b.chunk_z) <= r and a.conn_id is not null
+                                                  and (not vison or b.gamemode <> 3 or a.gamemode = 3)
              where b.entity_id = any (d) and b.conn_id is not null) q;
 
     -- newly visible: add_entity at the position the other viewers were last told (shared delta base)
@@ -32,10 +34,11 @@ begin
       select w.viewer_eid, w.target_eid, w.viewer_conn from w
       on conflict (viewer_eid, target_eid) do nothing                      -- was: where not exists (select 1 from mc.visible v ...): a plan that could become quadratic
       returning viewer_eid, target_eid, viewer_conn),
+    tb as materialized (select t.entity_id as eid, mc.pairing_bundle(t) as b from mc.player t where t.entity_id in (select target_eid from ins)),      -- one bundle per target, not per viewer (sql/903)
     q as (
       insert into mc.play_out (conn_id, data)
-      select i.viewer_conn, string_agg(mc.pkt_add_player_entity(t.entity_id, t.uuid, t.sent_qx / 4096.0, t.sent_qy / 4096.0, t.sent_qz / 4096.0, t.sent_yaw, t.sent_pitch, t.sent_yaw), '\x'::bytea order by t.entity_id)
-        from ins i join mc.player t on t.entity_id = i.target_eid group by i.viewer_conn
+      select i.viewer_conn, string_agg(tb.b, '\x'::bytea order by tb.eid)
+        from ins i join tb on tb.eid = i.target_eid group by i.viewer_conn
       returning 1)
     select (select count(*) from ins) into added;
 
@@ -57,9 +60,10 @@ begin
 end $$;
 
 create or replace function mc.refresh_visibility() returns table(added int, removed int) language plpgsql as $$
-declare r int := least(mc.prop_int('view-distance'), 32); n_dirty int; n_unknown int; av int[]; at_ int[]; ac int[]; rv int[]; rt int[];
+declare r int := least(mc.prop_int('view-distance'), 32); n_dirty int; n_unknown int; av int[]; at_ int[]; ac int[]; rv int[]; rt int[]; vison boolean := mc.vis_on();
 begin
   added := 0; removed := 0;
+  if vison then return query select * from mc.refresh_visibility_vis(); return; end if;         -- the exact per-client rule (sql/909)
   select count(*), count(*) filter (where vis_ocx is null) into n_dirty, n_unknown from mc.player where vis_dirty and conn_id is not null;
   if n_unknown > 0 then                                  -- a joiner, a teleport: the chunk the pairs were computed from is not known: the exact full recomputation
     return query select * from mc.refresh_visibility_full();
@@ -67,16 +71,16 @@ begin
   end if;
   if n_dirty > 0 then
     with pc as materialized (                            -- every online player: the chunk now, and the chunk its pairs in mc.visible were computed from
-      select entity_id as eid, conn_id, chunk_x as ncx, chunk_z as ncz,
+      select entity_id as eid, conn_id, chunk_x as ncx, chunk_z as ncz, gamemode as gm,
              case when vis_dirty then vis_ocx else chunk_x end as ocx, case when vis_dirty then vis_ocz else chunk_z end as ocz, vis_dirty as dirty
         from mc.player where conn_id is not null),
     ch as (                                              -- ordered pairs (viewer, target) with a dirty player in them whose in-range status changed; each pair once
       select a.eid as v, b.eid as t, a.conn_id as c, (abs(a.ncx - b.ncx) <= r and abs(a.ncz - b.ncz) <= r) as now_in
-        from pc a join pc b on b.eid <> a.eid
+        from pc a join pc b on b.eid <> a.eid and (not vison or b.gm <> 3 or a.gm = 3)
        where a.dirty and ((abs(a.ncx - b.ncx) <= r and abs(a.ncz - b.ncz) <= r) <> (abs(a.ocx - b.ocx) <= r and abs(a.ocz - b.ocz) <= r))
       union all
       select a.eid, b.eid, a.conn_id, (abs(a.ncx - b.ncx) <= r and abs(a.ncz - b.ncz) <= r)
-        from pc a join pc b on b.eid <> a.eid
+        from pc a join pc b on b.eid <> a.eid and (not vison or b.gm <> 3 or a.gm = 3)
        where b.dirty and not a.dirty and ((abs(a.ncx - b.ncx) <= r and abs(a.ncz - b.ncz) <= r) <> (abs(a.ocx - b.ocx) <= r and abs(a.ocz - b.ocz) <= r)))
     select coalesce(array_agg(v) filter (where now_in), '{}'), coalesce(array_agg(t) filter (where now_in), '{}'), coalesce(array_agg(c) filter (where now_in), '{}'),
            coalesce(array_agg(v) filter (where not now_in), '{}'), coalesce(array_agg(t) filter (where not now_in), '{}')
@@ -88,10 +92,11 @@ begin
         select w.v, w.t, w.c from unnest(av, at_, ac) as w(v, t, c)
         on conflict (viewer_eid, target_eid) do nothing
         returning viewer_eid, target_eid, viewer_conn),
+      tb as materialized (select t.entity_id as eid, mc.pairing_bundle(t) as b from mc.player t where t.entity_id in (select target_eid from ins)),
       q as (
         insert into mc.play_out (conn_id, data)
-        select i.viewer_conn, string_agg(mc.pkt_add_player_entity(t.entity_id, t.uuid, t.sent_qx / 4096.0, t.sent_qy / 4096.0, t.sent_qz / 4096.0, t.sent_yaw, t.sent_pitch, t.sent_yaw), '\x'::bytea order by t.entity_id)
-          from ins i join mc.player t on t.entity_id = i.target_eid group by i.viewer_conn
+        select i.viewer_conn, string_agg(tb.b, '\x'::bytea order by tb.eid)
+          from ins i join tb on tb.eid = i.target_eid group by i.viewer_conn
         returning 1)
       select (select count(*) from ins) into added;
     end if;

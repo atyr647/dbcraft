@@ -134,6 +134,10 @@ begin
       from mc.player o where o.conn_id is not null and o.uuid <> p.uuid order by o.entity_id;
   insert into mc.play_out (conn_id, data)
     select v.viewer_conn, mc.pkt_remove_entities(array[p.entity_id]) from mc.visible v where v.target_eid = p.entity_id and v.viewer_conn <> p_conn;
+  -- the locator bar forgets the player (sql/908): an UNTRACK to everybody connected to it, after the entity removal
+  insert into mc.play_out (conn_id, data)
+    select o.conn_id, mc.pkt_waypoint(1, p.uuid, 0, 0, 0, 0, 0) from mc.wp w join mc.player o on o.entity_id = w.rcv where w.src = p.entity_id and o.conn_id is not null and o.conn_id <> p_conn order by o.entity_id;
+  delete from mc.wp where src = p.entity_id or rcv = p.entity_id;
   insert into mc.play_out (conn_id, data)
     select o.conn_id, mc.pkt_player_info_remove(array[p.uuid]) from mc.player o where o.conn_id is not null and o.uuid <> p.uuid order by o.entity_id;
   delete from mc.visible where viewer_eid = p.entity_id or target_eid = p.entity_id;

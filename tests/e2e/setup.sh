@@ -20,6 +20,7 @@ python3 tools/load_reports.py
 python3 tools/load_datapack.py "$CAP"
 python3 tools/load_static_packets.py "$CAP"
 python3 tools/load_world_ref.py
+python3 tools/load_item_components.py || echo "NOTE: no item components (tools/bootstrap.sh makes them): worn items add no attribute modifiers"
 python3 tools/load_recipes.py
 python3 tools/load_dynamics.py
 psql -X -q -v ON_ERROR_STOP=1 <<'SQL'

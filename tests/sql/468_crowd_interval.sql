@@ -1,3 +1,5 @@
+-- this test pins the classic (simplified) player broadcast of sql/430-468; the vanilla tracker of sql/900-910 has its own test (900_vis.sql)
+update mc.server_property set value = 'false' where key = 'dbcraft.vanilla-tracker';
 -- Vanilla's update interval for players (EntityType.PLAYER.updateInterval(2), read from the bytecode: docs/PERF-CROWD.md): a walking player's position reaches its viewers
 -- every second tick as ONE packet carrying ticks = 2 and the combined delta, not every tick.  The phase is per entity: (tick + entity id) % interval = 0.
 create or replace function t.walk_setup(p_interval int) returns void language plpgsql as $$

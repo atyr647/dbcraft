@@ -127,7 +127,6 @@ begin
         (270, 'minecraft:set_experience', proto.f32(j.xp_progress) || proto.varint(j.xp_level) || proto.varint(j.xp_total))     -- level BEFORE total (found with /experience on the real server, docs/SURVIVAL.md; all zero in the recorded burst, so it was invisible)
     ) v(ord, packet, body) where v.body is not null
     union all
-    select s.ord, s.packet, case when s.entity_prefixed then proto.varint(j.entity_id) || s.body else s.body end from net.static_packet s
-     where s.packet <> 'minecraft:commands'          -- generated above (net.commands_body)
+    select g.ord, g.packet, g.body from mc.join_static_packets(j.entity_id) g       -- the captured packets, adapted to the player (sql/906); the plain captured rows when the game layer is not involved
     order by 1;
 end $$;

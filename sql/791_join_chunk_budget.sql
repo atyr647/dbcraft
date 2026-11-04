@@ -57,9 +57,9 @@ begin
     nc := cardinality(live);
     if nc = 0 then return 0; end if;
     -- a client whose view moved since its rows were last cleaned: what left its square is not wanted any more
-    with mv as (select c.conn_id, c.view_cx as vx, c.view_cz as vz from net.conn c left join mc.chunk_wanted_view v on v.conn_id = c.conn_id
+    with mv as (select c.conn_id, c.view_cx as vx, c.view_cz as vz, coalesce(c.view_r, r) as vr from net.conn c left join mc.chunk_wanted_view v on v.conn_id = c.conn_id
                  where c.conn_id = any (live) and (v.conn_id is null or v.vcx <> c.view_cx or v.vcz <> c.view_cz)),
-         del as (delete from mc.chunk_wanted w using mv where w.conn_id = mv.conn_id and (abs(w.cx - mv.vx) > r or abs(w.cz - mv.vz) > r) returning 1)
+         del as (delete from mc.chunk_wanted w using mv where w.conn_id = mv.conn_id and (abs(w.cx - mv.vx) > mv.vr or abs(w.cz - mv.vz) > mv.vr) returning 1)
     insert into mc.chunk_wanted_view (conn_id, vcx, vcz) select conn_id, vx, vz from mv
     on conflict (conn_id) do update set vcx = excluded.vcx, vcz = excluded.vcz;
     -- every connection's nearest wanted chunks that exist now; round-robin across connections (rank 1 of everybody, then rank 2, ...) up to the shared cap
@@ -70,7 +70,7 @@ begin
                       from unnest(live) u(c) join net.conn n on n.conn_id = u.c
                       cross join lateral (select w.conn_id, w.dimension, w.cx, w.cz, w.dist
                                             from mc.chunk_wanted w join mc.chunk ch on ch.dimension = w.dimension and ch.cx = w.cx and ch.cz = w.cz
-                                           where w.conn_id = n.conn_id and abs(n.view_cx - w.cx) <= r and abs(n.view_cz - w.cz) <= r
+                                           where w.conn_id = n.conn_id and abs(n.view_cx - w.cx) <= coalesce(n.view_r, r) and abs(n.view_cz - w.cz) <= coalesce(n.view_r, r)
                                            order by w.dist, w.cx, w.cz limit m) l) q) x
      where gcap is null or x.gr <= gcap;
     n := coalesce(cardinality(rc), 0);
