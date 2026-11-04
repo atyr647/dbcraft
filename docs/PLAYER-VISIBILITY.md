@@ -147,6 +147,12 @@ configuration is about +-5 ms on this machine.
 * The **locator bar** is not in these numbers: above `dbcraft.locator-bar-max-players` (120) it is switched off, and its cost at that size was not measured.  Below it, a pass runs only when somebody moved
   or a transmit state changed, and it is a row per pair of players.
 * The batched tick (`mc.server_tick_batched`) does not run the tracker.
+* **Update, docs/PERF-CAPACITY.md (2026-11-04):** the locator bar's cost at 50 to 120 players was measured there: with everybody walking it is about half of the tick (50 walkers 16-23 ms of 34-47, 100 walkers
+  about 50-60 ms of 79, 120 walkers 62 ms; 121 players, bar off, 26 ms): the pass looks at every pair of players every tick.  Its two N x N intermediate sets are no longer materialized (100 walkers 79 -> 48-58 ms); skipping
+  pairs that cannot change is not done.  `mc.refresh_visibility_vis` finds the pairs of a dirty player by index probes (`mc.refresh_visibility_vis_scan` is the old scan, kept for `tests/sql/981`), the new pairs are
+  probed before they are inserted, and the pairing bundle of a player that wears nothing uses a memo of its attribute entries (`sql/981`).  The e2e comparison (`tests/e2e/vis.sh`, recorded fresh with this tree's
+  vanilla jar on 2026-11-04 because no recording existed) shows the same differing steps in the tree before and after this work: join identical; the armor-modifier order inside one attribute, the order of a `/tp`'s forget
+  packets and a jump's movement sync (listed above as not verified) differ; the tree before also differed in the adventure step of `pose`.
 
 To repeat: build the database (`tools/migrate.sh`, the loaders as `tests/sql/prun.sh` does), `tests/bench/game/bench.sql` for the helper functions, then per repetition and per setting of
 `dbcraft.vanilla-tracker` run `bench.setup(500, 100)`, `vacuum full mc.play_in_work, mc.play_out, mc.play_in, mc.player`, and 120 times `select bench.gen(F); select mc.tick(); select bench.drain();` in ONE

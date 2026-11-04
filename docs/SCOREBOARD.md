@@ -154,6 +154,30 @@ RCON for the whole run; but nobody was disconnected and nobody was dropped.  Sev
 5. **Edits with a viewer in range.**  A single `setblock` is 2.66 ms for vanilla and **3.90 ms** for dbcraft's `mc.set_block` through psql (vanilla 1.5 times better with nobody in range, 1.2 times with a viewer; not the dynamics engine: it is 4.2 ms with dynamics off).  With a viewer a 1,000-block fill costs the **tick 79.9 [59.7-90.3] ms against vanilla's 19.4 [12.8-27.8]**
    (vanilla 4.1 times better; with dynamics off 4.7 ms: it is the dynamics engine processing the fill), and a 100,000-block fill 297 [290-391] ms against 352 [345-429] ms: a TIE (with dynamics off: 6.5 ms).  The single-edit tick cost with a viewer (17 ms mean, 3-35) is dominated by the 4-tick random-tick pattern (1.4 ms with dynamics off).
 
+## Update 2026-11-04 (evening): moving-player capacity after the capacity track
+
+Not part of the campaign above (the campaign's rows and ratios stand as measured on a quiet machine on commit `f205b34`).  Measured afterwards on the same harness (`tools/scoreboard/run.py pop`, the same scripted
+clients and settings, Rust gateway, survival / tracker / dynamics / containers on) with the SQL tick's on-CPU time added to the report; **the machine was shared with other agents (load average 1-8, each run says
+which), so only the alternating A/B pairs of [PERF-CAPACITY.md](PERF-CAPACITY.md) are a comparison, and vanilla was NOT re-run**: the vanilla column is the campaign's.  A = the tree before (the feature branch at
+`0180959`, which already contains the other tracks' fixes), B = this tree; dbcraft only; dated 2026-11-04.
+
+| Scenario | metric | campaign dbcraft | A (before, 2026-11-04) | **B (after, 2026-11-04)** | vanilla (campaign) |
+|---|---|---|---|---|---|
+| 50 players all walking | tick mean (ms) | 51.3 | 34.4 / 36.0 | **31.0 / 30.8** | 61.6 |
+| 50 players all walking | chat p50 (ms) | 88.5 | 40 / 40 | **43 / 41** | 51.1 |
+| 200 players all walking | tick mean (ms) | 98.7 | 66.9 (load 2) / 152.5 (load 5) | **63.5 / 58.1** (load 2-6; dynamics off, quiet: 41.5) | 81.5 |
+| 200 players all walking | tick CPU (ms, new column) | n/a | 74.7 / 138.9 | **58.3 / 54.0** | n/a |
+| 200 players all walking | chat p50 (ms) | 185 | 47 / 150 | **91 / 63** | 10,000 (no reply) |
+| 500 players over 100 x 100 chunks, all moving | tick mean (ms) | 279 | 558 / 631 | **155 / 209** (load 4-5); **131 / 143 / 138** (quiet) | not run |
+| 500 players over 100 x 100 chunks, all moving | tick CPU (ms) | n/a | 539 / 501 | **162 / 176**; **141 / 155 / 150** (quiet; dynamics off: 132) | n/a |
+| 500 players over 100 x 100 chunks, all moving | clients dropped (of 500) | 82 [70-141] | 0 / 34 | **0** (6 runs of the fixed version, 2 of the first) | n/a |
+| 500 players in 30 x 30 chunks, all moving | tick mean (ms) | 446 [301-750] (with 103-240 dropped) | 1,317 | **884 / 778** | 135 |
+| 500 players in 30 x 30 chunks, all moving | clients dropped (of 500) | 168 [103-240] | 0 | **0** (one run of the first version: 5) | 0 |
+
+Read with care: with all 500 clients in (the campaign's runs had lost 100-240 of them before the window) the crowded tick is *worse* than the campaign's 446 ms in the tree before (1,317 ms) and still 6 times
+vanilla's 135 ms after; the 200-player result is below the 70 ms target and 1.3 times better than vanilla's campaign mean (81.5) on a quieter machine than the campaign's, on a shared one 1.4 times; 500 sparse
+misses the 100 ms CPU target by 40-55 %.
+
 ## Where it wins
 
 * **Memory: 7-8 times less** (118 MiB empty, 209-229 MiB with 50-500 players, against vanilla's 995 / 1,400-1,800 MiB; vanilla's figure is partly its 1 GB initial heap).

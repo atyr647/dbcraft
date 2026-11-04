@@ -45,6 +45,10 @@ struct Conn {
     last_read: Instant,
     last_frame: Instant,
     last_write: Instant,
+    /// when the socket was accepted, and what it has sent since: only for the log line of a timeout (docs/PERF-CAPACITY.md: which clients go silent, and where in the login they stood)
+    born: Instant,
+    bytes_in: u64,
+    frames_in: u64,
 }
 
 #[derive(Default, Clone)]
@@ -68,6 +72,8 @@ struct Stats {
     chat_blocked: u64,
     chat_behind_command: u64,
     chat_not_play: u64,
+    /// position frames merged into the last one of their connection and tick (coalesce_positions)
+    moves_coalesced: u64,
 }
 
 /// Packet ids (serverbound, play) the urgent chat lane needs to classify a frame without parsing it.
@@ -78,6 +84,8 @@ struct UrgentIds {
     tick_end: u32,
     pos: u32,
     pos_rot: u32,
+    /// the other movement kinds (rotation only, status only): a connection that sent one is left alone by `coalesce_positions`
+    move_other: Vec<u32>,
     /// frames that may stand ahead of a chat frame of the same connection without making it wait (sorted): client_tick_end, the movement packets and, from the database
     /// (net.urgent_neutral_play_ids, sql/971), every other kind whose handling cannot change what a chat does or sends (docs/PERF-IDLE2.md, "Chat from real clients")
     neutral: Vec<u32>,
@@ -115,6 +123,105 @@ fn drop_idle_tick_ends(frames: &mut Vec<(u64, Vec<u8>)>, ids: &UrgentIds, is_pla
         }
     }
     frames.retain(|(cid, p)| !(frame_pid(p) == Some(tick_end) && positions.get(cid).copied().unwrap_or(0) < 2 && is_play(*cid)));
+}
+
+/// Does this big-endian IEEE double (the 8 bytes) hold a finite number?  (The database kicks a player for NaN or infinite movement: such a frame must reach it.)
+fn finite_f64(b: &[u8]) -> bool {
+    !(b[0] & 0x7f == 0x7f && b[1] & 0xf0 == 0xf0)
+}
+
+fn finite_f32(b: &[u8]) -> bool {
+    !(b[0] & 0x7f == 0x7f && b[1] & 0x80 != 0)
+}
+
+/// A frame of kind `pos` (x, y, z, flags: 25 bytes after the id) or `pos_rot` (x, y, z, yaw, pitch, flags: 33 bytes) with every number finite, and nothing else in it?
+fn finite_position_frame(p: &[u8], pid: u32, ids: &UrgentIds) -> bool {
+    let id_len = if pid < 0x80 { 1 } else if pid < 0x4000 { 2 } else { 3 };
+    let body = &p[id_len.min(p.len())..];
+    if pid == ids.pos {
+        body.len() == 25 && finite_f64(&body[0..8]) && finite_f64(&body[8..16]) && finite_f64(&body[16..24])
+    } else {
+        body.len() == 33 && finite_f64(&body[0..8]) && finite_f64(&body[8..16]) && finite_f64(&body[16..24]) && finite_f32(&body[24..28]) && finite_f32(&body[28..32])
+    }
+}
+
+/// Several position packets of one play connection in one tick, each pair separated by a client_tick_end (what a client sends that runs ahead of a slow tick: one position and one
+/// tick end per client tick of 50 ms), reach the database as the LAST position packet only.  Why that is the same: the database applies the last position of a connection and the
+/// flags of the last packet (sql/431 mc.apply_player_moves: "last position per connection"), the earlier ones can only matter through the two rules that kick -- a length that is
+/// not 25 / 33 bytes, a NaN or infinite number, two position packets without a client_tick_end between them -- and a connection is only touched when none of them can fire:
+///   * every movement-class frame of the connection in this tick is a position packet of ONE kind (pos or pos_rot, same length rule as the database's) or a client_tick_end,
+///   * the position packets are exact in length and finite,
+///   * no two position packets are adjacent among the connection's position and tick-end frames (a client_tick_end separates every pair).
+/// Anything else (rotation-only or status-only frames, mixed kinds, a violation, a malformed frame) is left as it is for the database to judge.  The tick_end frames that stay behind
+/// are dropped by `drop_idle_tick_ends` (fewer than two positions now).  Returns how many frames were removed.  docs/PERF-CAPACITY.md has the measurements (the per-packet work of
+/// the database, 5.5 us per packet, is what a lagging tick multiplies); tests/sql/982 proves the equality on the database side.
+fn coalesce_positions(frames: &mut Vec<(u64, Vec<u8>)>, ids: &UrgentIds, is_play: &dyn Fn(u64) -> bool) -> usize {
+    let mut per_conn: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut multi = false;
+    {
+        let mut count: HashMap<u64, u32> = HashMap::new();
+        for (i, (cid, p)) in frames.iter().enumerate() {
+            match frame_pid(p) {
+                Some(pid) if pid == ids.pos || pid == ids.pos_rot || pid == ids.tick_end => {
+                    per_conn.entry(*cid).or_default().push(i);
+                    if pid != ids.tick_end {
+                        let c = count.entry(*cid).or_insert(0);
+                        *c += 1;
+                        multi |= *c >= 2;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if !multi {
+        return 0;
+    }
+    // the connections that also sent a movement frame of another kind (rotation, status) are not touched
+    let mut other: HashSet<u64> = HashSet::new();
+    for (cid, p) in frames.iter() {
+        if let Some(pid) = frame_pid(p) {
+            if pid != ids.pos && pid != ids.pos_rot && pid != ids.tick_end && ids.move_other.contains(&pid) {
+                other.insert(*cid);
+            }
+        }
+    }
+    let mut remove: HashSet<usize> = HashSet::new();
+    for (cid, idx) in per_conn.iter() {
+        let positions: Vec<usize> = idx.iter().copied().filter(|&i| frame_pid(&frames[i].1) != Some(ids.tick_end)).collect();
+        if positions.len() < 2 || other.contains(cid) || !is_play(*cid) {
+            continue;
+        }
+        let kind = frame_pid(&frames[positions[0]].1).unwrap_or(0);
+        let mut ok = true;
+        let mut prev_pos = false;
+        for &i in idx.iter() {
+            let pid = frame_pid(&frames[i].1).unwrap_or(0);
+            if pid == ids.tick_end {
+                prev_pos = false;
+            } else {
+                if pid != kind || prev_pos || !finite_position_frame(&frames[i].1, pid, ids) {
+                    ok = false;
+                    break;
+                }
+                prev_pos = true;
+            }
+        }
+        if ok {
+            remove.extend(positions[..positions.len() - 1].iter().copied());
+        }
+    }
+    if remove.is_empty() {
+        return 0;
+    }
+    let n = remove.len();
+    let mut i = 0usize;
+    frames.retain(|_| {
+        let keep = !remove.contains(&i);
+        i += 1;
+        keep
+    });
+    n
 }
 
 /// Which frames of `frames` (in arrival order) may be handled urgently: chat frames of play connections such that no frame ahead of them (any connection) is a command and no
@@ -348,7 +455,7 @@ impl Gateway {
                         neutral.extend(extra.iter().copied().filter(|p| *p != chat && *p != c1 && *p != c2));
                         neutral.sort_unstable();
                         neutral.dedup();
-                        Some(UrgentIds { chat, cmd: [c1, c2], tick_end: n1, pos: n2, pos_rot: n3, neutral })
+                        Some(UrgentIds { chat, cmd: [c1, c2], tick_end: n1, pos: n2, pos_rot: n3, move_other: vec![n4, n5], neutral })
                     }
                     _ => None,
                 }
@@ -515,7 +622,7 @@ impl Gateway {
                     let reader = Reader::new(ReaderLimits { prelogin_max_frame: self.cfg.prelogin_max_frame, prelogin_max_bytes: self.cfg.prelogin_max_bytes });
                     self.conns.insert(
                         id,
-                        Conn { stream, ip, reader, enc: None, wq: WriteQueue::new(), closing: false, want_out: false, last_read: now, last_frame: now, last_write: now },
+                        Conn { stream, ip, reader, enc: None, wq: WriteQueue::new(), closing: false, want_out: false, last_read: now, last_frame: now, last_write: now, born: now, bytes_in: 0, frames_in: 0 },
                     );
                     self.accepted.push((id, ip.to_string()));
                 }
@@ -557,6 +664,7 @@ impl Gateway {
                     }
                     Ok(n) => {
                         c.last_read = Instant::now();
+                        c.bytes_in += n as u64;
                         n
                     }
                     Err(e) if e.kind() == ErrorKind::WouldBlock => break,
@@ -595,6 +703,7 @@ impl Gateway {
                 Some(Item::Frame(payload)) => {
                     if let Some(c) = self.conns.get_mut(&id) {
                         c.last_frame = Instant::now();
+                        c.frames_in += 1;
                     }
                     self.stats.frames_in += 1;
                     if let Some(u) = &self.urgent {
@@ -720,18 +829,29 @@ impl Gateway {
     fn sweep_timeouts(&mut self) {
         let now = Instant::now();
         let limit = Duration::from_secs(self.cfg.read_timeout_s);
-        let mut dead: Vec<(u64, &'static str)> = Vec::new();
+        let mut dead: Vec<(u64, String)> = Vec::new();
         for (id, c) in self.conns.iter() {
+            let ctx = || {
+                format!(
+                    "{} s after connecting, {} bytes and {} frames read in all, last byte {} s ago, in play: {}, {} bytes queued to it",
+                    now.duration_since(c.born).as_secs(),
+                    c.bytes_in,
+                    c.frames_in,
+                    now.duration_since(c.last_read).as_secs(),
+                    c.reader.in_play(),
+                    c.wq.pending()
+                )
+            };
             if now.duration_since(c.last_read) > limit {
-                dead.push((*id, "read timeout (no bytes)"));
+                dead.push((*id, format!("read timeout (no bytes; {})", ctx())));
             } else if c.reader.buffered() > 0 && now.duration_since(c.last_frame) > limit {
-                dead.push((*id, "read timeout (a frame never completed)"));
+                dead.push((*id, format!("read timeout (a frame never completed; {})", ctx())));
             } else if !c.wq.is_empty() && now.duration_since(c.last_write) > limit {
-                dead.push((*id, "write timeout"));
+                dead.push((*id, format!("write timeout ({})", ctx())));
             }
         }
         for (id, why) in dead {
-            self.drop_conn(id, true, why);
+            self.drop_conn(id, true, &why);
         }
     }
 
@@ -755,6 +875,12 @@ impl Gateway {
             }
         }
         self.urgent_seen_chat = false;
+        if self.cfg.coalesce_moves {
+            if let Some(ids) = &self.urgent {
+                let conns = &self.conns;
+                self.stats.moves_coalesced += coalesce_positions(&mut inbound, ids, &|cid| conns.get(&cid).map_or(false, |c| c.reader.in_play())) as u64;
+            }
+        }
         if self.cfg.skip_tick_end {
             if let Some(ids) = &self.urgent {
                 let conns = &self.conns;
@@ -1188,9 +1314,9 @@ impl Gateway {
         log(
             self.start,
             &format!(
-                "stopped ({} ticks, {} lean, {} late; urgent chat: {} runs took {} frames, {} chat frames went to the tick: {} takeable but late, {} behind another frame of their connection (packet id:count {}), {} behind a command, {} not in play; {} errors)",
+                "stopped ({} ticks, {} lean, {} late; urgent chat: {} runs took {} frames, {} chat frames went to the tick: {} takeable but late, {} behind another frame of their connection (packet id:count {}), {} behind a command, {} not in play; {} position frames merged into the last of their connection; {} errors)",
                 self.stats.ticks, self.stats.lean_ticks, self.stats.late, self.stats.urgent_runs, self.stats.urgent_frames, self.stats.chat_late + self.stats.chat_blocked + self.stats.chat_behind_command + self.stats.chat_not_play,
-                self.stats.chat_late, self.stats.chat_blocked, blockers.join(","), self.stats.chat_behind_command, self.stats.chat_not_play, self.stats.errors
+                self.stats.chat_late, self.stats.chat_blocked, blockers.join(","), self.stats.chat_behind_command, self.stats.chat_not_play, self.stats.moves_coalesced, self.stats.errors
             ),
         );
     }
@@ -1201,7 +1327,7 @@ mod tests {
     use super::*;
 
     fn ids() -> UrgentIds {
-        UrgentIds { chat: 7, cmd: [6, 5], tick_end: 12, pos: 30, pos_rot: 31, neutral: vec![12, 28, 29, 30, 31, 43, 46] }
+        UrgentIds { chat: 7, cmd: [6, 5], tick_end: 12, pos: 30, pos_rot: 31, move_other: vec![28, 29], neutral: vec![12, 28, 29, 30, 31, 43, 46] }
     }
 
     fn f(conn: u64, pid: u8) -> (u64, Vec<u8>) {
@@ -1228,6 +1354,108 @@ mod tests {
         let kept: Vec<(u64, u8)> = frames.iter().map(|(c, p)| (*c, p[0])).collect();
         // connection 1: only a tick_end: dropped; 2: one position: its tick_end dropped; 3: two positions: kept; 4 is not in play: kept; chat untouched
         assert_eq!(kept, vec![(2, 30), (3, 30), (3, 31), (3, 12), (4, 12), (5, 7)]);
+    }
+
+    /// a move_player_pos frame (id 30) at x
+    fn pos(conn: u64, x: f64) -> (u64, Vec<u8>) {
+        let mut v = vec![30u8];
+        for c in [x, 70.0, 5.0] {
+            v.extend_from_slice(&c.to_be_bytes());
+        }
+        v.push(1);
+        (conn, v)
+    }
+
+    /// a move_player_pos_rot frame (id 31)
+    fn pos_rot(conn: u64, x: f64, yaw: f32) -> (u64, Vec<u8>) {
+        let mut v = vec![31u8];
+        for c in [x, 70.0, 5.0] {
+            v.extend_from_slice(&c.to_be_bytes());
+        }
+        v.extend_from_slice(&yaw.to_be_bytes());
+        v.extend_from_slice(&0f32.to_be_bytes());
+        v.push(1);
+        (conn, v)
+    }
+
+    fn te(conn: u64) -> (u64, Vec<u8>) {
+        (conn, vec![12])
+    }
+
+    fn xs(frames: &[(u64, Vec<u8>)]) -> Vec<(u64, u8, f64)> {
+        frames.iter().map(|(c, p)| (*c, p[0], if p.len() >= 9 && (p[0] == 30 || p[0] == 31) { f64::from_be_bytes(p[1..9].try_into().unwrap()) } else { 0.0 })).collect()
+    }
+
+    #[test]
+    fn position_pairs_of_one_tick_become_the_last_position() {
+        // a client that runs ahead of a slow tick: (position, tick end) three times; another connection and a chat in between are untouched
+        let mut frames = vec![pos(1, 1.0), te(1), pos(2, 9.0), pos(1, 2.0), te(1), (1, vec![7, 1]), pos(1, 3.0), te(1), te(2)];
+        let n = coalesce_positions(&mut frames, &ids(), &play);
+        assert_eq!(n, 2);
+        assert_eq!(xs(&frames), vec![(1, 12, 0.0), (2, 30, 9.0), (1, 12, 0.0), (1, 7, 0.0), (1, 30, 3.0), (1, 12, 0.0), (2, 12, 0.0)]);
+        // the tick ends that stay behind are dropped by the filter that follows (one position left)
+        drop_idle_tick_ends(&mut frames, &ids(), &play);
+        assert_eq!(xs(&frames), vec![(2, 30, 9.0), (1, 7, 0.0), (1, 30, 3.0)]);
+    }
+
+    #[test]
+    fn a_tick_end_may_come_first_and_pos_rot_pairs_are_merged_too() {
+        let mut frames = vec![te(1), pos_rot(1, 1.0, 10.0), te(1), pos_rot(1, 2.0, 20.0)];
+        assert_eq!(coalesce_positions(&mut frames, &ids(), &play), 1);
+        assert_eq!(xs(&frames), vec![(1, 12, 0.0), (1, 12, 0.0), (1, 31, 2.0)]);
+    }
+
+    #[test]
+    fn what_the_database_would_judge_is_left_alone() {
+        // two positions without a client_tick_end between them: the database kicks the player
+        let violation = vec![pos(1, 1.0), pos(1, 2.0), te(1), pos(1, 3.0)];
+        // a NaN, an infinity, a NaN yaw, a length that is not 25 / 33
+        let mut nan = pos(1, 1.0);
+        nan.1[1..9].copy_from_slice(&f64::NAN.to_be_bytes());
+        let mut inf = pos(1, 1.0);
+        inf.1[9..17].copy_from_slice(&f64::NEG_INFINITY.to_be_bytes());
+        let mut short = pos(1, 1.0);
+        short.1.pop();
+        let nan_yaw = pos_rot(1, 1.0, f32::NAN);
+        let cases: Vec<Vec<(u64, Vec<u8>)>> = vec![
+            violation,
+            vec![nan, te(1), pos(1, 2.0)],
+            vec![pos(1, 0.5), te(1), inf],
+            vec![short, te(1), pos(1, 2.0)],
+            vec![nan_yaw, te(1), pos_rot(1, 2.0, 0.0)],
+            vec![pos(1, 1.0), te(1), pos_rot(1, 2.0, 0.0)],                 // two kinds
+            vec![pos(1, 1.0), te(1), (1, vec![28, 0, 0, 0, 0, 0, 0, 0, 0]), pos(1, 2.0)],   // a rotation-only frame
+            vec![pos(1, 1.0), te(1), (1, vec![29, 1]), pos(1, 2.0)],           // a status-only frame
+        ];
+        for frames in cases {
+            let before = frames.clone();
+            let mut f2 = frames;
+            assert_eq!(coalesce_positions(&mut f2, &ids(), &play), 0);
+            assert_eq!(f2, before);
+        }
+        // not in play: untouched
+        let mut frames = vec![pos(1, 1.0), te(1), pos(1, 2.0)];
+        let before = frames.clone();
+        assert_eq!(coalesce_positions(&mut frames, &ids(), &|_| false), 0);
+        assert_eq!(frames, before);
+        // a single position: nothing to do
+        let mut frames = vec![pos(1, 1.0), te(1)];
+        assert_eq!(coalesce_positions(&mut frames, &ids(), &play), 0);
+        // one connection that must stay as it is does not stop another from being merged
+        let mut frames = vec![pos(1, 1.0), pos(1, 2.0), pos(2, 1.0), te(2), pos(2, 2.0)];
+        assert_eq!(coalesce_positions(&mut frames, &ids(), &play), 1);
+        assert_eq!(xs(&frames), vec![(1, 30, 1.0), (1, 30, 2.0), (2, 12, 0.0), (2, 30, 2.0)]);
+    }
+
+    #[test]
+    fn finite_checks_follow_the_exponent_bits() {
+        assert!(finite_f64(&1.5f64.to_be_bytes()) && finite_f64(&f64::MAX.to_be_bytes()) && finite_f64(&(-0.0f64).to_be_bytes()) && finite_f64(&f64::MIN_POSITIVE.to_be_bytes()));
+        assert!(!finite_f64(&f64::NAN.to_be_bytes()) && !finite_f64(&f64::INFINITY.to_be_bytes()) && !finite_f64(&f64::NEG_INFINITY.to_be_bytes()) && !finite_f64(&(-f64::NAN).to_be_bytes()));
+        assert!(finite_f32(&1.5f32.to_be_bytes()) && finite_f32(&f32::MAX.to_be_bytes()) && finite_f32(&(-0.0f32).to_be_bytes()));
+        assert!(!finite_f32(&f32::NAN.to_be_bytes()) && !finite_f32(&f32::INFINITY.to_be_bytes()) && !finite_f32(&f32::NEG_INFINITY.to_be_bytes()));
+        // the NaN with other payload bits, quiet and signalling
+        assert!(!finite_f64(&0x7ff0_0000_0000_0001u64.to_be_bytes()) && !finite_f64(&0xfff8_dead_beef_0000u64.to_be_bytes()));
+        assert!(!finite_f32(&0x7f80_0001u32.to_be_bytes()) && !finite_f32(&0xffc0_1234u32.to_be_bytes()));
     }
 
     #[test]

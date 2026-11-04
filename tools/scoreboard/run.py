@@ -196,9 +196,19 @@ class Dbcraft:
         g = self.gateway_pid()
         return tree_pss(self.pid) + (pss_mib(g) if g else 0.0)
 
+    def backend_cpu(self):
+        """On-CPU seconds (user + system) of every client backend of the cluster, by pid: the tick backend is the one that grows most (docs/PERF-CAPACITY.md: CPU time of the tick, which does not inflate when other jobs share the cores)."""
+        out = {}
+        for r in dbq("select pid from pg_stat_activity where backend_type = 'client backend' and pid <> pg_backend_pid()").splitlines():
+            if r.strip().isdigit():
+                out[int(r)] = C.proc_cpu(int(r))[0]
+        return out
+
     def window_begin(self):
         self.t0_tick = int(dbq("select coalesce(max(tick), 0) from mc.server_tick_log") or 0)
         self.t0 = time.time()
+        self.be0 = self.backend_cpu()
+        self.gw0 = C.proc_cpu(self.gateway_pid())[0] if self.gateway_pid() else 0.0
 
     def window_poll(self):
         pass
@@ -223,6 +233,16 @@ class Dbcraft:
                           for i in sorted(range(len(data)), key=lambda i: -data[i][0])[:10]]      # tick, total, process, game, blocks, chunks, drain, tick % 20, tick % 300
         for i, k in enumerate(["process", "game", "blocks", "chunks", "drain"], start=1):
             out["phase_" + k + "_mean"] = sum(r[i] for r in data) / len(data)
+        # CPU time per tick (docs/PERF-CAPACITY.md): the backend that used most CPU in the window is the tick connection; the gateway process is counted separately
+        try:
+            be1 = self.backend_cpu()
+            d = {p: be1[p] - self.be0.get(p, 0.0) for p in be1}
+            if d:
+                out["tick_cpu_ms"] = max(d.values()) * 1000.0 / len(data)
+            if self.gateway_pid():
+                out["gateway_cpu_ms"] = (C.proc_cpu(self.gateway_pid())[0] - self.gw0) * 1000.0 / len(data)
+        except Exception:
+            pass
         try:
             g = dbq("select last_tick_ms, max_tick_ms, late_ticks from net.gateway_control").split(",")
             out["gateway_last_ms"], out["gateway_max_ms"], out["gateway_late_ticks"] = float(g[0]), float(g[1]), int(g[2])
@@ -410,6 +430,8 @@ def scenario_pop(srv, a):
         srv.window_begin()
         c0, t0 = srv.cpu(), time.time()
         lg.go()
+        if os.environ.get("SCORE_PROFILE_CMD"):       # a profiler for the steady-state window (tools/scoreboard/capprof_live.sh): started here, runs beside the window, output is its own
+            subprocess.Popen(os.environ["SCORE_PROFILE_CMD"], shell=True, stdout=open(os.path.join(C.OUT, "profile.txt"), "w"), stderr=subprocess.STDOUT)
         end = t0 + a.hold
         while time.time() < end:
             srv.window_poll()
@@ -604,9 +626,10 @@ def main():
             with open(a.out, "a") as f:
                 f.write(json.dumps(rec) + "\n")
             r = rec.get("result", {})
-            print("%-8s %-16s n=%-4d mov=%.1f rep=%d  mspt mean=%s p99=%s cpu=%s rtt_p50=%s load=%.1f %s" % (
+            print("%-8s %-16s n=%-4d mov=%.1f rep=%d  mspt mean=%s p99=%s tickcpu=%s gwcpu=%s cpu=%s rtt_p50=%s failed=%s inplay=%s load=%.1f %s" % (
                 a.scenario, rec["server"], a.n, a.moving, rep, "%.2f" % r["mspt_mean"] if "mspt_mean" in r else "-", "%.2f" % r["mspt_p99"] if "mspt_p99" in r else "-",
-                "%.2f" % r["cpu_cores"] if "cpu_cores" in r else "-", "%.0f" % r["rtt_p50"] if "rtt_p50" in r else "-", snap0["load1"], rec.get("error", "")), flush=True)
+                "%.1f" % r["tick_cpu_ms"] if "tick_cpu_ms" in r else "-", "%.1f" % r["gateway_cpu_ms"] if "gateway_cpu_ms" in r else "-",
+                "%.2f" % r["cpu_cores"] if "cpu_cores" in r else "-", "%.0f" % r["rtt_p50"] if "rtt_p50" in r else "-", r.get("failed", "-"), r.get("in_play", "-"), snap0["load1"], rec.get("error", "")), flush=True)
 
 
 if __name__ == "__main__":

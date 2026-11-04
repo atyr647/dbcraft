@@ -38,6 +38,8 @@ pub struct Config {
     /// client_tick_end frames of a play connection that sent fewer than two position packets in the tick are not given to the database (they cannot change anything there:
     /// they only separate two position packets of one tick, see sql/800); an idle server then has an empty inbound queue and its ticks run lean
     pub skip_tick_end: bool,
+    /// several position packets of a play connection in one tick, each pair separated by a client_tick_end, are given to the database as the last one only (docs/PERF-CAPACITY.md: `coalesce_positions`); false = every frame is passed on
+    pub coalesce_moves: bool,
     /// milliseconds that must remain before the next tick, on top of the measured cost of the last urgent run, for an urgent run to start
     pub urgent_reserve_ms: u64,
     /// at most this many urgent runs between two ticks (a chat flood must not starve the tick)
@@ -98,6 +100,7 @@ impl Default for Config {
             lean_ticks: true,
             urgent_chat: true,
             skip_tick_end: true,
+            coalesce_moves: true,
             urgent_reserve_ms: 4,
             urgent_max_per_tick: 4,
             generators: 0,
@@ -161,6 +164,7 @@ impl Config {
                 "lean_ticks" => num!(lean_ticks, k, v),
                 "urgent_chat" => num!(urgent_chat, k, v),
                 "skip_tick_end" => num!(skip_tick_end, k, v),
+                "coalesce_moves" => num!(coalesce_moves, k, v),
                 "urgent_reserve_ms" => num!(urgent_reserve_ms, k, v),
                 "urgent_max_per_tick" => num!(urgent_max_per_tick, k, v),
                 "generators" => num!(generators, k, v),
@@ -215,7 +219,7 @@ impl Config {
         for key in [
             "database_url", "listen", "tick_ms", "tick_fn", "max_connections", "max_connections_per_ip", "new_connections_per_ip_per_sec", "login_attempts_per_ip_per_min",
             "read_timeout_s", "max_pending_bytes", "prelogin_max_frame", "prelogin_max_bytes", "session_url", "session_timeout_ms", "session_workers", "session_retries",
-            "rsa_bits", "inbox_mode", "maintenance_s", "maintenance_tables", "lean_ticks", "urgent_chat", "skip_tick_end", "urgent_reserve_ms", "urgent_max_per_tick",
+            "rsa_bits", "inbox_mode", "maintenance_s", "maintenance_tables", "lean_ticks", "urgent_chat", "skip_tick_end", "coalesce_moves", "urgent_reserve_ms", "urgent_max_per_tick",
             "generators", "generator_batch", "generator_exit_idle_ms", "tick_log",
         ] {
             if let Some(v) = env(&format!("DBCRAFT_GW_{}", key.to_ascii_uppercase())) {
@@ -245,7 +249,7 @@ mod tests {
     #[test]
     fn idle_and_urgent_settings() {
         let c = Config::load(None, &no_env).unwrap();
-        assert!(c.lean_ticks && c.urgent_chat && c.skip_tick_end);
+        assert!(c.lean_ticks && c.urgent_chat && c.skip_tick_end && c.coalesce_moves);
         let env = |k: &str| match k {
             "DBCRAFT_GW_URGENT_CHAT" => Some("false".to_string()),
             "DBCRAFT_GW_LEAN_TICKS" => Some("false".to_string()),

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Environment of the capacity work (docs/PERF-CAPACITY.md): like cenv, but every path and port is taken from CAP_DIR (default /dev/shm/cap) and CAP_PORT (default 56211; gateway +1, vanilla +2, rcon +3).
+#   usage: tools/scoreboard/cenv_capacity COMMAND ARGS...
+CAP_DIR=${CAP_DIR:-/dev/shm/cap}; CAP_PORT=${CAP_PORT:-56211}
+export SCORE_OUT=$CAP_DIR/out SCORE_PGDATA=$CAP_DIR/pg SCORE_PGPORT=$CAP_PORT SCORE_GW_PORT=$((CAP_PORT+1)) SCORE_VANILLA_PORT=$((CAP_PORT+2)) SCORE_RCON_PORT=$((CAP_PORT+3))
+export SCORE_VANILLA_DIR=$CAP_DIR/vanilla SCORE_GATEWAY=rust DBCRAFT_REPORTS=${DBCRAFT_REPORTS:-$HOME/.cache/dbcraft/reports} DBCRAFT_PGDATA=$CAP_DIR/pg DBCRAFT_PGPORT=$CAP_PORT
+export SCORE_JAR=${SCORE_JAR:-$HOME/.cache/dbcraft/server-26.3.jar} PGHOST=/tmp PGPORT=$CAP_PORT PGUSER=postgres
+cd "$(dirname "$0")/../.."
+exec "$@"

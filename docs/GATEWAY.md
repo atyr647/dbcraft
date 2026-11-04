@@ -42,6 +42,14 @@ Per tick (drift-free 20 Hz schedule, period from `net.setting.tick_ms`), all eve
 * the **urgent chat lane**: when a serverbound `chat` frame of a play connection arrives and the next tick is far enough away, the gateway calls `net.urgent_chat(conns, payloads)` and `net.drain_outbox()` in one transaction at once.  The tick's own handling of chat (`mc.apply_chat`, the same drain) is what runs, so the bytes are identical; commands and
   chat behind a command, or behind another kind of frame of the same connection, are not taken and wait for the tick, which keeps vanilla's arrival order.
 
+**Position frames that pile up** (`coalesce_moves`, default on; `docs/PERF-CAPACITY.md`).  A client sends one position packet and one `client_tick_end` every 50 ms whatever the server does, so a
+tick that takes 100 ms is handed two pairs per walking client, and one that takes 800 ms sixteen.  Several position packets of one play connection in one tick, each two of them separated by a
+`client_tick_end`, are given to the database as the last one only (`coalesce_positions`): the database applies the last position and the flags of the last packet of a connection anyway, and the
+only things an earlier one can do are the three kicks (a length other than 25 or 33 bytes, a NaN or infinite number, two positions in a row), so a connection is touched only when none of them
+can fire (every number finite by its exponent bits, exact lengths, one kind of position packet, no rotation-only or status-only frame, a `client_tick_end` between every two positions) and is
+left to the database otherwise.  `tests/sql/982` proves on the database side that `[P1 TE P2 TE P3]`, `[TE TE P3]` and `[P3]` leave the same rows, the same output bytes and the same kicks,
+with the vanilla tracker and with the classic broadcast; the gateway's unit tests cover the selection.  The stop line of the log counts the merged frames.
+
 After the commit: the drained bytes are queued to each socket's writer (encrypted there when the connection is), `close` rows close the socket after its last bytes, control rows
 are applied.  If the transaction fails it is rolled back and that tick's inbound frames are dropped (a poison frame must not stall the server forever); `net.gateway_stats.errors` counts it.
 
@@ -112,6 +120,10 @@ gateway asks the session server **exactly once** per login (tested: the stub cou
 * Inbound: the length prefix is a VarInt of at most 3 bytes (value at most 2,097,151); an overlong form, a length of 0, or a length above the connection's limit closes the
   connection (the corpus of adacraft agrees: `tests/corpus`, checked in `gateway/core/tests/corpus.rs`).  Before the play state the limit is `prelogin_max_frame` (32 KiB) and the
   total bytes read are capped at `prelogin_max_bytes`.  A socket with no complete frame for 30 s is closed (vanilla's read timeout; it covers both idle and stalled-mid-frame).
+  The log line of such a close now says how old the connection was, how many bytes and frames it had sent, and whether it was in play (docs/PERF-CAPACITY.md, "The dropped clients": the
+  500-player drops were joiners held in the configuration state for more than 30 s, which the database now keeps alive with the configuration keep-alive of sql/980).
+  The gateway is one thread: it reads every socket once per loop pass, before each tick, and writes after it, so a tick of 800 ms delays a client's bytes by at most 800 ms and loses none;
+  nothing in the gateway can make a client that sends bytes look silent for 30 s.
 * With compression on: `[VarInt data length][zlib data | raw]`; a data length below the threshold or above 8,388,608 is an error, and the inflated size must match exactly.  The
   std-only inflater enforces the output limit while decoding (a 10 MB bomb announced as 300 bytes stops at 301; tested).
 * Outbound framing and compression are the database's (`net.frame`, `net.deflate_frame`).

@@ -53,6 +53,8 @@ begin
     if net.trim_queue('net.outbox', lim) then n := n + 1; end if;
     if net.trim_queue('net.inbox', lim) then n := n + 1; end if;
     if net.trim_queue('mc.play_in', lim) then n := n + 1; end if;                              -- filled and consumed inside one tick: empty here too
+    if net.trim_queue('mc.chunk_wanted', lim) then n := n + 1; end if;                         -- (docs/PERF-CAPACITY.md) walkers want 23 chunks per chunk border and are sent them in the same tick: rows
+                                                                                               -- come and go, the indexes (13 MB for an empty table after a minute) are only reclaimed by a vacuum
     return n;
 end $$;
 

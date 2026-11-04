@@ -75,8 +75,13 @@ begin
      where gcap is null or x.gr <= gcap;
     n := coalesce(cardinality(rc), 0);
     if n = 0 then return 0; end if;
-    delete from mc.chunk_wanted w using unnest(rc, rd, rx, rz) as d(conn_id, dimension, cx, cz)
-     where w.conn_id = d.conn_id and w.dimension = d.dimension and w.cx = d.cx and w.cz = d.cz;
+    -- (docs/PERF-CAPACITY.md) the rows are found by primary key, one probe per row, and deleted by tuple id.  As a plain DELETE ... USING the planner, which believes this churned queue
+    -- table holds one row (its statistics say 0 after every vacuum), scanned the whole of the primary key index once and rescanned the unnest list for each entry: 1,527 buffer hits
+    -- and 8.7 ms for 63 rows, 47 us a row, in a tick with 200 walkers
+    delete from mc.chunk_wanted w
+     where w.ctid = any (array(select x.tid from unnest(rc, rd, rx, rz) as d(conn_id, dimension, cx, cz)
+                                 cross join lateral (select w2.ctid as tid from mc.chunk_wanted w2
+                                                      where w2.conn_id = d.conn_id and w2.dimension = d.dimension and w2.cx = d.cx and w2.cz = d.cz) x));
     insert into mc.play_out (conn_id, data) select distinct d.conn_id, proto.frame(i_bs, '\x') from unnest(rc) as d(conn_id);
     insert into mc.play_out (conn_id, data)
     select d.conn_id, coalesce(k.packet, mc.chunk_packet(d.dimension, d.cx, d.cz))
