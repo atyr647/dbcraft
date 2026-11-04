@@ -1,0 +1,226 @@
+# Raw output behind docs/PERF-WORLD2.md (machine load average 8 to 26 during all of it; see the document before quoting any absolute time)
+
+## ab_world2.sql, rounds=5 (fill and tick CPU ms per call, new against head), load 8-10
+ generate_flat_area 
+Output format is aligned.
+               scenario                | impl |           fill ms            |           bcast ms           |   sum    
+---------------------------------------+------+------------------------------+------------------------------+----------
+ 1 block (setblock)                    | new  |        2.541 (1.249 - 4.682) |        1.335 (0.941 - 2.451) |    3.504
+ 1 block (setblock)                    | head |        2.744 (1.451 - 6.224) |        1.357 (1.020 - 2.150) |    3.764
+ 10 blocks (10x1x1)                    | new  |     16.829 (15.795 - 23.162) |        3.581 (1.321 - 5.436) |   20.205
+ 10 blocks (10x1x1)                    | head |     18.188 (14.100 - 22.839) |        3.214 (2.644 - 7.517) |   20.878
+ 48 blocks (4x4x3, the per-block path) | new  |     35.147 (31.760 - 47.621) |       3.224 (0.977 - 10.420) |   43.086
+ 48 blocks (4x4x3, the per-block path) | head |     34.781 (30.851 - 44.452) |       3.601 (-0.135 - 6.337) |   38.381
+ 1,000 blocks (10x10x10)               | new  |     16.694 (14.082 - 18.435) |       1.718 (-3.199 - 2.522) |   18.126
+ 1,000 blocks (10x10x10)               | head |      14.262 (8.782 - 18.028) |        6.744 (4.156 - 9.449) |   21.504
+ one whole section (16x16x16)          | new  |      11.083 (7.899 - 11.720) |       0.953 (-1.728 - 2.313) |   10.212
+ one whole section (16x16x16)          | head |        8.993 (7.701 - 9.530) |        4.088 (2.796 - 6.423) |   13.035
+ 64 whole sections                     | new  |     62.048 (57.720 - 68.124) |       4.920 (1.487 - 14.969) |   71.624
+ 64 whole sections                     | head |     51.502 (45.213 - 62.443) |  178.915 (163.137 - 204.332) |  229.825
+ 100,000 blocks (50x40x50, scoreboard) | new  |   103.019 (97.904 - 108.482) |      9.008 (-7.035 - 14.406) |  112.420
+ 100,000 blocks (50x40x50, scoreboard) | head |    90.663 (79.092 - 110.813) |  315.922 (291.983 - 321.435) |  405.403
+(14 rows)
+finished
+
+## ab_fill.sql, rounds=9, no viewer, load 22: before the inline whole-section update, then after
+schema "bench" already exists, skipping
+schema "bench_old" already exists, skipping
+9 rounds; CPU ms per call: median (min - max); wall-clock in brackets
+fill 1,000 blocks (10x10x10, scoreboard)        : old 12.70 (11.52 - 13.06) [49.58 wall]   new 5.62 (4.91 - 6.94) [22.11 wall]   ratio 2.25x
+fill 100,000 blocks (50x40x50, scoreboard)      : old 663.19 (633.37 - 769.19) [2666.63 wall]   new 76.27 (68.49 - 88.43) [327.68 wall]   ratio 8.89x
+one whole section (16x16x16)                    : old 3.48 (2.90 - 4.18) [14.89 wall]   new 3.61 (3.03 - 4.57) [15.89 wall]   ratio 0.89x
+64 whole sections (4 x 4 chunks x 4 sections)   : old 76.28 (69.40 - 86.84) [321.77 wall]   new 27.39 (23.96 - 32.23) [125.14 wall]   ratio 2.72x
+16x1x16 floor                                   : old 10.52 (9.67 - 11.66) [55.66 wall]   new 7.81 (6.01 - 8.59) [41.23 wall]   ratio 1.42x
+unaligned 40x40x40                              : old 491.54 (477.55 - 547.21) [2713.80 wall]   new 65.56 (62.94 - 80.62) [387.52 wall]   ratio 7.33x
+100 blocks (5x5x4: box path)                    : old 10.26 (9.67 - 12.05) [54.25 wall]   new 9.22 (8.70 - 10.85) [50.02 wall]   ratio 1.08x
+40 blocks (5x2x4: the per-block path)           : old 10.49 (9.54 - 12.02) [51.80 wall]   new 10.87 (10.13 - 12.98) [55.44 wall]   ratio 0.96x
+-- after:
+schema "bench" already exists, skipping
+schema "bench_old" already exists, skipping
+9 rounds; CPU ms per call: median (min - max); wall-clock in brackets
+fill 1,000 blocks (10x10x10, scoreboard)        : old 17.75 (16.28 - 20.95) [99.31 wall]   new 10.67 (9.21 - 10.84) [56.63 wall]   ratio 1.72x
+fill 100,000 blocks (50x40x50, scoreboard)      : old 671.32 (626.52 - 840.26) [3332.63 wall]   new 81.93 (79.59 - 91.64) [391.40 wall]   ratio 8.19x
+one whole section (16x16x16)                    : old 5.57 (4.70 - 6.54) [24.56 wall]   new 5.62 (4.72 - 6.44) [25.43 wall]   ratio 1.00x
+64 whole sections (4 x 4 chunks x 4 sections)   : old 85.10 (80.21 - 93.64) [379.88 wall]   new 30.30 (28.06 - 35.05) [142.17 wall]   ratio 2.79x
+16x1x16 floor                                   : old 13.88 (12.92 - 15.20) [67.43 wall]   new 10.51 (9.82 - 11.40) [50.98 wall]   ratio 1.30x
+unaligned 40x40x40                              : old 490.82 (474.36 - 535.06) [2375.05 wall]   new 75.49 (68.51 - 85.91) [359.02 wall]   ratio 6.50x
+100 blocks (5x5x4: box path)                    : old 14.48 (12.77 - 15.75) [68.75 wall]   new 12.99 (10.87 - 14.67) [60.39 wall]   ratio 1.17x
+40 blocks (5x2x4: the per-block path)           : old 14.42 (12.94 - 15.71) [71.86 wall]   new 15.73 (14.19 - 17.46) [75.92 wall]   ratio 0.93x
+
+## scoreboard_edit.py, repeat=2, V D V D, load 13-17 (vanilla: RCON round trip, freshly started JVM, 0.9 GB heap)
+vanilla  viewer=False rep 1 load 13.12 | setblock p50   7.85 | fill 1k p50   23.88 | fill 100k p50   3908.5 ms
+dbcraft  viewer=False rep 1 load 15.61 | setblock p50   0.15 | fill 1k p50   11.72 | fill 100k p50    181.2 ms
+dbcraft  viewer=False rep 2 load 15.80 | setblock p50   0.17 | fill 1k p50    5.46 | fill 100k p50    194.5 ms
+vanilla  viewer=False rep 2 load 15.80 | setblock p50   0.82 | fill 1k p50   16.62 | fill 100k p50   2252.1 ms
+vanilla  viewer=True  rep 1 load 16.71 | setblock p50  52.76 | fill 1k p50   48.03 | fill 100k p50   1842.9 ms
+dbcraft  viewer=True  rep 1 load 15.68 | setblock p50   0.16 | fill 1k p50    7.19 | fill 100k p50    183.2 ms | bcast: setblock 0.12, 1k 0.99, 100k 12.0
+dbcraft  viewer=True  rep 2 load 15.86 | setblock p50   0.15 | fill 1k p50    6.08 | fill 100k p50    180.0 ms | bcast: setblock 0.11, 1k 7.18, 100k 16.9
+vanilla  viewer=True  rep 2 load 15.63 | setblock p50  15.51 | fill 1k p50   23.35 | fill 100k p50   1300.0 ms
+--- medians over the repetitions (p50 of each repetition, then the median; range in brackets)
+viewer=False vanilla  single block edit        4.34 ms [0.82 - 7.85]
+viewer=False vanilla  fill 1,000 blocks       20.25 ms [16.62 - 23.88]
+viewer=False vanilla  fill 100,000 blocks   3080.31 ms [2252.11 - 3908.50]
+viewer=False dbcraft  single block edit        0.16 ms [0.15 - 0.17]
+viewer=False dbcraft  fill 1,000 blocks        8.59 ms [5.46 - 11.72]
+viewer=False dbcraft  fill 100,000 blocks    187.86 ms [181.19 - 194.53]
+viewer=True  vanilla  single block edit       34.13 ms [15.51 - 52.76]
+viewer=True  vanilla  fill 1,000 blocks       35.69 ms [23.35 - 48.03]
+viewer=True  vanilla  fill 100,000 blocks   1571.42 ms [1299.97 - 1842.87]
+viewer=True  dbcraft  single block edit        0.15 ms [0.15 - 0.16]   tick broadcast 0.11 [0.11 - 0.12]
+viewer=True  dbcraft  fill 1,000 blocks        6.63 ms [6.08 - 7.19]   tick broadcast 4.08 [0.99 - 7.18]
+viewer=True  dbcraft  fill 100,000 blocks    181.65 ms [180.04 - 183.25]   tick broadcast 14.48 [12.04 - 16.91]
+
+## vanilla_fill.py second run, load 10-17
+Game rule max_block_modifications is now set to 2000000 Game rule random_tick_speed is now set to 0 load ['10.72', '9.32', '5.35']
+Marked 81 chunks in minecraft:overworld from [-4, -4] to [4, 4] to be force loaded
+viewer | 1 block (setblock)                       | rcon   107.78 (77.5-314.7) | main cpu    31.73 | jvm cpu    76.34 | packets 1 0.01 kB, last packet at the client 218.46 ms | Changed the block at 5, -60, 5
+viewer | 10 blocks (10x1x1)                       | rcon    65.70 (9.6-142.3) | main cpu    43.97 | jvm cpu     0.00 | packets 1 0.03 kB, last packet at the client 113.52 ms | Successfully filled 10 block(s)
+viewer | 48 blocks (4x4x3)                        | rcon    81.09 (19.4-125.4) | main cpu     9.97 | jvm cpu    46.25 | packets 1 0.09 kB, last packet at the client 132.35 ms | Successfully filled 48 block(s)
+viewer | 1,000 blocks (10x10x10)                  | rcon    65.43 (46.0-470.0) | main cpu     0.00 | jvm cpu  3208.96 | packets 1 1.93 kB, last packet at the client 71.47 ms | Successfully filled 1000 block(s)
+viewer | one whole section (16x16x16)             | rcon   173.49 (56.0-476.3) | main cpu    47.02 | jvm cpu   108.30 | packets 1 8.07 kB, last packet at the client 214.72 ms | Successfully filled 4096 block(s)
+viewer | 64 whole sections                        | rcon  6806.08 (5802.9-10164.4) | main cpu   645.35 | jvm cpu  2644.18 | packets 36 295.27 kB, last packet at the client 6553.04 ms | Successfully filled 262144 block(s)
+viewer | 100,000 blocks (50x40x50, scoreboard)    | rcon  1314.69 (751.7-3440.3) | main cpu   285.96 | jvm cpu   764.75 | packets 48 197.48 kB, last packet at the client 1420.73 ms | Successfully filled 100000 block(s)
+nobody | 1 block (setblock)                       | rcon    31.18 (7.0-391.3) | main cpu     0.00 | jvm cpu     0.00 | Changed the block at 5, -60, 5
+nobody | 10 blocks (10x1x1)                       | rcon     9.51 (3.2-33.3) | main cpu     2.10 | jvm cpu     6.42 | Successfully filled 10 block(s)
+nobody | 48 blocks (4x4x3)                        | rcon    15.94 (4.6-27.4) | main cpu     0.00 | jvm cpu     0.00 | Successfully filled 48 block(s)
+nobody | 1,000 blocks (10x10x10)                  | rcon    16.97 (8.8-52.7) | main cpu     3.13 | jvm cpu     0.00 | Successfully filled 1000 block(s)
+nobody | one whole section (16x16x16)             | rcon    52.03 (34.8-105.6) | main cpu    15.18 | jvm cpu    34.58 | Successfully filled 4096 block(s)
+nobody | 64 whole sections                        | rcon  5781.85 (4678.2-7286.5) | main cpu   637.00 | jvm cpu  2503.84 | Successfully filled 262144 block(s)
+nobody | 100,000 blocks (50x40x50, scoreboard)    | rcon  1064.51 (848.3-3526.0) | main cpu   255.05 | jvm cpu   666.02 | Successfully filled 100000 block(s)
+
+## vanilla_gen.py, structures on, partial runs (the JVM was OOM-killed by the container's memory cgroup afterwards)
+-- run 1, load 6-7:
+rect (400,400)-(415,415) 256 chunks   26.20 s wall     36070 ms cpu   (140.90 ms cpu per chunk)  [warm-up]
+rect (416,400)-(431,415) 256 chunks   19.20 s wall     18626 ms cpu   (72.76 ms cpu per chunk)  [warm-up]
+rect (432,400)-(447,415) 256 chunks   38.69 s wall     21644 ms cpu   (84.55 ms cpu per chunk)  [warm-up]
+rect (448,400)-(463,415) 256 chunks   22.28 s wall     17266 ms cpu   (67.45 ms cpu per chunk)  [warm-up]
+rect (464,400)-(479,415) 256 chunks   19.21 s wall     17173 ms cpu   (67.08 ms cpu per chunk)  [steady]
+-- run 3, load 18:
+rect (400,400)-(415,415) 256 chunks  271.89 s wall     61634 ms cpu   (240.76 ms cpu per chunk)  [warm-up]
+
+## gen_cluster.py: 6,400 noise chunks (80 x 80), whole-cluster CPU, load 11-13
+load ['11.57', '13.12', '14.41']
+{
+ "chunks": 6400,
+ "workers": 1,
+ "gen_wall_s": 161.23465275764465,
+ "gen_cpu_ms": 51680.00000000029,
+ "ms_per_chunk_cpu": 8.075000000000045,
+ "ms_per_chunk_wall": 25.192914493381977,
+ "checkpoint_wall_s": 0.4088420867919922,
+ "checkpoint_cpu_ms": 759.9999999997635,
+ "total_cpu_ms_per_chunk": 8.193750000000009,
+ "load_after": [
+  "13.06",
+  "13.14",
+  "14.21"
+ ]
+}
+
+## cold template cache (fill of the scoreboard box with one viewer, cache emptied first), load 13
+fill 1 (minecraft:stone): 271.4 ms CPU, cache rows 27 | tick 11.9 ms
+fill 2 (minecraft:air): 79.5 ms CPU | tick 7.0 ms
+fill 3 (minecraft:stone): 88.7 ms CPU | tick 2.3 ms
+fill 4 (minecraft:air): 79.1 ms CPU | tick 4.0 ms
+
+## vanilla_gen.py run 4 (structures on, seed 12345, heap 1.1 GB, load average 18-22 with another test suite running): all 25 rectangles = 6,400 chunks
+rect (400,400)-(415,415) 256 chunks  206.17 s wall     49510 ms cpu   (193.40 ms cpu per chunk)  [warm-up]
+rect (416,400)-(431,415) 256 chunks   89.59 s wall     26099 ms cpu   (101.95 ms cpu per chunk)  [warm-up]
+rect (432,400)-(447,415) 256 chunks   93.66 s wall     24896 ms cpu   (97.25 ms cpu per chunk)  [warm-up]
+rect (448,400)-(463,415) 256 chunks   94.23 s wall     27067 ms cpu   (105.73 ms cpu per chunk)  [warm-up]
+rect (464,400)-(479,415) 256 chunks   78.90 s wall     25914 ms cpu   (101.23 ms cpu per chunk)  [steady]
+rect (400,416)-(415,431) 256 chunks   65.66 s wall     19601 ms cpu   (76.57 ms cpu per chunk)  [steady]
+rect (416,416)-(431,431) 256 chunks   93.82 s wall     26611 ms cpu   (103.95 ms cpu per chunk)  [steady]
+rect (432,416)-(447,431) 256 chunks   60.20 s wall     13306 ms cpu   (51.98 ms cpu per chunk)  [steady]
+rect (448,416)-(463,431) 256 chunks   77.94 s wall     19727 ms cpu   (77.06 ms cpu per chunk)  [steady]
+rect (464,416)-(479,431) 256 chunks   53.72 s wall     15269 ms cpu   (59.65 ms cpu per chunk)  [steady]
+rect (400,432)-(415,447) 256 chunks   80.16 s wall     20960 ms cpu   (81.87 ms cpu per chunk)  [steady]
+rect (416,432)-(431,447) 256 chunks   58.49 s wall     16564 ms cpu   (64.70 ms cpu per chunk)  [steady]
+rect (432,432)-(447,447) 256 chunks   54.79 s wall     13496 ms cpu   (52.72 ms cpu per chunk)  [steady]
+rect (448,432)-(463,447) 256 chunks   49.56 s wall     13939 ms cpu   (54.45 ms cpu per chunk)  [steady]
+rect (464,432)-(479,447) 256 chunks   48.04 s wall     13915 ms cpu   (54.36 ms cpu per chunk)  [steady]
+rect (400,448)-(415,463) 256 chunks   73.48 s wall     21569 ms cpu   (84.25 ms cpu per chunk)  [steady]
+rect (416,448)-(431,463) 256 chunks   48.67 s wall     14593 ms cpu   (57.01 ms cpu per chunk)  [steady]
+rect (432,448)-(447,463) 256 chunks   56.87 s wall     17993 ms cpu   (70.28 ms cpu per chunk)  [steady]
+rect (448,448)-(463,463) 256 chunks   47.55 s wall     15215 ms cpu   (59.43 ms cpu per chunk)  [steady]
+rect (464,448)-(479,463) 256 chunks   42.87 s wall     14363 ms cpu   (56.10 ms cpu per chunk)  [steady]
+rect (400,464)-(415,479) 256 chunks   74.69 s wall     24472 ms cpu   (95.59 ms cpu per chunk)  [steady]
+rect (416,464)-(431,479) 256 chunks   53.20 s wall     16480 ms cpu   (64.37 ms cpu per chunk)  [steady]
+rect (432,464)-(447,479) 256 chunks   50.66 s wall     15447 ms cpu   (60.34 ms cpu per chunk)  [steady]
+rect (448,464)-(463,479) 256 chunks   52.23 s wall     15761 ms cpu   (61.57 ms cpu per chunk)  [steady]
+rect (464,464)-(479,479) 256 chunks   45.01 s wall     13537 ms cpu   (52.88 ms cpu per chunk)  [steady]
+
+## full suite on the final tree (prun.sh, JOBS=2)
+== template database w2q_tpl
+   template ready in 42 s
+== running with 2 jobs
+PASS tests/sql/00_ref.sql (9 checks, 0 s)
+PASS tests/sql/10_proto.sql (86 checks, 4 s)
+PASS tests/sql/110_net_status_login.sql (35 checks, 2 s)
+PASS tests/sql/130_net_config_play.sql (0 checks, 1 s)
+PASS tests/sql/135_net_compression.sql (5 checks, 1 s)
+PASS tests/sql/140_net_registry.sql (80 checks, 20 s)
+PASS tests/sql/150_net_handlers.sql (41 checks, 2 s)
+PASS tests/sql/200_world_primitives.sql (42 checks, 4 s)
+PASS tests/sql/210_world_blocks.sql (125 checks, 60 s)
+PASS tests/sql/240_world_oracle.sql (7 checks, 2 s)
+PASS tests/sql/250_world_terrain_oracle.sql (14 checks, 110 s)
+PASS tests/sql/260_world_gen.sql (38 checks, 2 s)
+PASS tests/sql/270_world_edit_paths.sql (19 checks, 78 s)
+PASS tests/sql/280_world_deflate.sql (20 checks, 5 s)
+PASS tests/sql/290_blocks_view.sql (17 checks, 3 s)
+PASS tests/sql/290_world_batch.sql (27 checks, 21 s)
+PASS tests/sql/291_section_compression.sql (21 checks, 7 s)
+PASS tests/sql/295_world_rebuild.sql (18 checks, 35 s)
+PASS tests/sql/31_game_settings.sql (21 checks, 1 s)
+PASS tests/sql/33_game_players.sql (48 checks, 1 s)
+PASS tests/sql/36_game_tick.sql (45 checks, 1 s)
+PASS tests/sql/385_batch_replay.sql (0 checks, 1 s)
+PASS tests/sql/386_batch_behaviour.sql (68 checks, 22 s)
+PASS tests/sql/387_batch_diff_moves.sql (2 checks, 267 s)
+PASS tests/sql/388_batch_diff_ticks.sql (8 checks, 1938 s)
+PASS tests/sql/410_integration_replay.sql (0 checks, 1 s)
+PASS tests/sql/420_integration_behaviour.sql (68 checks, 22 s)
+PASS tests/sql/430_chunk_queue.sql (74 checks, 24 s)
+PASS tests/sql/431_tick_perf_moves.sql (34 checks, 14 s)
+PASS tests/sql/432_tick_perf_world.sql (30 checks, 16 s)
+PASS tests/sql/437_tick_churn.sql (115 checks, 27 s)
+PASS tests/sql/441_deflate_native.sql (37 checks, 29 s)
+PASS tests/sql/450_tuning.sql (10 checks, 0 s)
+PASS tests/sql/456_player_live.sql (24 checks, 1 s)
+PASS tests/sql/460_join_codec.sql (25 checks, 412 s)
+PASS tests/sql/461_join_on_join.sql (15 checks, 1 s)
+PASS tests/sql/462_join_config_burst.sql (22 checks, 33 s)
+PASS tests/sql/464_join_constants.sql (30 checks, 2 s)
+PASS tests/sql/465_join_visibility.sql (7 checks, 34 s)
+PASS tests/sql/467_crowd_fanout.sql (17 checks, 17 s)
+PASS tests/sql/468_crowd_interval.sql (9 checks, 1 s)
+PASS tests/sql/469_crowd_visibility.sql (14 checks, 51 s)
+PASS tests/sql/480_inlining.sql (20 checks, 22 s)
+PASS tests/sql/490_client_tp.sql (29 checks, 2 s)
+PASS tests/sql/510_entity_physics.sql (25 checks, 2 s)
+PASS tests/sql/530_entity_tracker.sql (34 checks, 4 s)
+PASS tests/sql/541_entity_lanes.sql (27 checks, 48 s)
+PASS tests/sql/550_entity_split.sql (26 checks, 34 s)
+PASS tests/sql/551_entity_fanout.sql (14 checks, 7 s)
+PASS tests/sql/600_gateway_online.sql (46 checks, 2 s)
+PASS tests/sql/700_world_import.sql (15 checks, 1 s)
+PASS tests/sql/780_queue_trim.sql (19 checks, 17 s)
+PASS tests/sql/790_join_budget.sql (25 checks, 18 s)
+PASS tests/sql/791_join_chunk_budget.sql (14 checks, 20 s)
+PASS tests/sql/800_idle_tick.sql (125 checks, 72 s)
+PASS tests/sql/801_urgent_chat.sql (13 checks, 3 s)
+PASS tests/sql/802_chat_broadcast.sql (38 checks, 1 s)
+PASS tests/sql/810_command_tree.sql (17 checks, 3 s)
+PASS tests/sql/811_command_parse.sql (86 checks, 1 s)
+PASS tests/sql/812_command_run.sql (109 checks, 5 s)
+PASS tests/sql/830_survival.sql (136 checks, 30 s)
+PASS tests/sql/850_fill_cells.sql (12 checks, 70 s)
+PASS tests/sql/851_section_updates.sql (55 checks, 14 s)
+PASS tests/sql/855_terrain_noise.sql (53 checks, 81 s)
+PASS tests/sql/960_fill_encode.sql (32 checks, 67 s)
+PASS tests/sql/961_fill_modes.sql (36 checks, 311 s)
+total checks: 2333  (wall 2190 s, 2 jobs)
+--- structural checks
+overrides: 59, all listed
+(structural checks: 47 ok lines, no FAIL)
