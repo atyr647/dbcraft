@@ -23,7 +23,7 @@ ap.add_argument("--jar", default=os.path.expanduser("~/.cache/dbcraft/server-26.
 ap.add_argument("--reps", type=int, default=1); ap.add_argument("--rep-offset", type=int, default=0); ap.add_argument("--scenarios", default="500v,2000v,5000v,2000n,5000n,5000i")
 ap.add_argument("--settle", type=float, default=45.0); ap.add_argument("--window", type=float, default=40.0); ap.add_argument("--tag", default="")
 ap.add_argument("--after", default="", help="shell command run right after each scenario window (strict V-D alternation); {code} {rep} are substituted; run with the machine as the server left it")
-ap.add_argument("--viewdist", type=int, default=5); ap.add_argument("--xmx", default="2G")
+ap.add_argument("--viewdist", type=int, default=5); ap.add_argument("--xmx", default="2G"); ap.add_argument("--xms", default="")
 a = ap.parse_args()
 rconmod.PORT = a.rcon; rconmod.PW = "mob2"
 JAVA = "/usr/lib/jvm/java-25-openjdk-amd64/bin/java"
@@ -63,7 +63,7 @@ def start_server():
     open(os.path.join(a.dir, "server.properties"), "w").write(PROPS)
     subprocess.call(["rm", "-rf", os.path.join(a.dir, "world")])
     log = open(os.path.join(a.dir, "server.log"), "w")
-    p = subprocess.Popen([JAVA, f"-Xms{a.xmx}", f"-Xmx{a.xmx}", "-jar", "server.jar", "nogui"], cwd=a.dir, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    p = subprocess.Popen([JAVA, f"-Xms{a.xms or a.xmx}", f"-Xmx{a.xmx}", "-jar", "server.jar", "nogui"], cwd=a.dir, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     for _ in range(300):
         time.sleep(1)
         if "Done (" in open(os.path.join(a.dir, "server.log")).read(): break

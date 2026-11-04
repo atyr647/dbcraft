@@ -7,7 +7,7 @@ cd "$(dirname "$0")/../../.."
 out=$1; reps=${2:-3}; scen=${3:-2000v,5000v,2000n,5000n,500v,5000i}
 mkdir -p "$out"
 for rep in $(seq 1 "$reps"); do
-  python3 tools/entity/vanilla_mobs.py --dir "${VAN_DIR:-/dev/shm/mob2/van}" --reps 1 --rep-offset $((rep - 1)) --scenarios "$scen" --settle 30 --window 30 --tag final --out "$out/vanilla.jsonl" >> "$out/driver.log" 2>&1
+  python3 tools/entity/vanilla_mobs.py --dir "${VAN_DIR:-/dev/shm/mob2/van}" --reps 1 --rep-offset $((rep - 1)) --scenarios "$scen" --settle 30 --window 30 --xms "${VAN_XMS:-512M}" --xmx "${VAN_XMX:-1G}" --tag final --out "$out/vanilla.jsonl" >> "$out/driver.log" 2>&1
   for code in ${scen//,/ }; do
     tests/bench/mobs2/after.sh "$code" "$rep" "$out" >> "$out/driver.log" 2>&1
   done
