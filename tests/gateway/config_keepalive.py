@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A client that sits in the configuration state for longer than the gateway's 30 s read timeout and keeps its connection alive only by answering the server's keep-alives
 (docs/PERF-CAPACITY.md, "The dropped clients").  Before sql/980 the server sent nothing in that state and the gateway closed the silent connection ("read timeout (no bytes)")
-after 30 s: this is what a joiner held back by the join entry budget in a 500-player login looked like.  Now the database sends a keep_alive after 15 s and every 15 s after
+after 30 s: this is what a joiner held back by the join entry budget in a 500-player login looked like.  Now the database sends a keep_alive after 10 s of silence and every 10 s after
 the answer; the client answers, stays connected, and when it finally sends finish_configuration it enters play.
 
     tests/gateway/config_keepalive.py --port PORT [--wait 40] [--name NAME]      against a running gateway (any: the PL/Python one answers the same)
