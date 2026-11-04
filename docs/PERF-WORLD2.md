@@ -144,7 +144,8 @@ The generator itself (sql/855) was not changed: with vanilla at about 62 ms, sha
 
 * `tests/e2e/compare_fill.py` against the real vanilla 26.3 server, re-run on the final code (fresh flat world on both sides, a connected client at the time of every fill, so the
   packets were the pre-built ones): **32 steps, 134 `section_blocks_update` packets (133,921 entries) and 4 `block_update` packets, ALL IDENTICAL.**
-* `tests/sql/850`, `851`, `855` unchanged and green; `tests/sql/960` (32 checks) and `961` (36 checks) new.
+* `tests/sql/850`, `851`, `855` unchanged and green; `tests/sql/960` (32 checks) and `961` (36 checks) new.  The whole suite on the final tree (`prun.sh`, 2 jobs): 66 files, **2,333 checks, all pass**
+  (`441_deflate_native` timed out once under load average 25 and passed when re-run alone, in the first full run); `check_overrides.py`, `check_inlining.sh` and `check_fresh_migration.sh` pass (output in `docs/perf-world2-results.txt`).
 
 ## 4. The scoreboard's edit rows, re-run (`tests/bench/world2/scoreboard_edit.py`)
 
