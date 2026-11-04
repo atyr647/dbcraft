@@ -564,7 +564,7 @@ begin
             -- the values to count: the new block (it tells how many positions change) and, unless the whole section is replaced (the new counts are then known), the entries
             -- of the old palette that are air or hold a fluid (the block and fluid counts)
             trep := array[rep]; tc := array[0::bigint]; nt := 1;
-            if not whole then
+            if not whole or filt then                                  -- (a filter leaves some positions of a whole section alone: the old counts are then needed too)
                 for e in 0 .. n_old - 1 loop
                     if mc.is_air(v_pal[e + 1]) then
                         rep := 0; for k in 0 .. vpl - 1 loop rep := rep | (e::bigint << (k * b)); end loop;
