@@ -168,8 +168,7 @@ create index dyn_rt_dirty_seq_idx on mc.dyn_rt_dirty (dimension, seq);          
 insert into mc.server_property (key, value, default_value, note) values
     ('dbcraft.dynamics', 'on', 'on', 'dbcraft: world dynamics (scheduled ticks, fluids, falling blocks, neighbour updates, random ticks); off makes every dynamics entry point return at once'),
     ('dbcraft.dynamics-max-ticks', '65536', '65536', 'dbcraft: most scheduled block ticks, and most fluid ticks, run in one tick; the rest stay queued for the following ticks.  65,536 is vanilla''s limit (ServerLevel.tick passes it to LevelTicks.tick, whose drain stops there and leaves the rest queued)'),
-    ('dbcraft.dynamics-dimensions', 'minecraft:overworld,minecraft:the_nether,minecraft:the_end', 'minecraft:overworld,minecraft:the_nether,minecraft:the_end', 'dbcraft: comma-separated dimensions in which block edits trigger world dynamics (other dimensions, such as the tests'' dbcraft:a, store blocks without reacting)'),
-    ('dbcraft.random-tick-chunk-budget', '4', '4', 'dbcraft: most chunks whose list of randomly ticking cells that can change something is rebuilt per random-tick run (the rest wait for the next runs)')
+    ('dbcraft.dynamics-dimensions', 'minecraft:overworld,minecraft:the_nether,minecraft:the_end', 'minecraft:overworld,minecraft:the_nether,minecraft:the_end', 'dbcraft: comma-separated dimensions in which block edits trigger world dynamics (other dimensions, such as the tests'' dbcraft:a, store blocks without reacting)')
 on conflict (key) do nothing;
 
 create or replace function mc.dyn_enabled() returns boolean language plpgsql stable as $$
