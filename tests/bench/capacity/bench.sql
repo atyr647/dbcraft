@@ -12,7 +12,10 @@ begin
   -- ibench.setup places the players in [0, side*16): centre them on the origin like the scoreboard (and so inside the pre-generated world)
   update mc.player set x = x - side * 8, z = z - side * 8, chunk_x = floor((x - side * 8) / 16)::int, chunk_z = floor((z - side * 8) / 16)::int,
          sent_qx = mc.quant(x - side * 8), sent_qz = mc.quant(z - side * 8) where conn_id is not null;
-  update net.conn c set view_cx = p.chunk_x, view_cz = p.chunk_z from mc.player p where p.conn_id = c.conn_id;
+  -- the clients of the scoreboard ask for view distance 10 in client_information (a client that never said has vanilla's default of 2: the squares and the tracking range of every
+  -- player would be 7 x 7 chunks and the bench would measure a server a tenth of the size)
+  update mc.player set view_distance_req = p_view where conn_id is not null;
+  update net.conn c set view_cx = p.chunk_x, view_cz = p.chunk_z, view_r = greatest(2, least(p_view, mc.prop_int('view-distance'))) + 1 from mc.player p where p.conn_id = c.conn_id;
   -- ibench.setup resets the game clock to 0 AFTER the join trigger stamped trk_start with the old clock: the tracker would not look at anybody until the clock caught up.  The players here have
   -- been in play for a while (a random phase of the tracker's two-tick cycle, nothing pending from the join)
   update mc.player set trk_start = floor(random() * 2)::int, trk_first = false, vis_wake = 0 where conn_id is not null;
