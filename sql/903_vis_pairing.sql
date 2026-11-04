@@ -24,8 +24,10 @@ begin
   select * into v from mc.vtrk where entity_id = t.entity_id;
   add_pkt := mc.pkt_add_player_entity_b(t.entity_id, t.uuid, coalesce(v.base_x, t.x), coalesce(v.base_y, t.y), coalesce(v.base_z, t.z),       -- the position and angles the tracker last sent (the player's own until the tracker started for it)
                                         coalesce(v.sent_yb, mc.angle_byte(t.yaw)), coalesce(v.sent_pb, mc.angle_byte(t.pitch)), coalesce(v.sent_hb, mc.angle_byte(t.yaw)));
-  attrs := case when t.fresh_join then null else mc.pairing_attrs(t.uuid, t.held_slot, coalesce(t.attr_gm, t.gamemode), t.sprinting, t.attr_seen) end;     -- a first-time player's attribute map is still empty
   eq := mc.equip_now(t.uuid, t.held_slot);
+  attrs := case when t.fresh_join then null                                                                                                                -- a first-time player's attribute map is still empty
+                when not exists (select 1 from unnest(eq) h where h <> '') then mc.attr_memo(coalesce(t.attr_gm, t.gamemode), t.sprinting, t.attr_seen)        -- nothing worn or held: the answer is a function of three values (sql/981)
+                else mc.pairing_attrs(t.uuid, t.held_slot, coalesce(t.attr_gm, t.gamemode), t.sprinting, t.attr_seen) end;
   select array_agg((o - 1)::int order by o), array_agg(h order by o) into slots, stacks from unnest(eq) with ordinality e(h, o) where h <> '';
   return mc.pkt_bundle_delimiter() || add_pkt
       || mc.pkt_entity_data(t.entity_id, mc.ed_entries(mc.ed_flags(t.shift, t.sprinting, t.gamemode), t.pose, case when t.use_slot is not null then 1 else 0 end, t.health,

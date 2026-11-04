@@ -154,6 +154,7 @@ begin
     ins as (
       insert into mc.visible (viewer_eid, target_eid, viewer_conn)
       select w.viewer_eid, w.target_eid, w.viewer_conn from w
+       where not exists (select 1 from mc.visible v where v.viewer_eid = w.viewer_eid and v.target_eid = w.target_eid)      -- the pairs that exist are most of them: a probe each, not an insert that finds the conflict (a crowd of 500: 175,000 candidates a tick)
       on conflict (viewer_eid, target_eid) do nothing
       returning viewer_eid, target_eid, viewer_conn),
     tb as materialized (select t.entity_id as eid, mc.pairing_bundle(t) as b from mc.player t where t.entity_id in (select target_eid from ins)),

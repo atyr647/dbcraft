@@ -26,7 +26,8 @@ begin
             select s.conn_id, proto.frame(i_ctr, proto.varint(s.ncx) || proto.varint(s.ncz)) from unnest(sc, sncx, sncz, socx, socz) as s(conn_id, ncx, ncz, ocx, ocz) where (s.ncx, s.ncz) <> (s.ocx, s.ocz) order by s.conn_id;
             -- chunks that left the client's square: x ascending, then z (ChunkTrackingView.difference iterates x in the outer loop: recorded with a shrinking and a teleported view; the body is z first)
             insert into mc.play_out (conn_id, data)
-            select s.conn_id, proto.frame(i_fg, proto.i32(s.ocz + dz) || proto.i32(s.ocx + dx))
+            select s.conn_id, case when i_fg < 128 then '\x09'::bytea || set_byte('\x00'::bytea, 0, i_fg) || proto.i32(s.ocz + dz) || proto.i32(s.ocx + dx)       -- (proto.frame of a body of 8 bytes: one function call less per row, 1,200 rows a tick with 500 walkers)
+                                   else proto.frame(i_fg, proto.i32(s.ocz + dz) || proto.i32(s.ocx + dx)) end
             from unnest(sc, sncx, sncz, socx, socz, snr, sor) as s(conn_id, ncx, ncz, ocx, ocz, nr, orr), generate_series(-s.orr, s.orr) dx, generate_series(-s.orr, s.orr) dz
             where abs(s.ocx + dx - s.ncx) > s.nr or abs(s.ocz + dz - s.ncz) > s.nr
             order by s.conn_id, s.ocx + dx, s.ocz + dz;
