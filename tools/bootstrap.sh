@@ -69,7 +69,7 @@ fi
 # ------------------------------------------------------------------------------------------------------------------------------ 3. generator reports
 say "3/6 data generator reports (the official generator, run from the jar)"
 want=""; [ -f "$DBCRAFT_SERVER_JAR" ] && want=$(sha1sum "$DBCRAFT_SERVER_JAR" | cut -d' ' -f1)
-have_reports() { [ -f "$DBCRAFT_REPORTS/blocks.json" ] && [ -f "$DBCRAFT_REPORTS/packets.json" ] && [ -f "$DBCRAFT_REPORTS/registries.json" ] && [ "$(cat "$DBCRAFT_REPORTS/.jar-sha1" 2>/dev/null)" = "$want" ]; }
+have_reports() { [ -f "$DBCRAFT_REPORTS/blocks.json" ] && [ -f "$DBCRAFT_REPORTS/packets.json" ] && [ -f "$DBCRAFT_REPORTS/registries.json" ] && [ -d "$DBCRAFT_REPORTS/item_components" ] && [ "$(cat "$DBCRAFT_REPORTS/.jar-sha1" 2>/dev/null)" = "$want" ]; }
 if have_reports; then ok "reports in $DBCRAFT_REPORTS"; elif [ "$CHECK" = 1 ]; then todo "reports ($DBCRAFT_REPORTS)"; else
   [ -n "$JAVA" ] || { echo "Java 25 is needed to run the generator"; exit 1; }
   work="$DBCRAFT_HOME/work"; rm -rf "$work"; mkdir -p "$work"
@@ -78,6 +78,7 @@ if have_reports; then ok "reports in $DBCRAFT_REPORTS"; elif [ "$CHECK" = 1 ]; t
     || { echo "generator failed, see $DBCRAFT_LOG/generator.log"; exit 1; }
   mkdir -p "$DBCRAFT_REPORTS"
   for f in blocks registries packets commands datapack; do cp "$work/gen/reports/$f.json" "$DBCRAFT_REPORTS/$f.json"; done
+  rm -rf "$DBCRAFT_REPORTS/item_components"; cp -r "$work/gen/reports/minecraft/components/item" "$DBCRAFT_REPORTS/item_components"    # default components of every item (stack sizes, fuel, equipment slots): tools/load_recipes.py
   echo "$want" > "$DBCRAFT_REPORTS/.jar-sha1"; rm -rf "$work"
   ok "reports written to $DBCRAFT_REPORTS"
 fi

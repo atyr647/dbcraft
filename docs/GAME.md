@@ -110,6 +110,7 @@ Compression is off: frames are `[length][id][body]`.  `mc.login_check` returns t
 | `340_game_input.sql` | movement, held slot, creative slot, keep-alive |
 | `350_game_chat.sql` | chat types, commands and their feedback |
 | `360_game_tick.sql` | chat intake, `mc.tick()`, `mc.tick_log` |
+| `860`-`866_*.sql` | containers, crafting and recipes ([CONTAINERS.md](CONTAINERS.md)): item rules and recipes, the click engine, menus of blocks, furnaces |
 | `830`-`837_survival_*.sql` | the survival core ([SURVIVAL.md](SURVIVAL.md)): health/food/experience state, damage, fall, void, death, respawn, eating, `mc.tick_core` with the survival steps |
 | `810_cmd_tree.sql` | the command graph as rows and the generated `commands` packet |
 | `811_cmd_parse.sql` | the Brigadier-style parser, selector parser, argument types |
@@ -129,13 +130,13 @@ To regenerate the recordings: start a vanilla 26.3 server (offline, whitelist of
 * Command feedback not in the recorded session: `weather rain|thunder` (the game events; the feedback key is verified), the `/whitelist` and `/ban` of players the server has not seen.  Everything else is in the
   command session above.
 * The clock total after `/time set`: the packet layout is byte-identical, but the value vanilla chose (`/time set day` at game time 5738 gave 49000, two days ahead) is not understood; ours is the next occurrence of the marker.
-* Item stack limits (everything stacks to 64 here), the container state id rule (1 at join, +1 per server-sent update, fitted to one observation), the `block.` / `item.` choice for item names in `/give`.
+* The `block.` / `item.` choice for item names in `/give`.  (Stack limits and the container state id rule are item rules and read from the bytecode now, and the click protocol is compared with the real server: [CONTAINERS.md](CONTAINERS.md).)
 * Item stacks with data components are stored with their raw bytes (`components = {"raw_hex": ...}`); they are not decoded.
 * Defaults of `server.properties`: the key list is what the real server writes, the default values are documented defaults.
 
 ## Not implemented
 
-Anything that hurts a player other than falls, the void, starvation and `/kill` (see [SURVIVAL.md](SURVIVAL.md): the survival core, its recorded comparisons and its limits); `/experience`, `/damage`, `/effect`; the other ~70 commands of vanilla's graph (they are in the player's command tree, so clients complete them, and answer "not implemented"); chat rate limits and message signing (offline mode only); entity metadata, attributes and the waypoint packets other players receive when someone joins (`set_entity_data`, `update_attributes`, `waypoint`); item pickup, sound and equipment packets around `/give` and `/clear`; latency broadcasts to the tab list; ender chests and any container beyond the player inventory; `entity-broadcast-range-percentage`.  Recipes, advancements and the player's own entity data are still replayed from a capture (`net.static_packet`); the command tree is no longer one of them.
+Anything that hurts a player other than falls, the void, starvation and `/kill` (see [SURVIVAL.md](SURVIVAL.md): the survival core, its recorded comparisons and its limits); `/experience`, `/damage`, `/effect`; the other ~70 commands of vanilla's graph (they are in the player's command tree, so clients complete them, and answer "not implemented"); chat rate limits and message signing (offline mode only); entity metadata, attributes and the waypoint packets other players receive when someone joins (`set_entity_data`, `update_attributes`, `waypoint`); item pickup, sound and equipment packets around `/give` and `/clear`; latency broadcasts to the tab list; containers other than chests, barrels, ender chests, the crafting table and furnaces (see [CONTAINERS.md](CONTAINERS.md)); `entity-broadcast-range-percentage`.  Recipes, advancements and the player's own entity data are still replayed from a capture (`net.static_packet`); the command tree is no longer one of them.
 Visibility is a simplification: two players see each other when their chunk coordinates differ by at most `view-distance` (capped at 32) in both axes.
 
 ## Performance (single machine: 4 cores, one tick connection, PostgreSQL 16, `jit=off`, `fsync=off`)

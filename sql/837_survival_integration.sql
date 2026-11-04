@@ -59,6 +59,7 @@ begin
   end if;                                                          t1 := clock_timestamp();
   perform mc.survival_moves(cur, snap);                            s1 := clock_timestamp();                  -- (survival) fall damage, jump / sprint exhaustion
   if n_misc then perform mc.apply_misc_input(cur); end if;         t2 := clock_timestamp();
+  perform mc.container_step(cur);                                                                                                  -- (containers) menus: clicks, open, close, furnaces; sql/860-866, docs/CONTAINERS.md
   if n_chat then select * into ch from mc.apply_chat(cur); end if; t3 := clock_timestamp();
   perform mc.survival_input(cur, snap);                            s2 := clock_timestamp();                  -- (survival) respawn, start eating
   select * into vis from mc.refresh_visibility();                  t4 := clock_timestamp();
