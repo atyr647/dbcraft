@@ -72,7 +72,7 @@ update mc.server_property set value = '3' where key in ('view-distance', 'simula
 insert into mc.player (uuid, name, gamemode, x, y, z, yaw, chunk_x, chunk_z, conn_id, entity_id, vis_dirty)
 values ('00000000-0000-0000-0000-0000000000a1', 'Aa', 0, 0.5, -60, 0.5, 0, 0, 0, 101, 1, true), ('00000000-0000-0000-0000-0000000000b2', 'Bb', 0, 4.5, -60, 0.5, 0, 0, 0, 102, 2, true);
 update mc.player set sent_health = health, sent_food = food, sent_sat_zero = false, sent_eh = health, sent_xp_total = 0, sent_score = 0, sent_using = false, join_tick = 0,
-       sent_flags = 0, sent_pose = 0, sent_skin = 0, sent_arm = 1, attr_seen = mc.attr_std_seen(), trk_start = 0, base_x = x, base_y = y, base_z = z, sent_yb = 0, sent_pb = 0, sent_hb = 0, head_yaw = 0,
+       sent_flags = 0, sent_pose = 0, sent_skin = 0, sent_arm = 1, attr_seen = mc.attr_std_seen(), trk_start = (select game_time from mc.game_state), base_x = x, base_y = y, base_z = z, sent_yb = 0, sent_pb = 0, sent_hb = 0, head_yaw = 0,
        trk_ground = true, trk_sync = -2, wp_state = 1, wp_bx = floor(x), wp_by = -60, wp_bz = 0, wp_cx = 0, wp_cz = 0, vis_x = x, vis_z = z, equip_dirty = false, attr_gm = 0, attr_spr = false,
        sent_equip = array['', '', '', '', '', ''], sent_held = 0, view_distance_req = 3, trk_first = false
  where conn_id in (101, 102);

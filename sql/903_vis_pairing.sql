@@ -23,7 +23,7 @@ begin
   end if;
   add_pkt := mc.pkt_add_player_entity_b(t.entity_id, t.uuid, coalesce(t.base_x, t.x), coalesce(t.base_y, t.y), coalesce(t.base_z, t.z),       -- the position and angles the tracker last sent (the player's own until the tracker started for it)
                                         coalesce(t.sent_yb, mc.angle_byte(t.yaw)), coalesce(t.sent_pb, mc.angle_byte(t.pitch)), coalesce(t.sent_hb, mc.angle_byte(t.yaw)));
-  attrs := case when t.fresh_join then null else mc.pairing_attrs(t.uuid, t.held_slot, t.gamemode, t.sprinting, t.attr_seen) end;     -- a first-time player's attribute map is still empty
+  attrs := case when t.fresh_join then null else mc.pairing_attrs(t.uuid, t.held_slot, coalesce(t.attr_gm, t.gamemode), t.sprinting, t.attr_seen) end;     -- a first-time player's attribute map is still empty
   eq := mc.equip_now(t.uuid, t.held_slot);
   select array_agg((o - 1)::int order by o), array_agg(h order by o) into slots, stacks from unnest(eq) with ordinality e(h, o) where h <> '';
   return mc.pkt_bundle_delimiter() || add_pkt

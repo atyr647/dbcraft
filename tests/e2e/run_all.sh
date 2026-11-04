@@ -6,7 +6,7 @@
 # exit code 0 when every comparison passes.  See tests/e2e/README.md.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-E2E=${DBCRAFT_E2E_DIR:-/tmp/dbcraft-e2e}; PORT=25621
+E2E=${DBCRAFT_E2E_DIR:-/tmp/dbcraft-e2e}; PORT=${DBCRAFT_E2E_PORT:-25621}
 export DBCRAFT_PGDATA=${DBCRAFT_PGDATA:-/tmp/dbcraft-pg-int} DBCRAFT_PGPORT=${DBCRAFT_PGPORT:-54399}
 for f in vanilla_join_returning.jsonl vanilla_block_actor.jsonl vanilla_move6.jsonl vanilla_social_first.jsonl; do
   [ -f "$E2E/$f" ] || { echo "missing $E2E/$f: run tests/e2e/record_vanilla.sh first"; exit 2; }

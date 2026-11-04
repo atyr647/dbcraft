@@ -18,9 +18,9 @@ begin
       skin_parts = coalesce((ci ->> 'skin_parts')::int, 0), main_hand = coalesce((ci ->> 'main_hand')::int, 1), view_distance_req = (ci ->> 'view_distance')::int,
       sent_skin = coalesce((ci ->> 'skin_parts')::int, 0), sent_arm = coalesce((ci ->> 'main_hand')::int, 1), sent_hat = (coalesce((ci ->> 'skin_parts')::int, 0) & 64) <> 0,
       fresh_join = (p.first_seen = now()), trk_first = true, trk_ground = case when p.first_seen = now() then false else p.on_ground end,
-      attr_seen = mc.attr_std_seen(), attr_gm = p.gamemode, attr_spr = p.sprinting,
+      attr_seen = mc.attr_std_seen(), attr_gm = case when p.first_seen = now() then p.gamemode else 0 end, attr_spr = p.sprinting,
       attr_sent = case when p.first_seen = now() then null
-                       else (select jsonb_object_agg(a.id::text, a.entry) from mc.attr_now(p.uuid, p.held_slot, p.gamemode, p.sprinting, mc.attr_std_seen()) a) end,     -- a returning player's entry burst already carries them
+                       else (select jsonb_object_agg(a.id::text, a.entry) from mc.attr_now(p.uuid, p.held_slot, 0, p.sprinting, mc.attr_std_seen()) a) end,     -- a returning player's entry burst already carries them, WITHOUT the creative-mode modifiers (recorded: they follow in an update_attributes a tick later: the game mode is applied after the burst)
       attr_due = case when p.first_seen = now() then gt + 3 end,
       sent_equip = mc.equip_now(p.uuid, p.held_slot), sent_held = p.held_slot, equip_dirty = false,
       wp_hidden = exists (select 1 from mc.inventory_slot i join ref.item_attr a on a.item = i.item and a.slot = 'head' and a.attribute = 'minecraft:waypoint_transmit_range' where i.player = p.uuid and i.slot = 5)
@@ -37,7 +37,7 @@ begin
     return query select s.ord, s.packet, case when s.entity_prefixed then proto.varint(p_eid) || s.body else s.body end from net.static_packet s;
     return;
   end if;
-  attrs := mc.pairing_attrs(p.uuid, p.held_slot, p.gamemode, p.sprinting, mc.attr_std_seen());
+  attrs := mc.pairing_attrs(p.uuid, p.held_slot, case when p.fresh_join then p.gamemode else 0 end, p.sprinting, mc.attr_std_seen());
   return query
     select case when p.fresh_join and s.packet = 'minecraft:recipe_book_add' then 235 else s.ord end, s.packet, case when s.entity_prefixed then proto.varint(p_eid) || s.body else s.body end
       from net.static_packet s where s.packet not in ('minecraft:set_entity_data', 'minecraft:update_attributes')
