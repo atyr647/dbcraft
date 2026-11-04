@@ -21,7 +21,8 @@
 
 insert into mc.server_property (key, value, default_value, note) values
     ('dbcraft.random-tick-max-hits', '6', '6', 'dbcraft: at most this many random-tick hits are processed per tick (a random subset when there are more: the rate of every block drops proportionally)'),
-    ('dbcraft.random-tick-build-ms', '0.5', '0.5', 'dbcraft: CPU milliseconds per tick (average) the maintenance of the random-tick lists may use; one chunk is built at a time and the next waits for the time it cost'),
+    ('dbcraft.random-tick-build-ms', '0.3', '0.3', 'dbcraft: CPU milliseconds per tick (average) the maintenance of the random-tick lists may use; one chunk is built at a time and the next waits for the time it cost'),
+    ('dbcraft.random-tick-quiet', '100', '100', 'dbcraft: ticks a chunk must have been left alone before its random-tick list is rebuilt (a burst of edits is rebuilt once, after it)'),
     ('dbcraft.random-tick-interval', '4', '4', 'dbcraft: random ticks run every this many ticks, with that many ticks of draws at once (1 = every tick, vanilla timing)')
 on conflict (key) do nothing;
 
@@ -42,9 +43,9 @@ create index if not exists player_online_chunk_idx on mc.player (chunk_x, chunk_
 -- every new chunk, and its eight neighbours (their border cells see new neighbours), are queued for a rebuild of their lists
 create or replace function mc.dyn_rt_chunk_new() returns trigger language plpgsql volatile as $$
 begin
-    insert into mc.dyn_rt_dirty (dimension, cx, cz)
-    select distinct n.dimension, n.cx + dx.v, n.cz + dz.v from new_c n, (values (-1), (0), (1)) dx(v), (values (-1), (0), (1)) dz(v)
-    on conflict (dimension, cx, cz) do update set seq = excluded.seq;
+    insert into mc.dyn_rt_dirty (dimension, cx, cz, mt)
+    select distinct n.dimension, n.cx + dx.v, n.cz + dz.v, (select game_time from mc.game_state) from new_c n, (values (-1), (0), (1)) dx(v), (values (-1), (0), (1)) dz(v)
+    on conflict (dimension, cx, cz) do update set seq = excluded.seq, mt = excluded.mt;
     return null;
 end $$;
 drop trigger if exists dyn_rt_chunk_new on mc.chunk;
@@ -176,12 +177,13 @@ begin
     on conflict (dimension, cx, cz) do update set version = excluded.version;
 end $$;
 
--- Keep the lists current: build the list of the newest queued chunk, then the next, until this tick's share of CPU time (dbcraft.random-tick-build-ms, 0.5 ms) is used; a build that cost more
+-- Keep the lists current: build the list of the newest queued chunk, then the next, until this tick's share of CPU time (dbcraft.random-tick-build-ms, 0.3 ms) is used; a build that cost more
 -- than the share makes the following ticks wait (the debt is paid in ticks), so the cost per tick stays at the share and one tick never pays for more than one slow build.
 create or replace function mc.dyn_rt_maintain(p_cur bigint) returns void language plpgsql volatile as $$
 declare
     dim text := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
-    share float8 := greatest(coalesce((select value::float8 from mc.server_property where key = 'dbcraft.random-tick-build-ms'), 0.5), 0.01);
+    share float8 := greatest(coalesce((select value::float8 from mc.server_property where key = 'dbcraft.random-tick-build-ms'), 0.3), 0.01);
+    quiet int := coalesce((select value::int from mc.server_property where key = 'dbcraft.random-tick-quiet'), 100);
     t0 timestamptz; el float8 := 0; v_cx int; v_cz int;
 begin
     if (select next_build - p_cur from mc.dyn_rt_state) between 1 and 100000 then return; end if;                   -- (a clock set far back does not stall the maintenance)
@@ -189,7 +191,7 @@ begin
     t0 := clock_timestamp();
     loop
         v_cx := null;
-        select d.cx, d.cz into v_cx, v_cz from mc.dyn_rt_dirty d where d.dimension = dim order by d.seq desc limit 1;
+        select d.cx, d.cz into v_cx, v_cz from mc.dyn_rt_dirty d where d.dimension = dim and d.mt <= p_cur - quiet order by d.seq desc limit 1;
         exit when v_cx is null;
         perform mc.dyn_rt_build(dim, v_cx, v_cz);
         delete from mc.dyn_rt_dirty d where d.dimension = dim and d.cx = v_cx and d.cz = v_cz;

@@ -32,7 +32,7 @@ create or replace function pg_temp.put(x int, y int, z int, b text) returns void
 create or replace function pg_temp.count_like(pat text) returns bigint language sql as $$ select count(*) from mc.blocks_in('minecraft:overworld', -24, -61, -24, 24, -40, 24) where block like pat $$;
 
 select mc.generate_flat_area('minecraft:overworld', -3, -3, 3, 3);
-update mc.server_property set value = '100000' where key = 'dbcraft.random-tick-build-ms';          -- the tests wait for no list: rebuild at once (the default spends 0.5 ms per tick)
+update mc.server_property set value = '100000' where key = 'dbcraft.random-tick-build-ms'; update mc.server_property set value = '0' where key = 'dbcraft.random-tick-quiet';          -- the tests wait for no list: rebuild at once (the default spends 0.5 ms per tick)
 
 -- the reference data ----------------------------------------------------------------------------------------------------------------------------------------------------
 select t.eq('dyn_vec covers every block state', (select n from mc.dyn_vec), (select count(*)::int from ref.block_state));

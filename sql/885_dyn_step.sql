@@ -100,7 +100,7 @@ declare mx int := coalesce(mc.prop_int('dbcraft.dynamics-max-ticks'), 65536);
 begin
     -- idle test in ONE statement (no tick due, nothing late, no random-tick run this tick, no list to rebuild): the whole step is about this
     if not (select coalesce((select value <> 'off' from mc.server_property where key = 'dbcraft.dynamics'), true) and exists (select 1 from mc.dyn_vec)
-                   and (exists (select 1 from mc.block_tick where due <= p_cur) or exists (select 1 from mc.dyn_late_event) or exists (select 1 from mc.dyn_rt_dirty)
+                   and (exists (select 1 from mc.block_tick where due <= p_cur) or exists (select 1 from mc.dyn_late_event) or exists (select 1 from mc.dyn_rt_dirty d where d.mt <= p_cur - coalesce((select value::int from mc.server_property where key = 'dbcraft.random-tick-quiet'), 100))
                         or (p_cur % greatest(coalesce((select value::int from mc.server_property where key = 'dbcraft.random-tick-interval'), 4), 1) = 0
                             and exists (select 1 from mc.player where conn_id is not null) and coalesce((select value::int from mc.game_rule where name = 'minecraft:random_tick_speed'), 3) > 0))) then return; end if;
     begin
@@ -181,14 +181,14 @@ begin
     if not any_react and not any_tick then return null; end if;
     if any_tick then
         -- the random-tick lists (sql/887) of the chunks a change touches, and of the neighbours when it is within 4 cells of them (water reaches farmland, dirt grass, over a chunk border)
-        insert into mc.dyn_rt_dirty (dimension, cx, cz)
-        select distinct q.dimension, q.cx + dx.v, q.cz + dz.v
+        insert into mc.dyn_rt_dirty (dimension, cx, cz, mt)
+        select distinct q.dimension, q.cx + dx.v, q.cz + dz.v, (select game_time from mc.game_state)
           from (select distinct ne.dimension, ne.x >> 4 as cx, ne.z >> 4 as cz, ne.kind <> 'block' as whole,
                        case when (ne.x & 15) < 4 then -1 when (ne.x & 15) >= 12 then 1 else 0 end as bx,
                        case when (ne.z & 15) < 4 then -1 when (ne.z & 15) >= 12 then 1 else 0 end as bz
                   from new_ev ne) q, (values (0), (-1), (1)) dx(v), (values (0), (-1), (1)) dz(v)
          where (dx.v = 0 or q.whole or dx.v = q.bx) and (dz.v = 0 or q.whole or dz.v = q.bz)
-        on conflict (dimension, cx, cz) do update set seq = excluded.seq;
+        on conflict (dimension, cx, cz) do update set seq = excluded.seq, mt = excluded.mt;
     end if;
     if not any_react or coalesce(current_setting('mc.dyn_busy', true), 'off') = 'on' then return null; end if;
     select * into v from mc.dyn_vec;
