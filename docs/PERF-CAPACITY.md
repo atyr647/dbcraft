@@ -131,7 +131,7 @@ Vanilla never has that silence: its configuration listener is the same class as 
 (`ServerCommonPacketListenerImpl.keepConnectionAlive`), which the client answers in the configuration state.  dbcraft sent keep-alives in the play state only.  `sql/980` adds the configuration one: a
 connection that has been silent for 10 s in the configuration state (since it connected or since the last answer) gets a `keep_alive` with the clock in ms as its id, looked for by the wall clock once a second;
 the answer clears it; no answer for 30 s is `disconnect.timeout`.  A join that takes less than 10 s in that state is untouched.  `tests/gateway/config_keepalive.py` is the end-to-end proof: a client sits in the
-configuration state for 40 s answering only keep-alives.  **Tree before: closed by the gateway after 30.8 s** (`dropped: read timeout (no bytes)`); **this tree: see below.**  The SQL side is `tests/sql/980`.
+configuration state for 40 s answering only keep-alives.  **Tree before: closed by the gateway after 30.8 s** (`dropped: read timeout (no bytes)`); **this tree: keep-alives answered at 10.3, 20.4 and 30.6 s, still connected, play entered when it finally sent `finish_configuration`.**  The SQL side is `tests/sql/980`.
 
 **The first version of the fix was not enough, and the gateway's new log line showed why.**  It looked once every 20 ticks and waited 15 s.  At the 700 ms ticks of a crowded 500-player storm one look is 14 s
 apart, so a connection whose last byte was 29 s old was sent its keep-alive too late: five of the last joiners were closed (`31 s after connecting, 65 bytes and 6 frames read in all, last byte 30 s ago, in
@@ -178,4 +178,7 @@ SCORE_PROFILE_CMD="tools/scoreboard/cenv_capacity tools/scoreboard/capprof_live.
 DBCRAFT_PGPORT=.. DBCRAFT_BENCH_DB=.. tests/bench/capacity/world.sh 70;  K=2 COALESCE=true PROF=1 tests/bench/capacity/run.sh 500 100 1.0 120 label
 python3 tests/gateway/config_keepalive.py --port PORT --wait 40       # against a running gateway: the configuration keep-alive end to end
 ```
-Tests added: `tests/sql/431` (flavours 11-13 and the tracker pass), `980`-`985`; gateway unit tests of `coalesce_positions`.
+Tests added: `tests/sql/431` (flavours 11-13 and the tracker pass), `980`-`985`; gateway unit tests of `coalesce_positions`.  Checks run on the final tree: `tests/sql/prun.sh` 80 of 80 files, 3,159 checks
+(own cluster; `970_quiet_gate` needs a cluster that no other test is writing to, as before), `tools/check_overrides.py`, `tools/check_inlining.sh`, `tools/check_fresh_migration.sh`, `gateway/build.sh test` (62 gateway
+tests), `tests/gateway/run_e2e_rust.sh` (all comparisons with the vanilla recordings passed), `tests/e2e/run_all.sh` (passed; the fill, commands and visibility recordings did not exist, the visibility ones were
+recorded fresh and compared: same differing steps before and after this work, see docs/PLAYER-VISIBILITY.md).  The raw lines of the runs quoted here are in `docs/perf-capacity-results.txt`.
