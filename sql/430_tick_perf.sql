@@ -130,6 +130,7 @@ create or replace function mc.server_tick() returns bigint language plpgsql as $
 declare
     cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz;
     n_in int; n_players int; n_out int; r record; framed_rows mc.drain_row[];
+    all_phases boolean := current_setting('dbcraft.quiet_tick', true) = 'off';        -- docs/PERF-IDLE2.md: the guards below skip a phase that has nothing to do; the switch of sql/800 runs them all
 begin
     -- sql/800: nothing queued, nobody connected: the whole tick is the clock and a log row (mc.tick_quiet says when; same bytes: there is nothing to send)
     if mc.tick_quiet() then return mc.tick_quiet_step(true); end if;
@@ -157,25 +158,33 @@ begin
     end;
     t2 := clock_timestamp();
     -- 4, 5
-    begin perform mc.apply_block_actions(cur); exception when others then
-        insert into mc.error_log (tick, step, message) values (cur, 'apply_block_actions', sqlerrm); raise warning 'apply_block_actions failed: %', sqlerrm; end;
-    begin perform mc.broadcast_block_events(); exception when others then
-        insert into mc.error_log (tick, step, message) values (cur, 'broadcast_block_events', sqlerrm); raise warning 'broadcast_block_events failed: %', sqlerrm; end;
+    -- (docs/PERF-IDLE2.md: with players online but idle every phase below used to cost 0.05-0.15 ms for its own start-up before it found nothing to do; the guards are the idle checks the functions
+    -- make themselves, one query each, so the function call, its declarations and its savepoint are not paid)
+    if all_phases or exists (select 1 from mc.play_in_work m where m.packet_id in (mc.sid('player_action'), mc.sid('use_item_on'))) then
+        begin perform mc.apply_block_actions(cur); exception when others then
+            insert into mc.error_log (tick, step, message) values (cur, 'apply_block_actions', sqlerrm); raise warning 'apply_block_actions failed: %', sqlerrm; end;
+    end if;
+    if all_phases or exists (select 1 from mc.block_event) or exists (select 1 from mc.pending_ack) then
+        begin perform mc.broadcast_block_events(); exception when others then
+            insert into mc.error_log (tick, step, message) values (cur, 'broadcast_block_events', sqlerrm); raise warning 'broadcast_block_events failed: %', sqlerrm; end;
+    end if;
     t3 := clock_timestamp();
     -- 6
     begin perform net.stream_chunks(); exception when others then
         insert into mc.error_log (tick, step, message) values (cur, 'stream_chunks', sqlerrm); raise warning 'stream_chunks failed: %', sqlerrm; end;
     t4 := clock_timestamp();
-    -- 7
-    begin
-        update net.conn set closing = true where conn_id in (select conn_id from mc.kick);
-        delete from mc.kick;
-        for r in select c.conn_id from net.conn c where c.closing and exists (select 1 from mc.player p where p.conn_id = c.conn_id) loop
-            perform mc.on_leave(r.conn_id::int);
-        end loop;
-    exception when others then
-        insert into mc.error_log (tick, step, message) values (cur, 'kicks', sqlerrm); raise warning 'kicks failed: %', sqlerrm;
-    end;
+    -- 7 (nothing kicked and nobody closing: the three statements would find nothing; sql/972's partial index makes the second question one probe)
+    if all_phases or exists (select 1 from mc.kick) or exists (select 1 from net.conn where closing) then
+        begin
+            update net.conn set closing = true where conn_id in (select conn_id from mc.kick);
+            delete from mc.kick;
+            for r in select c.conn_id from net.conn c where c.closing and exists (select 1 from mc.player p where p.conn_id = c.conn_id) loop
+                perform mc.on_leave(r.conn_id::int);
+            end loop;
+        exception when others then
+            insert into mc.error_log (tick, step, message) values (cur, 'kicks', sqlerrm); raise warning 'kicks failed: %', sqlerrm;
+        end;
+    end if;
     -- 7b: the entity simulation (opt-in, dbcraft.entity-mode, sql/550): 'inline' runs mc.entity_tick(cur) here, 'split' only applies what the entity connection asked for
     -- (pickups); 'off' (the default) costs one property lookup
     if mc.entity_mode() <> 'off' then perform mc.entity_step(cur); end if;
@@ -183,6 +192,8 @@ begin
     -- as well cost 24 ms instead of 9 ms per tick at 2,000 players: the same bytes were aggregated twice).  Connections without compression (the common case) are
     -- written straight to net.outbox by the same statement; the frames of connections with compression come back in an array (no scratch table: a temp table
     -- emptied with DELETE is never vacuumed and grows for as long as the session lives) and go through net.reframe, as before.
+    n_out := 0;
+    if all_phases or exists (select 1 from mc.play_out) then          -- (an idle tick has nothing queued: the statement below costs 0.13 ms for that)
     with o as (delete from mc.play_out returning seq, conn_id, data),
          j as (select o.seq, o.conn_id, o.data, c.compression as comp from o join net.conn c on c.conn_id = o.conn_id and c.state = 'play'),
          plain as (insert into net.outbox (conn_id, data)
@@ -198,6 +209,7 @@ begin
             perform net.close(r.conn_id);
         end;
     end loop;
+    end if;
     -- (split mode: another connection INSERTs into mc.play_out concurrently; TRUNCATE would wait for its transaction and destroy its committed rows, so the queue is only ever DELETEd)
     if cur % 20 = 0 and pg_relation_size('mc.play_out') > 0 and mc.entity_mode() <> 'split' then truncate mc.play_out; end if;          -- empty after the drain above; see the housekeeping note at the top
     t5 := clock_timestamp();

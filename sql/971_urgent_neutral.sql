@@ -8,7 +8,7 @@
 -- What "neutral" has to mean: the lane runs mc.apply_chat BEFORE the rest of the window's frames, the tick runs it AFTER them (moves, misc input, ...), so a kind is neutral exactly when
 -- what the tick does with it neither reads nor writes anything mc.apply_chat reads or writes (the sender's mc.player row's name and uuid, its chat_sent counter, every recipient's chat_recv
 -- counter and connection, mc.chat_log, the recipients' output queue) -- and when the real server's handler does not either.  Both halves are checked, not assumed:
---   * the vanilla half, from the 26.3 jar (javap -c -p on ServerGamePacketListenerImpl, `tools/jar_handlers.py`): of the 62 serverbound play handlers only handleChat,
+--   * the vanilla half, from the 26.3 jar (javap -c -p on ServerGamePacketListenerImpl, `tools/jar_handlers.py`): of the 61 serverbound play handlers of ServerGamePacketListenerImpl (51 queue their body on the main thread with PacketUtils.ensureRunningOnSameThread, 10 run on the network thread) only handleChat,
 --     handleChatCommand, handleSignedChatCommand, handleChatAck and handleChatSessionUpdate touch the chat machinery (the signed chain's last-seen validator, the chat session, the
 --     message chain); handleClientInformation changes the player's options, which include the chat visibility that tryHandleChat reads on the network thread (dbcraft has no chat
 --     visibility: neither path implements "hidden" chat); handleSetCommandBlock/Minecart/StructureBlock only send their own error message to their own sender.  tryHandleChat runs on the

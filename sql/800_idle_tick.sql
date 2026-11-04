@@ -84,12 +84,13 @@ end $$;
 
 -- p_truncate: the default tick (mc.server_tick) empties its queues with TRUNCATE once a second when they were written; the batched tick only ever DELETEs
 -- The log row is written once a second (the tick whose game_time is a multiple of 20), not every tick: a row costs 0.09 ms, more than the whole rest of an idle tick, and a quiet tick
--- has no phases to report.  ms_total is the time of this tick's own step up to that point (what every quiet tick costs), as before.  (docs/PERF-IDLE2.md)
+-- has no phases to report.  ms_total is the time of the clock update and the leftover check (what every quiet tick costs: the housekeeping of this tick and the insert itself are not in it), as before.  (docs/PERF-IDLE2.md)
 create or replace function mc.tick_quiet_step(p_truncate boolean) returns bigint language plpgsql volatile as $$
-declare cur bigint; t0 timestamptz := clock_timestamp();
+declare cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz;
 begin
     update mc.game_state set game_time = game_time + 1, day_time = day_time + 1 returning game_time into cur;
     if exists (select 1 from mc.play_in_work) then delete from mc.play_in_work; end if;               -- packets nobody handled in the previous tick (the full tick deletes them first thing)
+    t1 := clock_timestamp();
     if cur % 20 = 0 then
         -- the full tick runs this at the start of the tick whose game_time is 19 mod 20 (play_in_work, net.batch) and at the end of the tick that makes it 0 mod 20 (play_out)
         if p_truncate then
@@ -99,7 +100,7 @@ begin
         end if;
         delete from mc.server_tick_log where tick < cur - 6000;
         insert into mc.server_tick_log (tick, frames_in, players, frames_out, ms_total, ms_process, ms_game, ms_blocks, ms_chunks, ms_drain)
-        values (cur, 0, 0, 0, extract(epoch from clock_timestamp() - t0) * 1000, 0, 0, 0, 0, 0)
+        values (cur, 0, 0, 0, extract(epoch from t1 - t0) * 1000, 0, 0, 0, 0, 0)
         on conflict (tick) do nothing;
     end if;
     return cur;
