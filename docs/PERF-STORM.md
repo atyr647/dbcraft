@@ -158,7 +158,7 @@ not involved with these changes; it passes alone, 92 checks, and the suite run w
 
 ## Raw results
 
-`docs/perf-storm-results.jsonl.txt`: one JSON line per run of the post-restart session (`file` = `fin1`: real clients, 50 joins and one 200 set; `fin2`: the 200-join repetition; `jbp`: the paced in-database runs, including the 200-join runs with the earlier overdue rule), without the per-sample arrays.
+`docs/perf-storm-results.jsonl.txt`: (`file` = `round2-ab2`: the round-2 A/B runs, tags `ab2-vanilla` / `ab2-old` / `ab2-new`) one JSON line per run of the post-restart session (`file` = `fin1`: real clients, 50 joins and one 200 set; `fin2`: the 200-join repetition; `jbp`: the paced in-database runs, including the 200-join runs with the earlier overdue rule), without the per-sample arrays.
 The first session's raw file was lost with `/dev/shm` when the container restarted.
 
 ## Reproduce
