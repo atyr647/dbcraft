@@ -96,6 +96,8 @@ begin
     if not sec_ok then
         v_bc := 0; v_fc := 0; v_pal := array['minecraft:air']; v_bits := 0; v_data := ''::bytea; v_bpal := array[p_default_biome]; v_bbits := 0; v_bdata := ''::bytea;
     end if;
+    -- sql/950: a compressed value stays compressed in a PL/pgSQL variable and EVERY use of it decompresses it again; decompress once here, not once per edit / per word
+    v_pal := array_cat(v_pal, '{}'::text[]); v_data := v_data || ''::bytea; v_bpal := array_cat(v_bpal, '{}'::text[]); v_bdata := v_bdata || ''::bytea;
     is_global := cardinality(v_pal) = 0;
 
     -- grow the palette with the names this batch introduces (in order of first use)
@@ -309,6 +311,8 @@ begin
     select c.hm_motion_blocking, c.hm_motion_blocking_no_leaves, c.hm_world_surface, c.hm_dirty into hmb, hmn, hws, hdirty
       from mc.chunk c where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
     chunk_ok := found;
+    -- sql/950: the heightmaps of a chunk row are stored compressed; a compressed value stays compressed in a variable and every subscript decompresses it again: once here
+    hws := case when hws is null then null else array_cat(hws, '{}'::smallint[]) end; hmb := case when hmb is null then null else array_cat(hmb, '{}'::smallint[]) end; hmn := case when hmn is null then null else array_cat(hmn, '{}'::smallint[]) end;
     if not chunk_ok then insert into mc.chunk (dimension, cx, cz) values (p_dim, p_cx, p_cz) on conflict do nothing; end if;
 
     res := mc.edit_section_core(p_dim, p_cx, p_sy, p_cz, p_idx, p_names, dn, cn, d.default_biome);
@@ -486,6 +490,8 @@ begin
     if not sec_ok then
         v_bc := 0; v_fc := 0; v_pal := array['minecraft:air']; v_bits := 0; v_data := ''::bytea; v_bpal := array[p_default_biome]; v_bbits := 0; v_bdata := ''::bytea;
     end if;
+    -- sql/950: a compressed value stays compressed in a PL/pgSQL variable and EVERY use of it decompresses it again; decompress once here, not once per edit / per word
+    v_pal := array_cat(v_pal, '{}'::text[]); v_data := v_data || ''::bytea; v_bpal := array_cat(v_bpal, '{}'::text[]); v_bdata := v_bdata || ''::bytea;
     if cardinality(v_pal) = 0 or (v_bits = 0 and cardinality(v_pal) <> 1) then return -1; end if;      -- global palette (or an unexpected single-value layout): the general path
     n_old := cardinality(v_pal);
     newpos := array_position(v_pal, p_nm);
@@ -753,6 +759,8 @@ declare
 begin
     select * into sec from mc.chunk_section s where s.dimension = p_dim and s.cx = p_cx and s.cz = p_cz and s.sy = p_sy for update;
     if not found then return false; end if;
+    -- sql/950: a compressed value stays compressed in a PL/pgSQL variable and EVERY use of it decompresses it again; decompress once here, not once per edit / per word
+    sec.palette := array_cat(sec.palette, '{}'::text[]); sec.data := sec.data || ''::bytea;
     -- state name of every block, in index order
     names := array(select case when cardinality(sec.palette) = 0 then mc.state_name(u.e) else sec.palette[u.e + 1] end
                    from unnest(mc.unpack_longs(sec.data, sec.bits, 4096)) with ordinality u(e, o) order by u.o);

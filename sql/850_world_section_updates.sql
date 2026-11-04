@@ -87,6 +87,8 @@ declare
 begin
     select s.palette, s.bits, s.data into pal, bits, data from mc.chunk_section s where s.dimension = p_dim and s.cx = p_cx and s.cz = p_cz and s.sy = p_sy;
     if not found then return array_fill(0, array[n]); end if;
+    -- sql/950: a compressed value stays compressed in a PL/pgSQL variable and every use of it decompresses it again (256 words below): decompress once
+    pal := array_cat(pal, '{}'::text[]); data := data || ''::bytea;
     if bits = 0 then return array_fill((select s.state_id from ref.block_state s where s.name = pal[1]), array[n]); end if;
     if cardinality(pal) > 0 then ids := mc.palette_ids(pal); end if;
     vpl := 64 / bits; msk := (1::bigint << bits) - 1;

@@ -53,7 +53,7 @@ and it loses (or fails) on login-storm stalls and long runs with 200 moving play
 | fill 1,000 blocks | p50 (ms) | 9.98 | 1.43 (was 11.77) | 0.14 | dbcraft (re-measured, item 5 below) |
 | fill 100,000 blocks | p50 (ms) | 201 | 42.8 (was 535) | 0.21 | dbcraft (re-measured, item 5 below) |
 | 10,000-chunk flat world | generate (s) | 17.8 | 1.15 | 0.06 | dbcraft |
-| 10,000-chunk flat world | size after save (MiB) | 62.1 | **82.5** | 1.33 | **vanilla** |
+| 10,000-chunk flat world | size after save (MiB) ‡ | 62.1 | **16.1** (was 82.5 in the original run, 92.6 on the tree before this change) | 0.26 | **dbcraft** (re-measured, item 6 below and [PERF-DISK.md](PERF-DISK.md)) |
 | 10,000-chunk flat world | save stall: `save-all flush` / `checkpoint` (s) | 13.65 | 0.07 | 0.005 | dbcraft |
 | 10,000-chunk flat world | `kill -9` to accepting logins (s) | 10.7 | 2.1 | 0.19 | dbcraft |
 | `kill -9` after an edit 1 s old, never saved | edit survives? | no | yes | | dbcraft (dev cluster has `fsync=off`: a power cut is NOT covered) |
@@ -64,6 +64,8 @@ and it loses (or fails) on login-storm stalls and long runs with 200 moving play
 † **Re-measured** for [PERF-IDLE.md](PERF-IDLE.md) on a different day and a quieter machine than the original session, both servers, 2 repetitions of 60 s for vanilla (3 for the empty server) and 3 for dbcraft (PL/Python gateway and batched tick, as in this table; the Rust gateway is in PERF-IDLE.md), after the idle-cost work: medians, ranges and the
 before-the-work numbers on the same machine are there.  The other rows are the original session's, and `SCOREBOARD-table.md` / `scoreboard-results.jsonl.txt` still show it.  The original session's values for the changed rows were: idle tick 0.27 / 1.92 ms, CPU 0.01 / 0.11; 50 idle tick 40.0 / 7.4 ms, CPU 0.84 / 0.20, chat p50 24.7 / 43.1 ms;
 200 idle tick 71.7 / 22.7 ms, chat 46 / 74 ms p50 and 113 / 406 ms p99 (vanilla / dbcraft).  Chat percentiles rest on about 60 round trips per run.
+
+‡ **Re-measured** for [PERF-DISK.md](PERF-DISK.md): the dbcraft figure is `sum(pg_total_relation_size)` of the five world tables after generating the 10,000 chunks with `mc.generate_batch` and a checkpoint (the query of `run2.scenario_world10k`), 16.14 MiB; the vanilla figure is the same scenario's RCON recipe re-run (62.09 MiB, `du -sb` of the world folder after `save-all flush`).  The other rows are the original session's.
 
 ## Where dbcraft loses, ranked by how much it matters in real play
 
@@ -91,7 +93,7 @@ before-the-work numbers on the same machine are there.  The other rows are the o
    (0.21 for 100,000 blocks) mixes two sessions: read it as "clearly faster than vanilla's RCON `fill`", not as a precise factor.  The fill also does less than vanilla's: no light
    update, no neighbour updates, heightmaps recomputed later (docs/WORLD.md says what that moves to the next chunk send).  **With a player in range** the tick that follows the fill
    spends another 243 to 309 ms encoding the 48 section packets (docs/WORLD.md "Large fills"); this scenario has no player, on either server.
-6. **Disk**: a 10,000-chunk flat world is 33% bigger (82.5 against 62.1 MiB): the wire-format sections plus caches against compressed region files.
+6. ~~**Disk**: a 10,000-chunk flat world is 33% bigger (82.5 against 62.1 MiB): the wire-format sections plus caches against compressed region files.~~  **Closed for flat worlds, partly for terrain** ([PERF-DISK.md](PERF-DISK.md)).  Re-measured: the tree before the change was 92.6 MiB (1.49x); rows are now compressed inside their pages (`sql/950`, the compact storage profile): **16.1 MiB, 0.26x of vanilla's 62.1 MiB** (vanilla re-run today: 65,108,563 bytes, 15,876 chunk entries of 4 KiB because it also writes the 5,060 unfinished border chunks; dbcraft needs 1,692 bytes a chunk, vanilla stores 4,096).  Measured with the scoreboard's own size query (`tools/scoreboard/run2.py`, `world_bytes`) on a cluster of its own, **not the full harness**; vanilla's number is the same recipe re-run, not the original run's.  Real terrain, same measure: the imported vanilla world (780 chunks) is 13.35 MiB after `tools/compact_world.sh` (17.84 as the importer writes it) against **17.08 MiB for vanilla's whole folder but 7.23 MiB for the 780 full chunks alone: dbcraft is 0.78x the first and 1.8x the second**; 2,000 chunks of `dbcraft:noise` are 13.34 MiB after compaction against 7.84 MiB for their export (1.7x).  **Not closed**: a terrain chunk that has been sent keeps a 14.7 KB packet cache row (24.35 MiB for the imported world with every chunk sent), `mc.trim_chunk_cache()` drops it at the price of a rebuild on the next send; and vanilla's per-chunk deflate beats per-row lz4/pglz by 1.8x on terrain.  Hot-path cost: `set_block` 0 to +3% CPU, `get_block` +3 us, `set_blocks`/`fill`/rebuild/join unchanged or faster (PERF-DISK.md section 5).
 7. **Mobs**: about 150 microseconds per awake mob against vanilla's 22 (`docs/ENTITY.md`; the worker that later optimised it reports a lower figure in its own doc).
 
 ## Where dbcraft wins

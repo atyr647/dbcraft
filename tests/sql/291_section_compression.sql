@@ -1,5 +1,7 @@
--- Opt-in section compression (sql/291): turning it on and rewriting the rows must not change a single byte of what the world returns.
+-- Section compression (sql/291, switch in sql/950): turning it on and rewriting the rows must not change a single byte of what the world returns.
+-- Compression is the default since sql/950 (the compact storage profile); this test starts from the legacy profile (raw sections) to see the switch work both ways.
 \! python3 tools/load_world_ref.py
+select mc.set_section_compression(false);
 insert into mc.dimension (name) values ('dbcraft:c291') on conflict do nothing;
 delete from mc.flat_layer where dimension = 'dbcraft:c291';
 insert into mc.flat_layer (dimension, y, block)
@@ -31,7 +33,7 @@ create temp table ub as select b, pg_temp.rnd(((4096 + (64 / b) - 1) / (64 / b))
 select t.eq('unpack_longs equals the original on random buffers (30: bits 4..8 and 16, 5 each)', (select count(*) from ub where mc.unpack_longs(d, b, 4096) is distinct from pg_temp.unpack_orig(d, b, 4096))::int, 0);
 select t.eq('...and bits = 0 (single value)', mc.unpack_longs('\x'::bytea, 0, 4096) = array_fill(0, array[4096]), true);
 
-select t.eq('compression is off by default: the table keeps the large toast target', (select reloptions::text from pg_class where oid = 'mc.chunk_section'::regclass) like '%toast_tuple_target=8160%', true);
+select t.eq('legacy profile: the table keeps the large toast target', (select reloptions::text from pg_class where oid = 'mc.chunk_section'::regclass) like '%toast_tuple_target=8160%', true);
 
 create temp table fp_before as select
   (select md5(string_agg(x || ',' || y || ',' || z || ',' || block, ';' order by x, y, z)) from mc.blocks_in('dbcraft:c291', 0, -64, 0, 47, 319, 31)) as blocks,
@@ -42,7 +44,7 @@ select t.is_true('before: no section row of the test world is compressed',
   (select count(*) from mc.chunk_section where dimension = 'dbcraft:c291' and (pg_column_compression(data) is not null or pg_column_compression(palette) is not null)) = 0);
 
 select mc.set_section_compression(true);
-select t.eq('switched on: the table uses the default toast target', (select coalesce(reloptions::text, '') not like '%toast_tuple_target%' from pg_class where oid = 'mc.chunk_section'::regclass), true);
+select t.eq('switched on: the table uses the compact profile (toast target 512)', (select reloptions::text from pg_class where oid = 'mc.chunk_section'::regclass) like '%toast_tuple_target=512%', true);
 select t.is_true('rewrite_sections touches every section row', mc.rewrite_sections() >= (select sections from fp_before));
 select t.is_true('after the rewrite section rows of the test world ARE compressed (data or palette)',
   (select count(*) from mc.chunk_section where dimension = 'dbcraft:c291' and (pg_column_compression(data) is not null or pg_column_compression(palette) is not null)) > 0);
@@ -83,3 +85,4 @@ select t.raises('an unknown mode is refused', $$select mc.set_cache_storage('zst
 delete from mc.chunk where dimension = 'dbcraft:c291';
 delete from mc.flat_layer where dimension = 'dbcraft:c291';
 delete from mc.dimension where name = 'dbcraft:c291';
+select mc.set_section_compression(true);     -- back to the default profile
