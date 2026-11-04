@@ -271,3 +271,148 @@ values (5701, gen_random_uuid(), 'minecraft:cow', mc.entity_type_id('minecraft:c
 select mc.entity_tick(t) from generate_series(1, 10) t;
 select t.is_true('H: with dbcraft.entity_auto = off the cow walks in a lane of sql/541 (auto = false) and the entity row carries its goal', (select not l.auto and e.goal_until = 400 from mc.entity_lane l join mc.entity e on e.id = l.id where e.id = 5701));
 select set_config('dbcraft.entity_auto', 'on', false);
+
+------------------------------------------------------------------------------------------------ L  lazy lanes: replay in closed form = tick-by-tick simulation
+-- 400 cows in cells 1..4, the viewer far away at chunk (-6, -6) (view distance 3: nothing within 4 chunks of him is lazy, the cows are 6 or more away).  Run A: dbcraft.entity_lazy = off (every
+-- lane simulated every tick); run B: lazy lanes (replayed in their slot, every 32nd tick).  After the same ticks, B's lanes are caught up to the last tick: every lane row must be the same, bit
+-- for bit.  The cows are born at tick 100000 minus up to 29 and the runs are shorter than 370 ticks: no cow reaches tick - born = 400, the position sync that ends a lane in the tick-by-tick run
+-- (the tracker needs an absolute packet; a lane nobody watches needs none, and it also keeps the tick of the sweep that follows an ended lane out of the comparison).
+select set_config('dbcraft.entity_walk_prob', '0.6', false);
+-- a bigger flat world than C..G need: a lane that reaches the edge of the known floor ends in the exact sweep, and that happens at the tick it expired in one run but only when the lazy lane is
+-- replayed (up to 31 ticks later) in the other: the comparison below is about lanes that stay on a floor
+select mc.generate_flat('minecraft:overworld', a.cx, b.cz) from generate_series(-6, 12) a(cx), generate_series(-6, 12) b(cz)
+ where not exists (select 1 from mc.chunk c where c.dimension = 'minecraft:overworld' and c.cx = a.cx and c.cz = b.cz);
+create or replace function t.lz_setup(p_lazy text, p_n int) returns void language plpgsql as $$
+begin
+    -- (t.clear rebuilds 676 masks: 25 seconds; the world is flat and untouched here)
+    delete from mc.entity; delete from mc.entity_lane; delete from mc.play_out; delete from mc.entity_cell_viewer; delete from mc.entity_viewer_cell; delete from mc.player; delete from mc.entity_tick_log;
+    update mc.entity_clock set last_tick = null;
+    perform set_config('dbcraft.entity_auto', 'on', false);
+    perform set_config('dbcraft.entity_lazy', p_lazy, false);
+    perform setseed(0.77);
+    insert into mc.player (uuid, name, conn_id, entity_id, x, y, z, chunk_x, chunk_z, gamemode) values ('00000000-0000-0000-0000-00000000000a', 'A', 1, 901, -6 * 16 + 0.5, -60, -6 * 16 + 0.5, -6, -6, 0);
+    insert into mc.entity (id, uuid, type, type_id, x, y, z, on_ground, born_tick, phys_tick, cx, cz, goal_until, yaw, last_sent_tick, sent_cx, sent_cz, sent_qx, sent_qy, sent_qz)
+    select 8000 + i, md5(i::text)::uuid, 'minecraft:cow', mc.entity_type_id('minecraft:cow'), x, -60, z, true, 100000 - floor(random() * 30)::int, 0, floor(x / 16)::int, floor(z / 16)::int, 1 + i % 9, (random() * 360)::real,
+           1, floor(x / 16)::int, floor(z / 16)::int, round(x * 4096), round(-60 * 4096.0), round(z * 4096)
+      from (select i, 24 + random() * 48 as x, 24 + random() * 48 as z from generate_series(1, p_n) i) q;
+    perform mc.entity_floor_build('minecraft:overworld', cx, cz) from generate_series(-6, 12) cx, generate_series(-6, 12) cz;
+end $$;
+create or replace function t.lz_run(p_from int, p_to int) returns void language plpgsql as $$
+begin for tk in p_from..p_to loop delete from mc.play_out; perform mc.entity_tick(tk); end loop; end $$;
+create or replace function t.lz_snap(p_name text, p_tick bigint) returns void language plpgsql as $$
+begin
+    perform mc.entity_auto_catchup(p_tick, array(select id from mc.entity_lane));
+    execute format('create table t.%I as select l.id, l.t0, l.x0, l.z0, l.y, l.gx, l.gz, l.gend, l.goal_until, l.yaw, l.cx, l.cz, l.sqx, l.sqy, l.sqz, l.syaw, l.last_tick, e.cx as ecx, e.cz as ecz from mc.entity_lane l join mc.entity e on e.id = l.id where l.auto', p_name);
+end $$;
+select t.lz_setup('off', 400);
+select t.lz_run(1, 353);
+select t.is_true('L: A (every lane simulated every tick): all 400 cows are in autonomous lanes, none lazy', (select count(*) = 400 and count(*) filter (where lazy) = 0 from mc.entity_lane where auto));
+select t.lz_snap('lz_a', 353);
+select t.lz_setup('on', 400);
+select t.lz_run(1, 353);
+select t.is_true('L: B: nearly all 400 cows are in lazy lanes (nobody is within reach of the viewer)', (select count(*) = 400 and count(*) filter (where lazy) >= 390 from mc.entity_lane where auto));
+select t.is_true('L: ... lazy lanes are behind between their slots: some lanes have an expired segment at tick 353 (so the comparison below needs the replay)',
+                 (select count(*) > 20 from mc.entity_lane where auto and goal_until <= 353));
+select t.is_true('L: ... and no tracker step was computed for a lane nobody watches after the first ticks (the tick log counts none; the tests below show the steps that do run when somebody is near)', (select coalesce(sum(awake), 0) = 0 from mc.entity_tick_log where tick > 100));
+select t.lz_snap('lz_b', 353);
+select t.eq('L: after the catch-up to tick 353 all 400 lane rows are the same as in the tick-by-tick run: anchor, velocity, goal, cell, the viewers'' base, to the last bit (about 7 goals each)',
+            (select count(*)::int from t.lz_a a join t.lz_b b using (id) where (a.t0, a.x0, a.z0, a.y, a.gx, a.gz, a.gend, a.goal_until, a.yaw, a.cx, a.cz, a.sqx, a.sqy, a.sqz, a.syaw, a.last_tick, a.ecx, a.ecz)
+                                                                              is distinct from (b.t0, b.x0, b.z0, b.y, b.gx, b.gz, b.gend, b.goal_until, b.yaw, b.cx, b.cz, b.sqx, b.sqy, b.sqz, b.syaw, b.last_tick, b.ecx, b.ecz)), 0);
+select t.eq('L: ... both runs have all 400 lanes', (select count(*)::int from t.lz_a a join t.lz_b b using (id)), 400);
+select t.is_true('L: ... and the lanes really moved (gend far beyond the start for nearly all)', (select count(*) > 380 from t.lz_a where gend > 250));
+
+-- M: a viewer teleports next to the lazy cows; everything he is told must be the same as in the tick-by-tick run (appearance with the delta base, and every packet afterwards)
+create or replace function t.lz_view(p_mode text, p_name text) returns void language plpgsql as $$
+begin
+    perform t.lz_setup(p_mode, 400);
+    perform t.lz_run(1, 200);
+    update mc.player set chunk_x = 2, chunk_z = 2, x = 2 * 16 + 0.5, z = 2 * 16 + 0.5 where conn_id = 1;
+    for tk in 201..320 loop
+        delete from mc.play_out; perform mc.entity_tick(tk);
+        insert into t.stream (mode, tick, data) select p_name, tk, data from mc.play_out where conn_id = 1 order by seq;
+    end loop;
+end $$;
+select t.lz_view('off', 'view_a');
+select t.lz_view('on', 'view_b');
+create table t.lz_pk as
+select s.mode, s.tick, m.eid, m.kind, m.a, m.bb, m.c from t.stream s cross join lateral t.moves(s.data) m where s.mode in ('view_a', 'view_b');
+select t.is_true('L: the viewer got appearances and movements in both runs (more than 2,000 packets)', (select count(*) > 2000 from t.lz_pk where mode = 'view_a') and (select count(*) > 2000 from t.lz_pk where mode = 'view_b'));
+select t.eq('L: ... and the two streams are the same, packet for packet (tick, cow, kind, values), 120 ticks after the teleport',
+            (select count(*)::int from ((select tick, eid, kind, a, bb, c from t.lz_pk where mode = 'view_a' except select tick, eid, kind, a, bb, c from t.lz_pk where mode = 'view_b')
+                                        union all (select tick, eid, kind, a, bb, c from t.lz_pk where mode = 'view_b' except select tick, eid, kind, a, bb, c from t.lz_pk where mode = 'view_a')) d), 0);
+select t.is_true('L: ... the cows near the viewer are not lazy afterwards (they are simulated every tick while he is there)', (select count(*) filter (where lazy and abs(cx - 2) <= 5 and abs(cz - 2) <= 5) = 0 from mc.entity_lane where auto));
+
+-- M2: a viewer who walks up (one chunk every 8 ticks) gets the same stream as well
+create or replace function t.lz_walk(p_mode text, p_name text) returns void language plpgsql as $$
+begin
+    perform t.lz_setup(p_mode, 400);
+    perform t.lz_run(1, 100);
+    for tk in 101..300 loop
+        if (tk - 101) % 8 = 0 and (tk - 101) / 8 < 8 then
+            update mc.player set chunk_x = -6 + ((tk - 101) / 8 + 1), chunk_z = -6 + ((tk - 101) / 8 + 1), x = (-6 + ((tk - 101) / 8 + 1)) * 16 + 0.5, z = (-6 + ((tk - 101) / 8 + 1)) * 16 + 0.5 where conn_id = 1;
+        end if;
+        delete from mc.play_out; perform mc.entity_tick(tk);
+        insert into t.stream (mode, tick, data) select p_name, tk, data from mc.play_out where conn_id = 1 order by seq;
+    end loop;
+end $$;
+select t.lz_walk('off', 'walk_a');
+select t.lz_walk('on', 'walk_b');
+create table t.lz_pk2 as
+select s.mode, s.tick, m.eid, m.kind, m.a, m.bb, m.c from t.stream s cross join lateral t.moves(s.data) m where s.mode in ('walk_a', 'walk_b');
+select t.is_true('L: the walking viewer got packets in both runs', (select count(*) > 1000 from t.lz_pk2 where mode = 'walk_a') and (select count(*) > 1000 from t.lz_pk2 where mode = 'walk_b'));
+select t.eq('L: ... and the two streams are the same, packet for packet',
+            (select count(*)::int from ((select tick, eid, kind, a, bb, c from t.lz_pk2 where mode = 'walk_a' except select tick, eid, kind, a, bb, c from t.lz_pk2 where mode = 'walk_b')
+                                        union all (select tick, eid, kind, a, bb, c from t.lz_pk2 where mode = 'walk_b' except select tick, eid, kind, a, bb, c from t.lz_pk2 where mode = 'walk_a')) d), 0);
+
+-- N: a block placed on the spot of a lane that is behind: the lane is replayed against the floor as it was, then ends exactly where the tick-by-tick run ends it
+create or replace function t.lz_block(p_mode text, p_name text, p_x int, p_z int) returns void language plpgsql as $$
+begin
+    perform t.lz_setup(p_mode, 400);
+    perform t.lz_run(1, 353);
+    perform mc.set_block('minecraft:overworld', p_x, -60, p_z, 'minecraft:stone');
+    perform t.lz_run(354, 360);
+    perform mc.entity_auto_catchup(360, array(select id from mc.entity_lane));          -- (the entity rows of lanes that are not behind carry their cell again)
+    execute format('create table t.%I as select e.id, e.x, e.z, e.phys_tick, e.lane_until, e.goal_until, e.gx, e.gz, e.yaw, e.sent_qx, e.sent_qz, e.last_sent_tick, e.cx, e.cz from mc.entity e', p_name);
+    perform mc.set_block('minecraft:overworld', p_x, -60, p_z, 'minecraft:air');          -- (the next run starts in the same flat world)
+end $$;
+select t.lz_setup('on', 400);
+select t.lz_run(1, 353);
+create table t.lz_pick as select id, floor(x0)::int as bx, floor(z0)::int as bz from mc.entity_lane where auto and goal_until <= 353 order by id limit 1;
+select t.is_true('L: a lane that is behind at tick 353 was found for the block', (select count(*) = 1 from t.lz_pick));
+select t.lz_block('off', 'lz_blk_a', (select bx from t.lz_pick), (select bz from t.lz_pick));
+select t.lz_block('on', 'lz_blk_b', (select bx from t.lz_pick), (select bz from t.lz_pick));
+select t.eq('L: after the block (the lane under it was behind) and 7 more ticks every cow is in the same state as in the tick-by-tick run (position, phase, goal, base)',
+            (select count(*)::int from t.lz_blk_a a join t.lz_blk_b b using (id) where (a.x, a.z, a.phys_tick, a.lane_until, a.goal_until, a.gx, a.gz, a.yaw, a.sent_qx, a.sent_qz, a.last_sent_tick, a.cx, a.cz)
+                                                                                    is distinct from (b.x, b.z, b.phys_tick, b.lane_until, b.goal_until, b.gx, b.gz, b.yaw, b.sent_qx, b.sent_qz, b.last_sent_tick, b.cx, b.cz)), 0);
+select t.is_true('L: ... and the block really ended the lanes around it in both runs (over 100 cows were taken over by the exact sweep at tick 353 or later: ended, then back in a lane on a floor that is still uniform)', (select count(*) filter (where a.phys_tick >= 353) > 100 and count(*) filter (where b.phys_tick >= 353) > 100 from t.lz_blk_a a join t.lz_blk_b b using (id)));
+
+-- O: a gap in the ticks with lazy lanes (the entity connection jumped from 100 to 250): every lane is re-anchored, positions and goals as in the run without lazy lanes
+create or replace function t.lz_gap(p_mode text, p_name text) returns void language plpgsql as $$
+begin
+    perform t.lz_setup(p_mode, 400);
+    perform t.lz_run(1, 100);
+    perform t.lz_run(251, 330);
+    perform mc.entity_auto_catchup(330, array(select id from mc.entity_lane));
+    execute format('create table t.%I as select l.id, l.t0, l.x0, l.z0, l.gx, l.gz, l.gend, l.goal_until, l.yaw, l.cx, l.cz from mc.entity_lane l where l.auto', p_name);
+end $$;
+select t.lz_gap('off', 'lz_gap_a');
+select t.lz_gap('on', 'lz_gap_b');
+-- (the first step after a gap is a first step again for every eager lane; when it cannot be expressed as a plain delta the lane is handed to the generic tracker and the exact sweep, which places the
+-- mob one walking step (at most 0.1 blocks) off the closed form: that happens only in the run that computes steps, i.e. not for lazy lanes.  Goals are a pure function of (id, tick) and never differ.)
+select t.eq('L: after a gap of 150 ticks the goal chain of all 400 lanes is the same with and without lazy lanes (velocity, goal end, yaw), and the positions at tick 330 agree to 0.15 blocks',
+            (select count(*)::int from t.lz_gap_a a join t.lz_gap_b b using (id) where (a.gx, a.gz, a.gend, a.yaw) is distinct from (b.gx, b.gz, b.gend, b.yaw) or abs((a.x0 + a.gx * (330 - a.t0)) - (b.x0 + b.gx * (330 - b.t0))) > 0.15 or abs((a.z0 + a.gz * (330 - a.t0)) - (b.z0 + b.gz * (330 - b.t0))) > 0.15), 0);
+select t.is_true('L: ... and at least 90 % of the lanes are identical to the last bit (anchor, position, segment end, cell)',
+                 (select count(*) filter (where (a.t0, a.x0, a.z0, a.goal_until, a.cx, a.cz) is not distinct from (b.t0, b.x0, b.z0, b.goal_until, b.cx, b.cz)) >= 360 from t.lz_gap_a a join t.lz_gap_b b using (id)));
+select t.is_true('L: ... and the lanes walked on during the gap (every cow has a goal beyond tick 250)', (select count(*) = 400 and bool_and(gend > 250) from t.lz_gap_b));
+
+-- P: lanes within reach of a viewer are never lazy; lanes he left become lazy again at their next segment
+select t.lz_setup('on', 40);
+select t.lz_run(1, 100);
+select t.is_true('P: 40 cows in cells 1..4 with a viewer at (-6,-6): all lazy', (select count(*) = 40 and bool_and(lazy) from mc.entity_lane where auto));
+update mc.player set chunk_x = 2, chunk_z = 2, x = 2 * 16 + 0.5, z = 2 * 16 + 0.5 where conn_id = 1;
+select t.lz_run(101, 101);
+select t.is_true('P: the viewer moved to chunk (2,2): the cows around him are not lazy any more', (select count(*) = 40 and not bool_or(lazy) from mc.entity_lane where auto));
+update mc.player set chunk_x = -6, chunk_z = -6, x = -6 * 16 + 0.5, z = -6 * 16 + 0.5 where conn_id = 1;
+select t.lz_run(102, 300);
+select t.is_true('P: the viewer went away: after 200 ticks (a segment is at most 80 ticks) all cows are lazy again', (select count(*) = 40 and bool_and(lazy) from mc.entity_lane where auto));
+select set_config('dbcraft.entity_lazy', 'on', false);

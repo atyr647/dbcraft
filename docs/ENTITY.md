@@ -149,3 +149,17 @@ What changed: a walking or standing mob lives in a lane row (state, goal, chunk 
 are crossed inside the lane when nobody notices; the WAL of 2,000 walking mobs fell from 17-44 KB per tick to about 0.  The "Next optimisations" list above is done except the pickup scan (items by cell:
 partial index) and aggressive vacuum (the bench does what autovacuum does).  The prototype still models no pathfinding, goals, look-around, motion packets, sounds or collision, so the comparison
 is not like for like (docs/PERF-MOBS2.md says what vanilla does per mob, from the jar).
+
+### Update 2: lanes nobody can see are not simulated tick by tick (docs/PERF-MOBS2.md part 2)
+
+Lazy lanes (sql/940: a lane farther than min(tracking range, view) + 1 chunks from every viewer is replayed every 32nd tick in closed form, proven equal to the tick-by-tick run on 400 random lanes in
+tests/sql/940 L; whoever is about to look catches it up first) and a re-measurement against the real vanilla server, V D V D V D, vanilla `-Xms1G -Xmx2G`, CPU per tick, median of 3 at load 3-7:
+
+| scenario | vanilla | dbcraft (this branch) |
+|---|---|---|
+| 500 / 2,000 / 5,000 cows nobody can see, **nobody connected** | 5.0 / 6.6 / 10.5 ms | **1.4 / 4.2 / 7.5 ms** (2.8 / 2.1 / 1.5 us per mob) |
+| 500 / 2,000 / 5,000 cows outside the view of a connected viewer | 5.0 / 6.6 / 10.5 ms | 3.5 / 8.2 / 13.2 ms (**vanilla still 1.25x cheaper at 2,000 and 5,000**) |
+| 2,000 / 5,000 cows in view | 81.5 / 195 ms | 9.5 / 20.6 ms |
+
+A mob needs a floor that is uniform under its whole walk to get a lane: on ground with 2,000 scattered blocks the same 2,000 cows in view cost 215-238 ms instead of 10 (the scoreboard's mob rows ran on such a
+world and saw 3-4x part 1's numbers; it is not the simulation distance).  `dbcraft.entity-mode` stays `off`: with no mobs at all `inline` costs 0.5-2 ms a tick (0 to 200 players) and defeats the quiet tick.
