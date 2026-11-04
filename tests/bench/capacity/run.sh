@@ -14,7 +14,7 @@ psql -X -q -At -v ON_ERROR_STOP=1 -c "vacuum (full, analyze) mc.player, net.conn
 SCRIPT=$(mktemp); trap 'rm -f "$SCRIPT"' EXIT
 printf 'select setseed(0.99) is null;\n' > "$SCRIPT"
 for i in $(seq 1 "$TICKS"); do
-  printf 'select capb.gen(%s, %s, %s);\nselect tickbench.timed_tick();\nselect ibench.drain();\n' "$FRAC" "$K" "$BOUND"
+  printf 'select capb.gen(%s, %s, %s, %s);\nselect tickbench.timed_tick();\nselect ibench.drain();\n' "$FRAC" "$K" "$BOUND" "${COALESCE:-false}"
   if [ "$i" = "$SKIP" ] && [ -n "${PROF:-}" ]; then
     cat >> "$SCRIPT" <<'SQL'
 select pg_stat_statements_reset() is null;
@@ -27,7 +27,7 @@ SQL
 done >> "$SCRIPT"
 if [ -n "${PLANS:-}" ]; then       # PLANS=file: three more ticks with auto_explain (ANALYZE, BUFFERS, nested statements slower than PLANMIN ms); the plans come from the server log (DBCRAFT_PGDATA/log)
   printf "load 'auto_explain';\nset auto_explain.log_min_duration = %s;\nset auto_explain.log_analyze = on;\nset auto_explain.log_buffers = on;\nset auto_explain.log_timing = on;\nset auto_explain.log_nested_statements = on;\n" "${PLANMIN:-1}" >> "$SCRIPT"
-  for i in 1 2 3; do printf 'select capb.gen(%s, %s, %s);\nselect tickbench.timed_tick();\nselect ibench.drain();\n' "$FRAC" "$K" "$BOUND"; done >> "$SCRIPT"
+  for i in 1 2 3; do printf 'select capb.gen(%s, %s, %s, %s);\nselect tickbench.timed_tick();\nselect ibench.drain();\n' "$FRAC" "$K" "$BOUND" "${COALESCE:-false}"; done >> "$SCRIPT"
   LOGSTART=$(wc -c < "${DBCRAFT_PGDATA:-/tmp/dbcraft-pg}/log")
 fi
 # the gateway's maintenance thread (gateway/src/maint.rs: VACUUM (ANALYZE, SKIP_LOCKED) of the churned tables every maintenance_s = 5 seconds, a connection of its own): without it mc.player

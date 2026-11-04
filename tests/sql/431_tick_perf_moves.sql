@@ -24,6 +24,9 @@ begin
     from (select i, random() * 64 as px, 64 + random() * 4 as py, random() * 64 as pz, (random() * 360)::real as yw, (random() * 90 - 45)::real as pt from generate_series(1, p_n) i) g;
   -- positions changed by other code (a /tp): stored position differs from what the viewers were told
   if p_flavour = 5 then update mc.player set x = x + 3, z = z - 2 where entity_id % 5 = 0; end if;
+  if mc.vis_on() then          -- the tracker's memory of a player (sql/900): the yaw before the last move, the position its pairs were last evaluated at, some already dirty
+    update mc.player set yaw_prev = (random() * 360)::real, vis_x = x + (random() - .5) * 9, vis_z = z + (random() - .5) * 9, vis_dirty = random() < .15, vis_ocx = case when random() < .5 then chunk_x - 1 end, vis_ocz = chunk_z;
+  end if;
   insert into mc.visible (viewer_eid, target_eid, viewer_conn)
   select a.entity_id, b.entity_id, a.conn_id from mc.player a join mc.player b on b.entity_id <> a.entity_id and abs(a.chunk_x - b.chunk_x) <= 2 and abs(a.chunk_z - b.chunk_z) <= 2;
   for r in select * from mc.player order by conn_id loop
@@ -87,7 +90,9 @@ create or replace function t.restore_state() returns void language plpgsql as $$
 begin
   truncate mc.play_out, mc.play_in, mc.play_in_work, mc.visible, mc.kick;
   delete from mc.player;
+  perform set_config('session_replication_role', 'replica', true);        -- the join triggers of sql/900 (tracker mode) would rewrite the restored rows
   insert into mc.player select * from t_s_player;
+  perform set_config('session_replication_role', 'origin', true);
   insert into mc.play_in_work select * from t_s_in;
   insert into mc.visible select * from t_s_vis;
 end $$;
@@ -157,3 +162,11 @@ begin
   if t.general_calls() = before then raise exception 'FAIL a malformed packet did not take the general path'; end if;
   raise notice 'ok   a malformed packet takes the general path';
 end $$;
+-- With the vanilla tracker (sql/900: nobody is broadcast from the movement step) the fast path applies the moves with a statement that reads and writes the movers only
+-- (docs/PERF-CAPACITY.md); the same comparison with the general version: the same player rows (every column but the chunk memory the general version does not keep), the same
+-- correction packets, the same kicks.
+update mc.server_property set value = 'true' where key = 'dbcraft.vanilla-tracker';
+select t.eq('tracker on: flavour ' || f || ' seed ' || s, t.compare_moves(s / 10.0, f), 'same')
+  from unnest(array[1, 2, 3, 4, 5, 6, 7, 10, 11]) f, unnest(array[1, 2, 3]) s;
+select t.eq('tracker on: ordinary ticks, 15 more seeds', (select count(*) filter (where t.compare_moves(s::float8 / 100, 1) <> 'same') from generate_series(10, 24) s)::int, 0);
+select t.is_true('tracker on: the movers moved (the comparison is not empty)', (select count(*) > 10 from mc.player where last_move_tick = 1000));

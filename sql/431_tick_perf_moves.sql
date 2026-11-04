@@ -230,6 +230,27 @@ begin
   -- The packet per mover is built once (MATERIALIZED: otherwise the expressions are inlined into the fan-out join and evaluated once per viewer),
   -- then fanned out and concatenated per viewer connection.  Frames are assembled inline from the packet ids looked up once per call (c_*); the bytes equal
   -- mc.pkt_move_entity_pos / _pos_rot / _rot / mc.pkt_rotate_head (the tests compare them); only the rare teleport fallback uses the builder.
+  if vison then
+    -- (docs/PERF-CAPACITY.md) With the vanilla tracker nobody is broadcast from here (mc.vis_move does it, sql/907): no packet, no fan-out, no row of a player that sent nothing.  The statement
+    -- below built the new state of EVERY online player (500 rows of computed columns, 9 ms) to update the few hundred that moved; this one reads and updates the movers only.  The state
+    -- it writes is the one the statement below writes for a touched player (tests/sql/431 compares the two, flavour 14: a mutation of either is detected).
+    update mc.player p set x = n.nx, y = n.ny, z = n.nz, yaw = n.nyaw, pitch = n.npitch, on_ground = n.nog, chunk_x = n.ncx, chunk_z = n.ncz, vis_dirty = n.nvd,
+           vis_ocx = case when n.nvd and not p.vis_dirty then p.chunk_x else p.vis_ocx end, vis_ocz = case when n.nvd and not p.vis_dirty then p.chunk_z else p.vis_ocz end,
+           last_move_tick = cur_tick, yaw_prev = p.yaw
+      from (select f.conn_id,
+                   case when f.has_pos then greatest(-3.0e7, least(3.0e7, f.x)) else q.x end as nx,
+                   case when f.has_pos then greatest(-2.0e7, least(2.0e7, f.y)) else q.y end as ny,
+                   case when f.has_pos then greatest(-3.0e7, least(3.0e7, f.z)) else q.z end as nz,
+                   case when f.has_rot then f.yaw else q.yaw end as nyaw,
+                   case when f.has_rot then greatest(-90, least(90, f.pitch)) else q.pitch end as npitch,
+                   f.on_ground as nog,
+                   case when f.has_pos then floor(greatest(-3.0e7, least(3.0e7, f.x)) / 16)::int else q.chunk_x end as ncx,
+                   case when f.has_pos then floor(greatest(-3.0e7, least(3.0e7, f.z)) / 16)::int else q.chunk_z end as ncz,
+                   q.vis_dirty or coalesce(f.has_pos and (floor(f.x / 16)::int <> q.chunk_x or floor(f.z / 16)::int <> q.chunk_z or (f.x - q.vis_x) ^ 2 + (f.z - q.vis_z) ^ 2 >= 16), false) as nvd
+              from unnest(fin) f join mc.player q on q.conn_id = f.conn_id) n
+     where p.conn_id = n.conn_id;
+    moved := 0;
+  else
   with nv as materialized (
     select p.conn_id, p.entity_id as eid, p.sent_qx, p.sent_qy, p.sent_qz, p.sent_yaw, p.sent_pitch, p.last_sent_tick,
            p.chunk_x as ocx, p.chunk_z as ocz, p.vis_dirty as ovd,       -- the state mc.visible was computed from (before this tick's moves)
@@ -288,6 +309,7 @@ begin
          coalesce((select bool_or(nv.ovd) from nv), false)
     into moved, f_eid, f_data, f_ocx, f_ocz, v_conn, v_eid, v_cx, v_cz, any_dirty;
   perform mc.fanout_moves(f_eid, f_data, f_ocx, f_ocz, v_conn, v_eid, v_cx, v_cz, any_dirty);
+  end if;
 
   delete from mc.play_in_work where packet_id in (i_pos, i_pr, i_rot, i_st, i_te, i_tp);
   return next;

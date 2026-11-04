@@ -30,7 +30,7 @@ end $$;
 
 -- the clients' input for one tick: k position packets per moving client (k = 1: the client keeps up with the server; k = 2: a tick of 100 ms), then keep-alive and teleport answers.
 -- frac = the fraction of the clients that walk (the others only send client_tick_end, which the gateway does not pass on)
-create or replace function capb.gen(p_frac float8 default 1.0, p_k int default 1, p_bound float8 default 780) returns void language plpgsql as $$
+create or replace function capb.gen(p_frac float8 default 1.0, p_k int default 1, p_bound float8 default 780, p_coalesce boolean default false) returns void language plpgsql as $$
 declare i_pos int := net.pkt('play', 'serverbound', 'minecraft:move_player_pos'); i_te int := net.pkt('play', 'serverbound', 'minecraft:client_tick_end');
         i_ka int := net.pkt('play', 'serverbound', 'minecraft:keep_alive'); i_tp int := net.pkt('play', 'serverbound', 'minecraft:accept_teleportation');
         cur bigint := (select game_time from mc.game_state); sp float8 := 4.317 / 20.0; j int;
@@ -38,12 +38,12 @@ begin
   update capb.walk w set heading = case when abs(p.x) > p_bound or abs(p.z) > p_bound then atan2(-p.z, -p.x) + (random() - 0.5) * 1.2 else random() * 2 * pi() end,
          turn_at = cur + (case when abs(p.x) > p_bound or abs(p.z) > p_bound then 40 + random() * 60 else 60 + random() * 100 end)::int
     from mc.player p where p.conn_id = w.conn_id and (w.turn_at <= cur or abs(p.x) > p_bound or abs(p.z) > p_bound);
-  for j in 1 .. p_k loop
+  for j in (case when p_coalesce then p_k else 1 end) .. p_k loop         -- p_coalesce: what the gateway sends after coalesce_positions: the last position of each client only
     insert into net.inbox (conn_id, payload)
     select p.conn_id, proto.varint(i_pos) || proto.f64(p.x + cos(w.heading) * sp * j) || proto.f64(p.y) || proto.f64(p.z + sin(w.heading) * sp * j) || '\x01'::bytea
       from mc.player p join capb.walk w on w.conn_id = p.conn_id
      where p.conn_id is not null and p.conn_id % 1000 < p_frac * 1000 and p.awaiting_teleport is null;
-    if p_k >= 2 then
+    if p_k >= 2 and not p_coalesce then
       insert into net.inbox (conn_id, payload) select p.conn_id, proto.varint(i_te) from mc.player p where p.conn_id is not null and p.conn_id % 1000 < p_frac * 1000;
     end if;
   end loop;
