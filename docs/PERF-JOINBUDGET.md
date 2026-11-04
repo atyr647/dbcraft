@@ -1,5 +1,7 @@
 # Join budget: bounding the worst tick of a login storm (JOIN-BUDGET)
 
+> **Update:** this document was measured at view distance 2.  At view distance 10 the dominant cost was each joiner's 529-chunk square inside its own join tick; see [PERF-STORM.md](PERF-STORM.md) for what changed afterwards (chunk square spread over ticks, join entry budget, time-scaled chunk cap).
+
 **Result.** 200 joins in 1 s into a server with 200 walking players: worst tick **739 ms → 112–204 ms** (median of 2, wall; CPU 701 → 103–198 ms), nobody times out, everybody is in after 7–9 s (vanilla: 63.7 s for 200). 500 joins: worst tick 3.6 s → 0.24–1.0 s. The target of **≤ 100 ms is NOT met** for 200/500 joins with 200 online (see "Remaining risks"); it is met for 50 joins and for 200 into an empty server (116 ms, borderline). Per-join output is byte-identical.
 
 (The 5,726 ms of docs/SCOREBOARD.md was measured with real clients; the simulation here starts from 739 ms because its clients are paced stage by stage. The ratio is what matters: off vs budget is 4–10x on every storm size ≥ 200, measured interleaved.)
