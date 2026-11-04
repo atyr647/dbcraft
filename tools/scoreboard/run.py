@@ -472,6 +472,12 @@ def scenario_storm2(srv, a):
         r["online_after"] = seg(t_end, t_stop)
         r["online_failed"] = om.get("failed", 0)
         r["online_failures"] = om.get("failures", {})
+        if (r.get("online_failed") or r.get("failed")) and srv.name != "vanilla":          # keep the gateway's own log of a run that lost connections (it is overwritten by the next start)
+            try:
+                import shutil
+                shutil.copy(os.path.join(C.OUT, "gateway.log"), os.path.join(C.OUT, "gateway_failed_%d.log" % int(time.time())))
+            except OSError:
+                pass
         r["online_rtt_log_storm"] = [[round(t - t_storm, 2), rt] for (t, rt) in log if t_storm - 3 <= t < t_end + 3]
         return r
     finally:

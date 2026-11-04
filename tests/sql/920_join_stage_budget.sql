@@ -133,6 +133,16 @@ select t.tick(4);
 select t.eq('tick 4: the free one (41) and the connection past its maximum wait (43) entered, 42 waits',
             (select array_agg(conn_id order by conn_id) from net.conn where state = 'play'), array[41, 43]::bigint[]);
 
+select t.fresh();
+update mc.server_property set value = '0.001' where key = 'dbcraft.join-entry-budget-ms';
+select t.run_logins(41, 8, 'Ov', 3);
+update net.conn set connected_at = now() - interval '40 seconds';                                  -- all eight are past their maximum wait together (an overloaded machine)
+select t.stage(c, 4) from generate_series(41, 48) c;
+select t.tick(4);
+select t.eq('eight connections past their maximum wait: the free one plus at most 3 overdue ones enter in a tick (no flood)', t.nplay(), 4);
+select t.tick(5);
+select t.eq('...4 more in the next tick: all eight are in', t.nplay(), 8);
+
 ------------------------------------------------------------------------------------------------ 4. what a held-back connection sends after its entry packet waits behind it
 select t.fresh();
 update mc.server_property set value = '0.001' where key = 'dbcraft.join-entry-budget-ms';

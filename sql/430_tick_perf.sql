@@ -75,9 +75,9 @@ begin
     -- Join entry budget (sql/920, docs/PERF-STORM.md): the packet that makes a connection enter play (finish_configuration: mc.on_join, the entry burst, the first chunks) is the
     -- expensive step of a login, 15-20 ms.  Once this tick has spent dbcraft.join-entry-budget-ms in this function (25; off = never) further entries are put back into
     -- net.inbox with their sequence numbers and run in the next tick, oldest first; the first dbcraft.join-entry-free (1) of a tick always run, so a login never starves, and a
-    -- connection that has waited longer than dbcraft.join-max-wait-s is never held back.  What a held-back connection sent after the entry packet waits behind it.  A client
+    -- connection that has waited longer than dbcraft.join-max-wait-s is let in regardless of the budget, at most 3 per tick (a queue that all reaches the limit together, as under an overloaded machine, must not flood one tick).  What a held-back connection sent after the entry packet waits behind it.  A client
     -- waiting for its `login` packet sends nothing, so nothing is lost; the bytes a joiner receives do not change, only the tick they are produced in.
-    declare jb_ms numeric; jb_free int; jb_wait numeric; i_fc int; t_pf timestamptz := clock_timestamp(); n_entry int := 0; held bigint[] := '{}';
+    declare jb_ms numeric; jb_free int; jb_wait numeric; i_fc int; t_pf timestamptz := clock_timestamp(); n_entry int := 0; n_over int := 0; held bigint[] := '{}';
             d_c bigint[] := '{}'; d_s bigint[] := '{}'; d_p bytea[] := '{}';
     begin
     if exists (select 1 from net.batch where conn_id in (select conn_id from net.conn where state = 'configuration')) then
@@ -94,10 +94,11 @@ begin
         if jb_ms is not null then
             if r.conn_id = any (held)
                or (r.entry and n_entry >= jb_free and extract(epoch from clock_timestamp() - t_pf) * 1000 > jb_ms
-                   and extract(epoch from now() - r.connected_at) < least(25, jb_wait)) then
+                   and not (extract(epoch from now() - r.connected_at) >= least(25, jb_wait) and n_over < 3)) then
                 held := held || r.conn_id; d_c := d_c || r.conn_id; d_s := d_s || r.seq; d_p := d_p || r.payload;
                 continue;
             end if;
+            if r.entry and n_entry >= jb_free and extract(epoch from clock_timestamp() - t_pf) * 1000 > jb_ms then n_over := n_over + 1; end if;
             if r.entry then n_entry := n_entry + 1; end if;
         end if;
         begin

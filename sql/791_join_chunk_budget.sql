@@ -8,7 +8,7 @@
 
 insert into mc.server_property (key, value, default_value, note) values
     ('dbcraft.chunk-budget-per-tick', '600', '600', 'dbcraft: most chunk packets sent to ALL connections together per tick (round-robin, nearest first); 0 = unlimited'),
-    ('dbcraft.tick-budget-ms', '40', '40', 'dbcraft: login storms: chunk packets of waiting joiners are sent with whatever is left of this many ms in the tick (a tick that already spent it sends 25% of dbcraft.chunk-budget-per-tick, an idle one all of it); off = the cap alone'),
+    ('dbcraft.tick-budget-ms', '40', '40', 'dbcraft: login storms: chunk packets of waiting joiners are sent with whatever is left of this many ms in the tick (a tick that already spent it sends 40% of dbcraft.chunk-budget-per-tick, an idle one all of it); off = the cap alone'),
     ('dbcraft.join-chunks-inline', '49', '49', 'dbcraft: a joiner is sent the nearest this many chunks of its square inside the join burst; the rest follows over the next ticks (dbcraft.chunk-batch-max per tick); 0 = the whole square at once (the old behaviour)')
 on conflict (key) do nothing;
 
@@ -38,11 +38,11 @@ declare
 begin
     if not exists (select 1 from mc.chunk_wanted) then return 0; end if;
     -- dbcraft.tick-budget-ms: the shared cap shrinks with the time this tick has already used (process_fast records its start): a tick that spent 25 ms of a 35 ms budget on a join
-    -- sends 25% of the cap, a tick without joins all of it.  Without a recorded start (anything but the tick) or with an implausible one (a test running many ticks inside one statement) the cap is not scaled.
+    -- sends 40% of the cap, a tick without joins all of it.  Without a recorded start (anything but the tick) or with an implausible one (a test running many ticks inside one statement) the cap is not scaled.
     if tb > 0 and gcap is not null then
         t0 := nullif(current_setting('dbcraft.tick_t0', true), '')::timestamptz;                -- set by net.process_fast in this transaction; not set (no scaling) anywhere else
         el := extract(epoch from clock_timestamp() - t0) * 1000;
-        if el >= 0 and el < 2000 then gcap := greatest(1, ceil(gcap * greatest(0.25, least(1, (tb - el) / tb)))::int); end if;
+        if el >= 0 and el < 2000 then gcap := greatest(1, ceil(gcap * greatest(0.4, least(1, (tb - el) / tb)))::int); end if;
     end if;
     -- the connections that have wanted rows (a loose index scan: the rows are many during a storm, the connections are few), and which of them still play
     select coalesce(array_agg(q.c), '{}') into conns from (
