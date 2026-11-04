@@ -109,6 +109,9 @@ Checked against a reference that applies the same box position by position (x fa
 each for replace, replace with a block / properties / tag filter, keep, outline and hollow, with and without a viewer at the time of the fill, plus a whole-section case and a
 section with a global palette: every block, every section's block and fluid counts and every packet (entries in order, with states) equal.  **Vanilla's own packets for these
 modes were not recorded** (no byte-level comparison; `compare_fill.py` covers the default mode), and the speed of the modes against vanilla was not measured.
+**A bug the random cases found later (fixed):** `keep` / `replace <filter>` over a WHOLE palette section left `block_count` and `fluid_count` at their old values (the old air and fluid entries were only counted for
+sections not replaced whole, which is right without a filter and wrong with one).  It showed in about 1 of 3 full runs of `tests/sql/961` because a random box has to cover a whole section; replaying the failing seed on the old code reproduces it
+(1,254 against 4,096 in one case), 1,500 random cases (keep, replace with filters, hollow) and the 961 test with printed seeds pass on the fixed code, and a deterministic regression case is in the test (`psql -v seed=...` replays a run).
 `mc.fill_mode` returns the number of blocks changed (vanilla's count); `mc.fill` still returns the blocks covered.
 
 ## 3. Terrain generation against vanilla
