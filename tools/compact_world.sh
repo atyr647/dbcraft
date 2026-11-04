@@ -33,6 +33,10 @@ if [ "$APPLY" = 1 ]; then
     $PSQL -X -q -v ON_ERROR_STOP=1 -f "$f" 2>&1 | grep -v "already exists, skipping" || true
   done
 fi
+old=$($PSQL -X -q -At -c "select count(*) from pg_stat_activity where pid <> pg_backend_pid() and backend_xmin is not null and xact_start < now() - interval '5 seconds'")
+if [ "${old:-0}" != 0 ]; then
+  echo "WARNING: $old session(s) (in any database) hold a transaction open: VACUUM FULL cannot remove the old row versions they might still see, and the tables would end up BIGGER, not smaller. Stop the gateway and the other sessions first." >&2
+fi
 echo "before: $(size)"
 $PSQL -X -q -At -v ON_ERROR_STOP=1 -c "select 'rewrote ' || mc.compact_world_storage('$COMP') || ' rows'"
 if [ "$VAC" = 1 ]; then

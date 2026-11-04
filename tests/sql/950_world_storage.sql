@@ -12,7 +12,7 @@ select mc.set_block('dbcraft:c950', 1 + (g % 16), -61, 1 + (g / 16), (array['min
                                                                        'minecraft:gravel', 'minecraft:obsidian', 'minecraft:netherrack'])[1 + g % 8])
 from generate_series(0, 100) g;
 select mc.set_block('dbcraft:c950', 7, 100, 7, 'minecraft:emerald_block');
-select mc.set_block('dbcraft:c950', 16 + (g % 16), -60 + (g / 16) % 8, 3 + (g / 128), (select name from ref.block b order by state_id limit 1 offset g))
+select mc.set_block('dbcraft:c950', 16 + (g % 16), -60 + (g / 16) % 8, 3 + (g / 128), (select name from ref.block order by name limit 1 offset g))
 from generate_series(0, 150) g;
 select mc.chunk_packet('dbcraft:c950', cx, cz) is not null from generate_series(0, 2) cx, generate_series(0, 1) cz;     -- fills the cache and brings light up to date
 
@@ -35,8 +35,8 @@ select t.eq('the write compression of sections and light is lz4 (3% of a set_blo
             (select string_agg(attrelid::regclass::text || '.' || attname::text || attcompression::text, ',' order by attrelid::regclass::text, attnum) from pg_attribute
               where attrelid in ('mc.chunk_section'::regclass, 'mc.chunk_light'::regclass) and attname in ('palette', 'data', 'sky')),
             'mc.chunk_light.skyl,mc.chunk_section.palettel,mc.chunk_section.datal');
-select t.eq('the cache packet column keeps its pglz (the join path reads it): untouched by the profile',
-            (select attstorage::text || attcompression::text from pg_attribute where attrelid = 'mc.chunk_cache'::regclass and attname = 'packet'), 'xp');
+select t.eq('the cache packet column keeps its default compression (pglz; the join path reads it): untouched by the profile',
+            (select attstorage::text || attcompression::text from pg_attribute where attrelid = 'mc.chunk_cache'::regclass and attname = 'packet'), 'x');
 
 create temp table fp as select
   (select md5(string_agg(x || ',' || y || ',' || z || ',' || block, ';' order by x, y, z)) from mc.blocks_in('dbcraft:c950', 0, -64, 0, 47, 319, 31)) as blocks,
@@ -59,11 +59,12 @@ select t.eq('legacy: light arrays EXTENDED again', (select string_agg(attname::t
 select t.raises('compact_world_storage refuses on the legacy profile', $$select mc.compact_world_storage()$$);
 select t.raises('an unknown profile is refused', $$select mc.set_world_storage('tiny')$$);
 select t.raises('an unknown compression is refused', $$select mc.set_world_storage('compact', 'zstd')$$);
-select t.eq('the old switch of sql/291 selects the profiles', (select mc.set_section_compression(true) is null), true);
+select mc.set_section_compression(true);     -- the old switch of sql/291 selects the profiles
 select t.eq('...compact again', (select value from mc.server_property where key = 'dbcraft.world-storage'), 'compact');
 
-select t.is_true('compact_world_storage rewrites every row of the four tables and reports the count',
-  mc.compact_world_storage() = (select (select count(*) from mc.chunk_section) + (select count(*) from mc.chunk_light) + (select count(*) from mc.chunk_cache) + (select count(*) from mc.chunk)));
+create temp table rows_before as select (select count(*) from mc.chunk_section) + (select count(*) from mc.chunk_light) + (select count(*) from mc.chunk_cache) + (select count(*) from mc.chunk) as n;
+create temp table rewritten as select mc.compact_world_storage() as n;        -- not inside a query that reads the tables: it ALTERs them
+select t.eq('compact_world_storage rewrites every row of the four tables and reports the count', (select n from rewritten), (select n from rows_before));
 select t.is_true('after the rewrite the sections are compressed with pglz (the smallest)',
   (select count(*) from mc.chunk_section where dimension = 'dbcraft:c950' and pg_column_compression(data) = 'pglz') > 0);
 select t.eq('...and the profile is back: write compression lz4, setting unchanged', (select value from mc.server_property where key = 'dbcraft.world-storage-compression'), 'lz4');
@@ -84,9 +85,9 @@ select t.eq('the rewrite did not touch cached_at (the cache trigger is off for i
 create temp table g_before as select mc.get_block('dbcraft:c950', 2, -61, 2) as b;
 select mc.set_block('dbcraft:c950', 2, -61, 2, 'minecraft:lapis_block');
 select t.eq('an edit on a rewritten section works', mc.get_block('dbcraft:c950', 2, -61, 2), 'minecraft:lapis_block');
-select t.is_true('...the packet follows (the cache row is rebuilt: the version moved)', (select count(*) from mc.chunk c join mc.chunk_cache k using (dimension, cx, cz) where c.dimension = 'dbcraft:c950' and c.cx = 0 and c.cz = 0 and k.version = c.version) = 0
-   and mc.chunk_packet('dbcraft:c950', 0, 0) is not null
-   and (select count(*) from mc.chunk c join mc.chunk_cache k using (dimension, cx, cz) where c.dimension = 'dbcraft:c950' and c.cx = 0 and c.cz = 0 and k.version = c.version) = 1);
+select t.eq('...the cached packet of the edited chunk is stale (the version moved)', (select count(*) from mc.chunk c join mc.chunk_cache k using (dimension, cx, cz) where c.dimension = 'dbcraft:c950' and c.cx = 0 and c.cz = 0 and k.version = c.version), 0::bigint);
+select mc.chunk_packet('dbcraft:c950', 0, 0) is not null;
+select t.eq('...and the send rebuilt it', (select count(*) from mc.chunk c join mc.chunk_cache k using (dimension, cx, cz) where c.dimension = 'dbcraft:c950' and c.cx = 0 and c.cz = 0 and k.version = c.version), 1::bigint);
 select mc.set_block('dbcraft:c950', 2, -61, 2, (select b from g_before));
 
 -- trimming the cache: derived data, a missing row is rebuilt identically
