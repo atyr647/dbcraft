@@ -395,8 +395,9 @@ begin
         -- the sections written are decoded already (the engine's private copy): store them in the cache under the chunks' new versions instead of decoding them again on the next tick
         for cr in select (u.x >> 4) as cx, (u.y >> 4) as sy, (u.z >> 4) as cz, array_agg((((u.y & 15) << 8) | ((u.z & 15) << 4) | (u.x & 15)) order by u.o) as ixs, array_agg(u.sid order by u.o) as news
                     from unnest(ch_x, ch_y, ch_z, ch_new) with ordinality u(x, y, z, sid, o) group by 1, 2, 3 loop
+            cc := null;
             select k.cells into cc from mc.dyn_sec_cache k where k.dimension = p_dim and k.cx = cr.cx and k.cz = cr.cz and k.sy = cr.sy;
-            if found then
+            if cc is not null then                                                                   -- (not FOUND: this function declares a variable of that name)
                 for ii in 1 .. cardinality(cr.ixs) loop cc[cr.ixs[ii] + 1] := cr.news[ii]; end loop;
                 update mc.dyn_sec_cache k set cells = cc where k.dimension = p_dim and k.cx = cr.cx and k.cz = cr.cz and k.sy = cr.sy;
             end if;

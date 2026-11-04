@@ -115,6 +115,7 @@ def run_vanilla(a):
     c.settle(1.0, 15.0)
     rc.cmd("tp Dyn 0 -30 30"); c.settle(0.5, 5.0)
     rc.cmd("tick freeze")
+    rc.cmd("fill -20 -61 -20 20 -61 20 minecraft:grass_block")          # the floor the scenarios start from (an earlier run may have left holes in it)
     res = {}
     for name, ops in SCEN.items():
         if a.only and name not in a.only.split(","):
@@ -160,6 +161,7 @@ def run_dbcraft(a):
         "insert into mc.player (uuid, name, conn_id, entity_id, chunk_x, chunk_z) values ('00000000-0000-0000-0000-00000000d001', 'Dyn', 1, 1, 0, 0); "
         "insert into mc.game_rule (name, value) values ('minecraft:random_tick_speed', '0') on conflict (name) do update set value = '0'")
     sql("select mc.generate_flat_area('minecraft:overworld', -3, -3, 3, 3)")
+    sql("select mc.fill('minecraft:overworld', -20, -61, -20, 20, -61, 20, 'minecraft:grass_block[snowy=false]')")          # the floor the scenarios start from
     res = {}
     for name, ops in SCEN.items():
         if a.only and name not in a.only.split(","):
