@@ -116,7 +116,8 @@ What a tick cost the connection, in microseconds of backend CPU per call (pgbenc
 7. **Phases of the full tick that have nothing to do are not entered** (`mc.server_tick`, `sql/430`; the switch `dbcraft.quiet_tick = 'off'` runs them all): block actions, block-event broadcast, kicks/leavers and the drain are guarded by the one query each already makes first thing
    (`pg_stat_statements`, 200 idle players: each phase cost 0.05-0.15 ms for its call, its declarations and its savepoint before it found nothing).  **The trims of the tick logs run once a second** (`delete from mc.server_tick_log where tick < cur - 6000` and the same for `mc.tick_log` were planned
    again on every call, 0.11 and 0.09 ms of planning plus the same again to run): `sql/430`, `sql/389` and, the one edit to a function others are changing, **`mc.tick_core` in `sql/837`: `if cur % 20 = 0 then delete from mc.tick_log ... end if;` and nothing else**.
-8. **The PL/Python gateway** (`sql/optional/dev_gateway.sql`) filters `client_tick_end` of connections in play like the Rust gateway (the play state comes from `net.gateway_ctl`) and takes the neutral kinds from the database.
+8. **The once-a-second truncation of the tick's own queues is bounded** (`dbcraft.tick-truncate-bytes`, default 256 KiB, `0` = the old behaviour; `mc.server_tick` in `sql/430`, the setting in `sql/972`): the commonest long tick of an idle server with players was the one after the truncate (see "The tail of the tick").
+9. **The PL/Python gateway** (`sql/optional/dev_gateway.sql`) filters `client_tick_end` of connections in play like the Rust gateway (the play state comes from `net.gateway_ctl`) and takes the neutral kinds from the database.
 
 ## Chat from real clients
 
@@ -146,9 +147,9 @@ Both gateways read the list from `net.urgent_neutral_play_ids()` at start (resta
 * **The 50/200-player CPU is 22% and 16% lower**, not "trimmed further" in the way an empty server was: what is left (`pg_stat_statements`, 200 idle players, per call on a busy machine: `net.stream_chunks` 0.66 ms, `mc.refresh_visibility` 0.32, `mc.survival_moves` 0.29, `mc.survival_entities` 0.26, `mc.keepalive_due` 0.19, `net.join_gate` 0.19, `mc.deliver_ready_chunks` 0.17,
   `mc.broadcast_block_events`, `mc.moves_idle` ...) is a dozen phases of 0.1-0.7 ms each, **owned by other tracks** (login storms, visibility, world performance, survival) and not mine to rewrite; the same transaction-id trick can in principle skip a phase when nothing has changed since it last found nothing to do, but it needs a per-phase proof
   that the phase's own output depends on nothing but the tables and not on the tick number (keep-alive and survival do), which I did not do.  The gateway's 4,000 reads a second per 200 players could be batched by waking later (a 200 microsecond coalescing delay would cut the context switches 4 times for 0.2 ms of chat latency); not tried.
-* **Not re-measured: the PL/Python gateway** (its `client_tick_end` filter is implemented and compiled in, but `tests/e2e/run_all.sh` and the gateway's CPU at 200 idle players were not run with it in this session: see "Tests").
-* **Lowering `dbcraft.queue-trim-bytes`** (the bound of `net.drain_outbox()`'s truncation of `net.inbox`/`net.outbox`, 8 MiB) was the other tail candidate: the measurement is in the walking table above; the bloat of the outbox at 200 idle players after the join burst (512 KiB, 64 pages: 0.2 ms of every tick's `exists` probe)
-  is the part of `net.gateway_pending` that is left.
+* **Not re-measured: the PL/Python gateway's CPU and tick at 200 idle players** (its `client_tick_end` filter and neutral kinds are implemented and `tests/e2e/run_all.sh` passes with them: 47 comparisons; the 6.8 ms of PERF-IDLE.md was not measured again).
+* **Not tried: lowering `dbcraft.queue-trim-bytes`** (8 MiB, the bound of `net.drain_outbox()`'s truncation of `net.inbox`/`net.outbox`).  After a join burst the outbox keeps 512 KiB of dead rows at 200 idle players (64 pages: 0.2 ms of `net.gateway_pending`'s `exists` probe on every tick; the partial index took the closing-connection scan away, this one is left);
+  a lower bound means more truncates, and a truncate is exactly what the tail section found expensive.  A trim at a moment the tick chooses (once a second, when the queue is empty and bigger than 64 KiB) would do it; not done.
 * **A platform fact worth knowing**: `perf` is not installed here; the profile is `pg_stat_statements`, `strace -c`, per-process `/proc` CPU and pgbench micro-measurements at a fixed rate.
 
 ## What is still a loss, and what is still not known
@@ -157,7 +158,7 @@ Both gateways read the list from `net.urgent_neutral_play_ids()` at start (resta
 * **Tick time at 50 and 200 idle players** is 3.1 and 5.0 ms against vanilla's 47 and 75 here, a win; but the **p99** (10 and 13 ms SQL, 20-30 ms as the gateway sees it at 200 players) is still mostly the once-a-second work (the time packet for 200 players, the log trim) and the join storm (tick of 0.3-1.6 s while 200 clients log in: not this track).
 * **The lane still waits when the tick is near** (39% of the realistic chats); its price is its SQL cost (`mc.chat_broadcast`: 2.9 ms at 50 players on a quiet machine, 6 here).
 * **Chat p99** with the realistic client has not moved (73 -> 76 ms; scripted client 25 -> 24 and 39 -> 37 ms): it is the longest tick, as before.  The truncation bound removed the commonest long tick; the keep-alive round did **not** show up as a tail source in these runs (no slow tick sits at a keep-alive position; the answers cost 0.5 ms a call).
-* **Walking players**: the tail experiment above (50 walkers) shows no gain from the truncate bound and a first tick of the second at twice the others; 200 walkers were not re-measured, and the scoreboard's 200-walking-players row (docs/SOAK.md) is not something this work touched.
+* **Walking players**: the tail experiment above (50 walkers) shows no gain from the truncate bound and a first tick of the second at twice the others; the 200-walker soak ends at 71-79 ms against 54-78 for the starting commit (noise-limited, see Tests), and the scoreboard's 200-walking-players kick-out (docs/SOAK.md) was not investigated by this work.
 * **Vanilla's numbers on this box are not vanilla's quiet-machine numbers**: its mean tick of 47-75 ms with idle players (37-57 in earlier sessions) and its 0.97-1.43 cores are what the JVM did next to the other jobs.  Read the dbcraft columns as measured and the vanilla columns as "what vanilla did on the same box in the same hour" (the cells alternate).
 
 ## Noise, and how far to trust the numbers
@@ -170,7 +171,19 @@ Both gateways read the list from `net.urgent_neutral_play_ids()` at start (resta
 
 ## Tests
 
-@@TESTS@@
+Run on a cluster of their own (`/dev/shm`, port 59751; never the cluster of a measurement):
+
+* **The whole SQL suite** (`tests/sql/prun.sh`, 3 jobs, 734 s on a machine shared with other jobs): **66 files, 2,409 checks, all pass**, with the structural checks the runner ends with (the override list: 59 functions, all listed in `sql/OVERRIDES.txt`; the clean-migration check; the inlining guard).
+  New: `tests/sql/970_quiet_gate.sql` (92 checks: the gate, the second session, the pending shortcut, the generator that parks, the truncation bound), `tests/sql/971_urgent_neutral.sql` (48: every kind classified, every neutral kind through the tick and the lane, eight random mixes, the test's own mutation check).
+  Changed: `800_idle_tick.sql` (129: the log row once a second instead of per tick; two more probes), `437_tick_churn.sql` and `550_entity_split.sql` (they test the truncation of tiny queues by the tick itself, so they set `dbcraft.tick-truncate-bytes = 0` first: one line each).  `970` waits (up to 15 minutes) until no other database of the cluster is active before it tests the gate,
+  because transaction ids are numbered for the whole cluster and a test running in parallel in another database disarms the gate every few milliseconds (correctly): in the first full run `970` failed for that reason.
+* **Mutants** (`mutate` of sql/800 against 970 and 800, the file restored afterwards): the gate ignoring `xmax`; usable inside a transaction that has written; always arming; arming without the `xmin` condition; dropping the outbox probe; dropping the chunk-request probe: **all six are caught by `970`** (the last two also by `800`).
+* **The gateways**: unit tests `gateway/build.sh test`: 58 gateway tests (3 new: neutral kinds, order with commands, the fate counters) and the core's 30, all pass.  **`tests/gateway/run_e2e_rust.sh`: 47 comparisons with the recordings of the real vanilla server, 0 failures** (the gateway's shutdown line: 2,204 of 2,268 ticks lean, "urgent chat: 1 runs took 1 frames": the chat of the two-player scenario travelled the lane and its
+  `player_chat` is identical to vanilla's up to the text).  **`tests/e2e/run_all.sh` (the PL/Python gateway with its new tick-end filter and neutral kinds): 47 comparisons, 0 failures.**
+* **The soak guard** (`tests/soak/run.sh rust 6 200`, 200 walking players, 6 minutes): **PASS**, three times for this branch and three times for the starting commit (alternating, same machine): 0 clients dropped, queues bounded, no growth.  The SQL tick of the last sample was 71 / 79 / 79 ms (after) against 54 / 78 / 54 ms (before), ticks per second 10-11 against 12-14: **the 200-walker tick is dominated by the movement and chunk phases of other tracks (the SOAK.md figure of 31 ms is from before them) and
+  this work cannot be told apart from the starting commit with three runs each**; with 50 walkers (below) it is not worse.
+* **50 walking players** (`idle2_matrix.py --servers before,after --sizes 50 --moving 1.0 --bound 500`, 3 repetitions alternating, load 0.4-0.7): tick mean 11.89 [11.88-12.13] ms after against 13.04 [12.51-15.77] before, p99 27.0 [24.9-27.6] against 30.5 [29.5-37.4], CPU 0.391 [0.391-0.393] against 0.411 [0.395-0.458] cores, chat p50 16 against 21 ms: **not worse, slightly better** (the guards, the log trims, the fused tick).
+* **Not run**: `tests/gateway/run_online_rust.sh` (online mode; the encryption and session paths were not touched), the gateway under valgrind (the new code is a prepared statement, a condition variable and two thread loops; `gateway_valgrind.sh` is the tool for it), `tests/gateway/run_load_rust.sh`.
 
 ## Reproduce
 

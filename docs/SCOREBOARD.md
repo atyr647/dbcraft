@@ -73,6 +73,7 @@ and it loses (or fails) on login-storm stalls and long runs with 200 moving play
 | 200 players, idle ‡ | CPU (cores) | 1.43 [0.98-1.45] | 0.231 [0.228-0.244] | 0.195 [0.169-0.207] | dbcraft |
 | 200 players, idle ‡ | tick mean / p99 (ms) | 74.9 / 147.9 | 5.68 / 18.2 | 5.01 / 13.0 | dbcraft |
 | 200 players, idle ‡ | chat round trip p50 / p99 (ms) | 51 / 108 | 15 / 39 | 14 / 37 | dbcraft |
+| 50 players, all walking (bounded) ‡ | tick mean / p99 (ms); CPU (cores); chat p50 / p99 (ms) | not run in this session | 13.0 / 30.5; 0.411; 21 / 56 | 11.9 / 27.0; 0.391; 16 / 48 | dbcraft (vanilla not re-run) |
 | 50 players, idle, chat from a client that also sends player_input / punch / ... ‡ | chat round trip p50 / p99 (ms), 360 chats each | not run | 31 / 73 | 20 / 76 | before 31 -> after 20 ms (p99 unchanged) |
 
 † **Re-measured** for [PERF-IDLE.md](PERF-IDLE.md) on a different day and a quieter machine than the original session, both servers, 2 repetitions of 60 s for vanilla (3 for the empty server) and 3 for dbcraft (PL/Python gateway and batched tick, as in this table; the Rust gateway is in PERF-IDLE.md), after the idle-cost work: medians, ranges and the

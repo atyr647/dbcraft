@@ -25,6 +25,7 @@ def main():
     ap.add_argument("--servers", default="vanilla,before,after")
     ap.add_argument("--realistic", type=float, default=0.0)
     ap.add_argument("--moving", type=float, default=0.0)
+    ap.add_argument("--bound", type=float, default=0.0, help="walkers turn back at +-bound blocks (inside the pre-generated area); 0 = they walk on")
     ap.add_argument("--tag", default="idle2")
     a = ap.parse_args()
     here = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
@@ -50,7 +51,7 @@ def main():
                 if name == "after":
                     e["SCORE_TICKLOG"] = "/dev/shm/dbc-idle2-ticklog-%s.csv" % tag.replace(":", "_")
                 cmd = [sys.executable, "tools/scoreboard/run.py", scen, "--n", str(n), "--moving", str(a.moving), "--hold", str(a.hold), "--servers", kind, "--reps", "1", "--tag", tag,
-                       "--quiet-wait", "0", "--out", a.out, "--realistic", str(a.realistic)]
+                       "--quiet-wait", "0", "--out", a.out, "--realistic", str(a.realistic), "--bound", str(a.bound)]
                 t0 = time.time()
                 r = subprocess.run(cmd, cwd=cwd, env=e, capture_output=True, text=True)
                 last = (r.stdout.strip().splitlines() or [r.stderr.strip()[-300:]])[-1]
