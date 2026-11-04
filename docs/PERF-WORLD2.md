@@ -8,8 +8,8 @@ generation (`dbcraft:noise`) against vanilla generating real terrain; (4) the sc
 ## How the numbers were taken, and why most of them are not clean
 
 **The machine was not quiet, and got worse while I worked.**  4 cores shared with about 8 other workers; the load average was 4 to 5 at the start, 10 to 26 for most of the
-measurements below, and the container was restarted once.  Absolute times in this document therefore differ by factors between runs (the same A/B run at load 5 and at load 25
-shows a whole-section fill at 0.9 and 5.6 ms of *CPU* time); **only the ratios inside one interleaved run mean something, and every table says at which load it was taken.**
+measurements below, and the container was restarted once.  Absolute times in this document therefore differ by factors between runs (`ab_fill.sql` gave 0.92 ms and 5.57 ms of *CPU* time for the same original whole-section fill in two
+runs minutes apart, both at a load average above 20); **only the ratios inside one interleaved run mean something, and every table says at which load it was taken.**
 Measures: CPU time of the backend (`tests/bench/edit/cpu_timer.sql`, resolution 4 ms, hence groups of many calls), A/B interleaved in one session and one database
 (`tests/bench/world2/ab_world2.sql` against frozen copies of the starting commit's functions in schema `bench_head`, `tests/bench/world/ab_fill.sql` against the original
 per-block-era fill), and for vanilla the CPU time of the JVM's "Server thread" and of all its threads from `/proc/PID/task/*/schedstat` (nanoseconds)
@@ -36,7 +36,7 @@ First run, load average 4 to 5, 2 GB heap, 7 repetitions after a warm-up call (s
 Second run, load average 10 to 17, cold JVM (0.9 GB heap): 100,000 blocks 286 ms main / 765 ms JVM (viewer), 255 / 666 (nobody); 64 whole sections 645 / 2,644 and 637 / 2,504.
 The main-thread CPU agrees between the runs (239 to 286 ms), the wall-clock times do not (424 against 1,315 ms).  Two things the scoreboard did not show: the 201 ms it
 quoted for vanilla's 100,000-block fill (no player, no load) is the *wall* time of an RCON round trip; with a player in range the same fill costs the main thread 240 to 290 ms of
-CPU, and the packets reach the client in the tick after the command (about 15 ms later in the first run), so the client sees the change after command + tick.
+CPU, and the packets reach the client in the tick after the command (44 to 140 ms after the RCON reply in an exploratory run), so the client sees the change after command + tick.
 
 ### dbcraft, before and after (`ab_world2.sql`, one fake connection in range, CPU ms per call, median (min - max) of 5 rounds, **load average 8 to 10**)
 
@@ -58,8 +58,7 @@ back to air), 64 whole sections 11 ms and 140 ms.  After the change, same method
 
 So the tick stalls for **3 to 9 ms instead of 240 to 320 ms** after a 100,000-block fill with a viewer, against vanilla's 240 to 290 ms of main-thread CPU for command and
 broadcast together.  The cost did not disappear, it moved: the statement is 7 to 13% more expensive when it has to encode (a fill to stone; a fill to air barely changes,
-the packet of state 0 is shorter), on the connection that runs it.  Total CPU of fill plus tick: before about 320 to 410 ms, after about 110 ms at the same load (about 45 ms
-at load 4 to 5), against vanilla's 650 to 765 ms across all threads (and 240 to 290 ms on its main thread alone).  **A fill issued from inside the tick** (there is no `/fill` command in dbcraft yet,
+the packet of state 0 is shorter), on the connection that runs it.  Total CPU of fill plus tick: before about 406 ms, after about 112 ms at the same load (at load 4 to 5: 275 ms before, 43 ms after), against vanilla's 650 to 765 ms across all threads (and 240 to 290 ms on its main thread alone).  **A fill issued from inside the tick** (there is no `/fill` command in dbcraft yet,
 only SQL) would pay the encoding in that tick as before; the statement-time encoding is only a win for fills issued from outside it.
 
 ### What was done
@@ -120,15 +119,15 @@ CPU of the postmaster and every backend including the ones that exited, WAL writ
 
 | | CPU per chunk | notes |
 |---|---|---|
-| **vanilla 26.3, real terrain** (default generator, structures on, seed 12345), rectangles of 256 chunks one after the other | **140, 73, 85, 67, 67 ms** (rectangles 1 to 5, load average 6 to 7, 1,280 chunks, JIT still cold: still falling) | all JVM threads: generation workers, light engine, JIT, GC, the chunk IO thread; no player; `save-all flush` not measured |
-| vanilla, same, load average 18 | 241 ms (first rectangle) | |
+| **vanilla 26.3, real terrain** (default generator, structures on, seed 12345), 25 rectangles of 256 chunks = 6,400 chunks, one run to the end (run 4, load average 18 to 22) | **median 61.6 ms** (mean 68.6, min 52.0, max 104.0) over the 21 rectangles after the first four (5,376 chunks); the first four, with a cold JIT: 193, 102, 97, 106 ms | all JVM threads: generation workers, light engine, JIT, GC, the chunk IO thread; no player; `save-all flush` not measured |
+| vanilla, an earlier run that was OOM-killed after 5 rectangles (run 1, load 6 to 7) | 140, 73, 85, 67, 67 ms | |
 | **dbcraft, `dbcraft:noise`, whole Postgres cluster** | **8.08 ms** generation + 0.12 ms checkpoint (6,400 chunks, load average 11 to 13) | rows, light, the cached packet, WAL |
 | dbcraft, generating backend only (`bench_terrain.sql`, 1,600 chunks, 3 rounds, load about 10) | 6.3 ms (5.9 - 6.3): rows 3.25, light 1.08, packet 1.97; fresh database: 5.15 ms at load 3 to 4 (`docs/WORLD.md`) | |
 
-So dbcraft's cost per chunk is **at least 8 times below vanilla's best observed 67 ms** (a lower bound of the gap: vanilla's number was still falling, and it is generated
-terrain with caves, ores, trees and structures where dbcraft's has none: **not the same work**, which `docs/WORLD.md` says too).  What I could NOT do is a clean steady-state vanilla
-figure: the container's memory cgroup OOM-killed every vanilla JVM after 5 to 6 rectangles (four times, 1.0 to 1.8 GB resident, other workers' servers were killed as well), and under a
-load average of 10 to 26 a rectangle took 20 to 270 s of wall time.  The vanilla figure is therefore "at least 67 ms with a warming JIT", not a benchmark.  The dbcraft figure includes
+So dbcraft's cost per chunk is **7.6 times below vanilla's median 61.6 ms** (8.1 against 61.6; 6.3 backend-only; vanilla's real terrain has caves, ores, trees and structures where dbcraft's has none: **not the same
+work**, which `docs/WORLD.md` says too).  Caveats on the vanilla figure: three earlier attempts were OOM-killed by the container's memory cgroup after 1 to 5 rectangles (1.0 to 1.8 GB resident; other workers' servers were killed as well),
+the finished run shares the machine with a load average of 18 to 22 (CPU time is less sensitive to that than wall time, but not immune: the per-rectangle values scatter between 52 and 104 ms), and the JIT is still warming
+over the first rectangles after the four counted as warm-up.  The dbcraft figure includes
 persistence (WAL) and the packet, vanilla's does not include sending; vanilla's chunk files are written lazily (not measured).
 
 **A bug found on the way, fixed: `mc.compute_light` took 0.6 to 1.8 s per terrain chunk on a populated database.**  Its `pl` CTE is referenced from a scalar subquery of `want`
@@ -138,7 +137,7 @@ it did not, which is why `bench_terrain.sql` (fresh databases, scratch dimension
 1 chunk per second before the fix.  `pl as materialized (...)` (sql/220) makes it deterministic: 589 ms to 1.5 ms per chunk in the same database, light bytes unchanged
 (tests/sql/240, 250 (real terrain, 49 captured chunks), 260, 270, 295 and 855 pass).  Every light recompute of an edited terrain chunk had the same exposure.
 
-The generator itself (sql/855) was not changed: with vanilla at 67 ms or more, shaving the noise (a profile of 400 chunks: 151 `t_vnoise` calls at about 5 us and 256 `t_hash` calls at
+The generator itself (sql/855) was not changed: with vanilla at about 62 ms, shaving the noise (a profile of 400 chunks: 151 `t_vnoise` calls at about 5 us and 256 `t_hash` calls at
 2 us per chunk, together 1.3 of the 3.2 ms of rows) would have been a few percent of 5 to 8 ms and each change needs the byte-identity tests of `tests/sql/855` to be re-argued.
 
 ## Verification
@@ -172,7 +171,7 @@ the CPU-time measurements of section 1 are the better comparison for the large f
 * **Set-based simulation of the hash set**: linear probing with insertion order is a sequential process (a later key whose home slot is free takes it, an earlier key that probed past it displaces nothing), and a round-based SQL formulation
   needs one statement per round; I did not find a loop-free formulation, so a shape's FIRST encoding still costs the simulation (about 1.5 us a position: 2.8 ms for a typical partial section, 6 ms for a whole one).
 * **The vanilla comparisons under load**: every wall-clock vanilla number of this session is inflated by the load and the cold JIT; only main-thread and JVM CPU time are usable, and those only roughly (239 to 286 ms for the 100,000-block fill).
-* **A clean vanilla terrain figure** (see section 3).
+* **Vanilla terrain without OOM kills and load**: three of four attempts were killed by the memory cgroup (section 3); the one complete run shares the machine with a load average of 18 to 22.
 * A first version of the A/B script ran for 30 minutes before I killed it; the CPU timer's 4 ms resolution had forced groups of hundreds of calls, which at that load took far longer than estimated.
 
 ## What is still a loss, or not done
@@ -185,7 +184,7 @@ the CPU-time measurements of section 1 are the better comparison for the large f
 * A fill to stone is 7 to 13% more expensive as a statement when a player can see it (the encoding); a whole-section fill costs 1.00x of the original per-block-era fill, not less.
 * **The speed of the fill modes against vanilla was not measured**, and vanilla's packets for them were not recorded.  `keep` and `replace <filter>` read every field of the box (about 0.4 ms a section); the 4-bit bit-map packing is fast, sections with
   5- to 8-bit palettes still read their changed positions with a loop (1.2 us a position).  `destroy` is not implemented.
-* Vanilla at steady state, vanilla without structures, vanilla's `save-all flush` for terrain, and dbcraft with several generator loops: not measured.
+* Vanilla without structures, vanilla's `save-all flush` for terrain, and dbcraft with several generator loops: not measured.
 * `light_update` after block changes, `block_entity_data`, the order of sections of different chunks: unchanged from `docs/WORLD.md` ("Not verified").
 
 ## Reproduce

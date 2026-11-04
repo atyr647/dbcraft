@@ -155,8 +155,8 @@ Cost, `tests/bench/world/bench_terrain.sql` (CPU time of the backend per chunk, 
 
 That is 38 times the flat generator and, against the 1.8 ms the scoreboard measured for vanilla generating a FLAT chunk (`docs/SCOREBOARD.md`, 10,000 chunks in 17.8 s), 2.9 times.  I did **not**
 measure vanilla generating real terrain here; its pipeline (noise, carvers, surface, features, lighting) costs far more per chunk than its flat one, and I would not quote a ratio without
-running it.  **Since [PERF-WORLD2.md](PERF-WORLD2.md):** vanilla generating real terrain was measured (partially: its JVM was repeatedly OOM-killed by the container): 67 ms of CPU per chunk at best, still falling, against 8.1 ms
-for the whole Postgres cluster generating `dbcraft:noise` (6,400 chunks, load 12; not the same work).  The same document records that these figures above, taken on fresh databases, hid a planner bug in `mc.compute_light` that made light
+running it.  **Since [PERF-WORLD2.md](PERF-WORLD2.md):** vanilla generating real terrain was measured (6,400 chunks, structures on, load average 18 to 22): median 61.6 ms of CPU per chunk (52 to 104 per rectangle of 256), against 8.1 ms
+for the whole Postgres cluster generating `dbcraft:noise` (6,400 chunks, load 12; not the same work: dbcraft has no caves, ores, trees or structures).  The same document records that these figures above, taken on fresh databases, hid a planner bug in `mc.compute_light` that made light
 take 0.6 to 1.8 s per terrain chunk on a populated database (fixed in sql/220).  Within the rows the 25 lattice samples are about 0.5 ms (6 noise values each), the bedrock hash 0.5 ms, the surface sections 0.7 ms.
 
 For the async queue (`dbcraft.chunk-generation = async`, `call mc.run_generator()`, as many loops as cores): about 190 (1 / 5.15 ms of CPU, computed, not measured with several loops) chunks per second per loop.  **Run noise worlds in async mode**:

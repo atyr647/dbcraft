@@ -122,3 +122,30 @@ fill 1 (minecraft:stone): 271.4 ms CPU, cache rows 27 | tick 11.9 ms
 fill 2 (minecraft:air): 79.5 ms CPU | tick 7.0 ms
 fill 3 (minecraft:stone): 88.7 ms CPU | tick 2.3 ms
 fill 4 (minecraft:air): 79.1 ms CPU | tick 4.0 ms
+
+## vanilla_gen.py run 4 (structures on, seed 12345, heap 1.1 GB, load average 18-22 with another test suite running): all 25 rectangles = 6,400 chunks
+rect (400,400)-(415,415) 256 chunks  206.17 s wall     49510 ms cpu   (193.40 ms cpu per chunk)  [warm-up]
+rect (416,400)-(431,415) 256 chunks   89.59 s wall     26099 ms cpu   (101.95 ms cpu per chunk)  [warm-up]
+rect (432,400)-(447,415) 256 chunks   93.66 s wall     24896 ms cpu   (97.25 ms cpu per chunk)  [warm-up]
+rect (448,400)-(463,415) 256 chunks   94.23 s wall     27067 ms cpu   (105.73 ms cpu per chunk)  [warm-up]
+rect (464,400)-(479,415) 256 chunks   78.90 s wall     25914 ms cpu   (101.23 ms cpu per chunk)  [steady]
+rect (400,416)-(415,431) 256 chunks   65.66 s wall     19601 ms cpu   (76.57 ms cpu per chunk)  [steady]
+rect (416,416)-(431,431) 256 chunks   93.82 s wall     26611 ms cpu   (103.95 ms cpu per chunk)  [steady]
+rect (432,416)-(447,431) 256 chunks   60.20 s wall     13306 ms cpu   (51.98 ms cpu per chunk)  [steady]
+rect (448,416)-(463,431) 256 chunks   77.94 s wall     19727 ms cpu   (77.06 ms cpu per chunk)  [steady]
+rect (464,416)-(479,431) 256 chunks   53.72 s wall     15269 ms cpu   (59.65 ms cpu per chunk)  [steady]
+rect (400,432)-(415,447) 256 chunks   80.16 s wall     20960 ms cpu   (81.87 ms cpu per chunk)  [steady]
+rect (416,432)-(431,447) 256 chunks   58.49 s wall     16564 ms cpu   (64.70 ms cpu per chunk)  [steady]
+rect (432,432)-(447,447) 256 chunks   54.79 s wall     13496 ms cpu   (52.72 ms cpu per chunk)  [steady]
+rect (448,432)-(463,447) 256 chunks   49.56 s wall     13939 ms cpu   (54.45 ms cpu per chunk)  [steady]
+rect (464,432)-(479,447) 256 chunks   48.04 s wall     13915 ms cpu   (54.36 ms cpu per chunk)  [steady]
+rect (400,448)-(415,463) 256 chunks   73.48 s wall     21569 ms cpu   (84.25 ms cpu per chunk)  [steady]
+rect (416,448)-(431,463) 256 chunks   48.67 s wall     14593 ms cpu   (57.01 ms cpu per chunk)  [steady]
+rect (432,448)-(447,463) 256 chunks   56.87 s wall     17993 ms cpu   (70.28 ms cpu per chunk)  [steady]
+rect (448,448)-(463,463) 256 chunks   47.55 s wall     15215 ms cpu   (59.43 ms cpu per chunk)  [steady]
+rect (464,448)-(479,463) 256 chunks   42.87 s wall     14363 ms cpu   (56.10 ms cpu per chunk)  [steady]
+rect (400,464)-(415,479) 256 chunks   74.69 s wall     24472 ms cpu   (95.59 ms cpu per chunk)  [steady]
+rect (416,464)-(431,479) 256 chunks   53.20 s wall     16480 ms cpu   (64.37 ms cpu per chunk)  [steady]
+rect (432,464)-(447,479) 256 chunks   50.66 s wall     15447 ms cpu   (60.34 ms cpu per chunk)  [steady]
+rect (448,464)-(463,479) 256 chunks   52.23 s wall     15761 ms cpu   (61.57 ms cpu per chunk)  [steady]
+rect (464,464)-(479,479) 256 chunks   45.01 s wall     13537 ms cpu   (52.88 ms cpu per chunk)  [steady]
