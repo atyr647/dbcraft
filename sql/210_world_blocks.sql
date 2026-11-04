@@ -722,14 +722,17 @@ declare
     n_box   int;
     r       int;
     secs    int;                                   -- sections of the current chunk written by mc.fill_section_core
-    fr      record;
+    fr      record;  fbm bytea;  full_cells bytea := mc.block_event_full_cells();
+    nm_air  boolean := mc.is_air(nm);  nm_fl boolean := mc.has_fluid(nm);
     watched boolean;                               -- can some connection see the current chunk (null = not asked yet)
     st      int;                                   -- the block state id (for the packets)
+    any_view boolean;                              -- is any connection in play at all (when not, nothing is encoded and the per-chunk test is skipped)
     ev_y    int[] := '{}'; ev_cx int[] := '{}'; ev_cz int[] := '{}'; ev_bm bytea[] := '{}'; ev_pkt bytea[] := '{}'; ne int := 0;          -- the events of the cells path
 begin
     select * into d from mc.dimension where name = p_dim;
     if not found then raise exception 'unknown dimension %', p_dim; end if;
     if lo_y < d.min_y or hi_y >= d.min_y + d.height then raise exception 'fill is outside dimension % (y % .. %)', p_dim, d.min_y, d.min_y + d.height - 1; end if;
+    select exists (select 1 from net.conn c where c.state = 'play' and not c.closing and c.view_cx is not null) into any_view;
     insert into mc.chunk (dimension, cx, cz)
     select p_dim, cx, cz from generate_series(lo_x >> 4, hi_x >> 4) cx, generate_series(lo_z >> 4, hi_z >> 4) cz on conflict do nothing;
     for v_cx in (lo_x >> 4) .. (hi_x >> 4) loop
@@ -743,14 +746,23 @@ begin
             covered := covered + n_box;
             r := -1;
             if n_box > 48 then
-                select * into fr from mc.fill_section_core(p_dim, v_cx, v_sy, v_cz, a_x & 15, b_x & 15, a_y & 15, b_y & 15, a_z & 15, b_z & 15, nm, d.default_biome, null);
-                r := fr.changed;
+                r := 0;
+                if n_box = 4096 then
+                    -- a whole section that is a single-value section of another block (the commonest): one UPDATE, nothing to read (the same shortcut is the core's first step)
+                    update mc.chunk_section s set block_count = case when nm_air then 0 else 4096 end, fluid_count = case when nm_fl then 4096 else 0 end, palette = array[nm], bits = 0, data = ''::bytea
+                     where s.dimension = p_dim and s.cx = v_cx and s.cz = v_cz and s.sy = v_sy and s.bits = 0 and cardinality(s.palette) = 1 and s.palette[1] <> nm;
+                    if found then r := 4096; fbm := full_cells; end if;
+                end if;
+                if r = 0 then
+                    select * into fr from mc.fill_section_core(p_dim, v_cx, v_sy, v_cz, a_x & 15, b_x & 15, a_y & 15, b_y & 15, a_z & 15, b_z & 15, nm, d.default_biome, null);
+                    r := fr.changed; fbm := fr.bm;
+                end if;
                 if r > 0 then
                     secs := secs + 1; ne := ne + 1;
-                    if watched is null then watched := mc.chunk_watched(v_cx, v_cz); end if;
+                    if watched is null then watched := any_view and mc.chunk_watched(v_cx, v_cz); end if;
                     if watched and st is null then st := mc.block_state_id(nm); end if;
-                    ev_cx := array_append(ev_cx, v_cx); ev_y := array_append(ev_y, v_sy); ev_cz := array_append(ev_cz, v_cz); ev_bm := array_append(ev_bm, fr.bm);
-                    ev_pkt := array_append(ev_pkt, case when watched then mc.fill_packet(v_cx, v_sy, v_cz, fr.bm, st) end);
+                    ev_cx := array_append(ev_cx, v_cx); ev_y := array_append(ev_y, v_sy); ev_cz := array_append(ev_cz, v_cz); ev_bm := array_append(ev_bm, fbm);
+                    ev_pkt := array_append(ev_pkt, case when watched then mc.fill_packet(v_cx, v_sy, v_cz, fbm, st) end);
                 end if;
             end if;
             if r = -1 then

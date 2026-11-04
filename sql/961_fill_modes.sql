@@ -75,7 +75,7 @@ declare
     fr      record; ub bytea; mixed boolean; csec int; nsec int; total int := 0; r int; pc int;
     idxs    int[]; names text[];
     wx int; wy int; wz int; old text; tgt text; on_shell boolean;
-    watched boolean; st int;
+    watched boolean; st int; any_view boolean;
     ev_cx   int[] := '{}'; ev_y int[] := '{}'; ev_cz int[] := '{}'; ev_bm bytea[] := '{}'; ev_st text[] := '{}'; ev_pkt bytea[] := '{}'; ne int := 0;
 begin
     if mode = 'destroy' then raise exception 'fill ... destroy is not supported: it drops the blocks'' items and sends a break effect for every block'; end if;
@@ -86,6 +86,7 @@ begin
     if lo_y < d.min_y or hi_y >= d.min_y + d.height then raise exception 'fill is outside dimension % (y % .. %)', p_dim, d.min_y, d.min_y + d.height - 1; end if;
     if mode = 'keep' then filt := array(select s.name from ref.block_state s where s.block in ('minecraft:air', 'minecraft:cave_air', 'minecraft:void_air') order by s.state_id);
     elsif p_filter is not null then filt := mc.fill_filter_states(p_filter); end if;
+    select exists (select 1 from net.conn c where c.state = 'play' and not c.closing and c.view_cx is not null) into any_view;
     insert into mc.chunk (dimension, cx, cz)
     select p_dim, cx, cz from generate_series(lo_x >> 4, hi_x >> 4) cx, generate_series(lo_z >> 4, hi_z >> 4) cz on conflict do nothing;
     for v_cx in (lo_x >> 4) .. (hi_x >> 4) loop
@@ -129,7 +130,7 @@ begin
                 if cardinality(idxs) > 0 then total := total + mc.edit_section(p_dim, v_cx, v_sy, v_cz, idxs, names, true); end if;
             elsif nsec > 0 then
                 csec := csec + 1; ne := ne + 1; total := total + nsec;
-                if watched is null then watched := mc.chunk_watched(v_cx, v_cz); end if;
+                if watched is null then watched := any_view and mc.chunk_watched(v_cx, v_cz); end if;
                 if watched and not mixed and st is null then st := mc.block_state_id(nm); end if;
                 ev_cx := array_append(ev_cx, v_cx); ev_y := array_append(ev_y, v_sy); ev_cz := array_append(ev_cz, v_cz); ev_bm := array_append(ev_bm, ub);
                 ev_st := array_append(ev_st, case when mixed then '*' else nm end);
