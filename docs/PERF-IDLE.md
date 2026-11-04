@@ -169,7 +169,7 @@ not done, and not measurable with the scripted clients (they send only the two k
 
 ```
 tools/scoreboard/idle_matrix.py --before WRAPPER_BEFORE --after WRAPPER_AFTER --reps 3 --hold 60       # two checkouts, two clusters (SCORE_PGDATA, SCORE_PGPORT, SCORE_GW_PORT, SCORE_OUT)
-python3 tools/scoreboard/idle_report.py /tmp/idle/matrix.jsonl
+python3 tools/scoreboard/idle_report.py docs/perf-idle-results.jsonl.txt     # the raw results of the table above (dbcraft rows tagged idle:*, vanilla rows vanilla:*)
 tests/bench/tick/run.sh 200 100 0.0 300 label       # the SQL tick alone with only client_tick_end input (idle players), no gateway
 tests/sql/prun.sh 80[0-2]                           # the new tests (800-802); tests/sql/prun.sh for the whole suite
 gateway/build.sh test                               # gateway unit tests
