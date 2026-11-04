@@ -83,6 +83,11 @@ if have_reports; then ok "reports in $DBCRAFT_REPORTS"; elif [ "$CHECK" = 1 ]; t
   ok "reports written to $DBCRAFT_REPORTS"
 fi
 
+# the world-dynamics reference data (collision shapes, fluid states, class chains of every block state), read from the jar by tools/java/DynDump.java
+if [ "$CHECK" = 1 ]; then
+  if [ -s "$DBCRAFT_REPORTS/dyn_states.tsv" ]; then ok "dyn_states.tsv (world dynamics)"; else todo "dyn_states.tsv (tools/gen_dynamics.sh)"; fi
+elif have_reports; then tools/gen_dynamics.sh >"$DBCRAFT_LOG/gen-dynamics.log" 2>&1 && ok "world-dynamics data in $DBCRAFT_REPORTS/dyn_states.tsv" || echo "    note     tools/gen_dynamics.sh failed (see $DBCRAFT_LOG/gen-dynamics.log): world dynamics stay disabled"; fi
+
 # ------------------------------------------------------------------------------------------------------------------------------ 4. captures
 say "4/6 recorded capture of a real vanilla server (configuration data the database replays)"
 have_caps() { [ -s "$DBCRAFT_CAPTURES/play_nocomp.jsonl" ] && [ -s "$DBCRAFT_CAPTURES/play_op4.jsonl" ]; }

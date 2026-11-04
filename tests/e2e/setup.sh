@@ -21,6 +21,7 @@ python3 tools/load_datapack.py "$CAP"
 python3 tools/load_static_packets.py "$CAP"
 python3 tools/load_world_ref.py
 python3 tools/load_recipes.py
+python3 tools/load_dynamics.py
 psql -X -q -v ON_ERROR_STOP=1 <<'SQL'
 select mc.configure_dev_server('dbcraft e2e', 'creative');
 update mc.server_property set value = '2'        where key in ('view-distance', 'simulation-distance');

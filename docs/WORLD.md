@@ -343,6 +343,14 @@ Use these instead for anything but a small world:
 I looked for a way to give the view real coordinate pushdown and found none without a C planner support function or a physical per-block table (billions of rows).  Two
 performance bugs in the view itself were fixed on the way (the palette air flags were re-evaluated per block); the remaining cost is the unpack.
 
+## World dynamics (fluids, gravity, random ticks)
+
+Nothing in this document's storage layer ticks by itself; [WORLD-DYNAMICS.md](WORLD-DYNAMICS.md) describes the layer on top: `sql/880`-`887` (scheduled-tick queue `mc.block_tick`, the engine that runs fluid, block
+and random ticks against a private copy of the sections, the neighbour-update cascade of `Level.setBlock`).  It writes through `mc.set_blocks`, so every change reaches the clients through
+`mc.broadcast_block_events` above, and its packets were compared with the real server.  Two consequences for the block change packets: the engine's writes are re-recorded as one-position `cells` events
+(vanilla's `setBlock` sends no level event 2001; only a block destroyed by lost support does, and that stays a `block` event), and falling blocks that land are announced by the NEXT tick's
+broadcast (vanilla's entity phase follows its broadcast).  A statement trigger on `mc.block_event` (`mc.dyn_on_events`) runs the reactions to a change from outside inside the same statement.
+
 ## Gaps and next steps
 
 * **Packet compression.**  `mc.chunk_cache` holds the uncompressed framed packet (stored pglz-compressed, plus the compressed frame `packet_z` since sql/440).  `docs/COMPRESSION.md` describes the plan (per-section deflate fragments, an RLE-style encoder
