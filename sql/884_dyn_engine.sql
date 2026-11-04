@@ -4,7 +4,7 @@
 -- updateShape on the six neighbours, depth first (the reactions of sql/883 come back as action lists and are pushed on a stack).
 --
 -- Work items (p_kind): 1 fluid tick (aux = fluid type code), 2 block tick (aux = block ordinal), 3 random tick (aux = the state it hit, aux2 = the y of the first cell with open sky
--- in its column, p_darken = Level.getSkyDarken()), 4 a block changed from outside (aux = its old state id; the new
+-- in its column by the MOTION_BLOCKING_NO_LEAVES heightmap, which counts a plant's own cell too, p_darken = Level.getSkyDarken()), 4 a block changed from outside (aux = its old state id; the new
 -- state is what the world holds now), 5 the landing of a falling block (aux = its state id; x y z is the landing cell).
 -- Reading is an array subscript (0.1 us), writing an array assignment; a cell the engine changed is visible to every later item of the same run.
 -- Returns the number of cells changed.  p_late: the block changes are announced by the NEXT tick's broadcast (what vanilla's entity phase does: it runs after the chunk broadcast).
@@ -162,7 +162,7 @@ begin
                     ab := mc.dyn_at(secs, gm, x, y + 1, z);
                     if ab <> kk[50] and ((fl[ab + 1] & 8) <> 0 and mc.dyn_famount(mc.dyn_fstate(fl, fa, ab)) = 8 or v.lightd[ab + 1] >= 15) then      -- canStayAlive: snow layer 1 stays, full water or an opaque block kills
                         act := array[1, x, y, z, kk[41], 0];
-                    elsif greatest(case when y + 1 >= hs then 15 - p_darken else 0 end, 0) >= 9 then
+                    elsif greatest(case when y + 1 >= hs or (y + 2 >= hs and coalesce(sk[co[ab + 1] + 1], 1) = 0 and (fl[ab + 1] & 4) = 0) then 15 - p_darken else 0 end, 0) >= 9 then
                         for jj in 1 .. 4 loop
                             tx := x + floor(random() * 3)::int - 1; ty2 := y + floor(random() * 5)::int - 3; tz := z + floor(random() * 3)::int - 1;
                             q := mc.dyn_at(secs, gm, tx, ty2, tz);
@@ -176,7 +176,7 @@ begin
                     end if;
                 elsif (fl[cell + 1] & 1048576) <> 0 then
                     -- CropBlock.randomTick: with raw light 9 or more (open sky: no block light exists) the crop ages with probability 1 / ((int)(25 / growthSpeed) + 1), flags 2
-                    if y >= hs and npv[cell + 1] >= 0 then
+                    if y + 1 >= hs and npv[cell + 1] >= 0 then                                       -- (the plant's own cell is the top of the heightmap: it does not block light)
                         gs := 1.0;
                         for m1 in -1 .. 1 loop
                             for m2 in -1 .. 1 loop

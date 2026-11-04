@@ -12,7 +12,8 @@
 --
 -- Implemented behaviours (the classes read in the 26.3 bytecode): grass block and mycelium (spread to dirt, die to dirt), crops (CropBlock growth formula), farmland (moisture, back to
 -- dirt), saplings (stage 0 -> 1).  Everything else that ticks randomly in vanilla (leaf decay, sugar cane, cactus, vines, kelp, ice and snow melting, fire, lava fire, copper
--- oxidation, budding amethyst, ...) does nothing here.  Light is the straight-down sky model (mc.compute_light): open sky is 15 less the sky darkness, nothing else gives light.
+-- oxidation, budding amethyst, ...) does nothing here.  Light: a cell has sky light 15 (less the sky darkness) when no block that stops motion or holds fluid, leaves excepted, is above it (the MOTION_BLOCKING_NO_LEAVES heightmap); nothing else gives light
+-- (no torches, no attenuation by water or leaves).
 
 insert into mc.server_property (key, value, default_value, note) values
     ('dbcraft.random-tick-players', '4', '4', 'dbcraft: random ticks are served in the areas of this many randomly chosen online players per tick (all of them when fewer are online)'),
@@ -48,32 +49,33 @@ declare
     cap    int := coalesce(mc.prop_int('dbcraft.random-tick-max-hits'), 6);
     iv     int := greatest(coalesce(mc.prop_int('dbcraft.random-tick-interval'), 4), 1);
     dim    text;
-    pcx int[]; pcz int[];
+    pcx int[]; pcz int[]; scx int[]; scz int[]; sver bigint[];
     kinds int[]; xs int[]; ys int[]; zs int[]; aux int[]; hs int[];
 begin
     if speed <= 0 or p_cur % iv <> 0 then return; end if;                               -- every iv-th tick, with iv ticks' worth of draws (the per-call cost is mostly fixed)
     dim := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
     select array_agg(p.chunk_x), array_agg(p.chunk_z) into pcx, pcz from (select chunk_x, chunk_z from mc.player where conn_id is not null order by random() limit kmax) p;
     if pcx is null then return; end if;
-    -- refresh the sections of the chunks whose cache is missing or stale (three statements: a delete and an insert of one key must not share a statement)
-    create temp table if not exists _rt_stale (cx int, cz int, version bigint) on commit drop;
-    truncate _rt_stale;
-    insert into _rt_stale
-    select c.cx, c.cz, c.version
+    -- refresh the sections of the chunks whose cache is missing or stale (separate statements: a delete and an insert of one key must not share one)
+    select array_agg(c.cx), array_agg(c.cz), array_agg(c.version) into scx, scz, sver
       from (select distinct a + dx as cx, b + dz as cz from unnest(pcx, pcz) pp(a, b), generate_series(-r, r) dx, generate_series(-r, r) dz) col
       join mc.chunk c on c.dimension = dim and c.cx = col.cx and c.cz = col.cz
       left join mc.dyn_rt_chunk k on k.dimension = c.dimension and k.cx = c.cx and k.cz = c.cz
      where k.version is distinct from c.version;
-    if exists (select 1 from _rt_stale) then
-        delete from mc.dyn_rt_sec t using _rt_stale s where t.dimension = dim and t.cx = s.cx and t.cz = s.cz;
+    if scx is not null then
+        delete from mc.dyn_rt_sec t using unnest(scx, scz) s(cx, cz) where t.dimension = dim and t.cx = s.cx and t.cz = s.cz;
         insert into mc.dyn_rt_sec (dimension, cx, sy, cz, version, rtidx)
         select dim, s.cx, cs.sy, s.cz, s.version, i.idx
-          from _rt_stale s join mc.chunk_section cs on cs.dimension = dim and cs.cx = s.cx and cs.cz = s.cz
+          from unnest(scx, scz, sver) s(cx, cz, version) join mc.chunk_section cs on cs.dimension = dim and cs.cx = s.cx and cs.cz = s.cz
           cross join lateral (select array_agg((p.o - 1)::int order by p.o) as idx from unnest(cs.palette) with ordinality p(n, o) join mc.dyn_state d on d.name = p.n and d.rtick) i
          where i.idx is not null;
-        insert into mc.dyn_rt_chunk (dimension, cx, cz, version, secs) select dim, s.cx, s.cz, s.version, '{}' from _rt_stale s
+        insert into mc.dyn_rt_chunk (dimension, cx, cz, version, secs) select dim, s.cx, s.cz, s.version, '{}' from unnest(scx, scz, sver) s(cx, cz, version)
         on conflict (dimension, cx, cz) do update set version = excluded.version;
     end if;
+    -- the heightmaps that tell where the sky is open must be current (a fill leaves them to be recomputed when something needs them: here)
+    perform mc.ensure_chunk_current(dim, c.cx, c.cz)
+       from mc.chunk c join (select distinct a + dx as cx, b + dz as cz from unnest(pcx, pcz) pp(a, b), generate_series(-r, r) dx, generate_series(-r, r) dz) col on col.cx = c.cx and col.cz = c.cz
+      where c.dimension = dim and (c.hm_dirty or c.hm_world_surface is null);
     -- the draws: speed * 3 uniformly random positions of every section that can have a hit; a hit is a draw whose palette index is one of the section's randomly ticking ones
     with col as (select distinct a + dx as cx, b + dz as cz from unnest(pcx, pcz) pp(a, b), generate_series(-r, r) dx, generate_series(-r, r) dz),
          draws as (select t.cx, t.sy, t.cz, t.rtidx, floor(random() * 4096)::int as idx
@@ -83,7 +85,7 @@ begin
                   where (cs.bits = 0 and 0 = any (d.rtidx)) or (cs.bits > 0 and cardinality(cs.palette) > 0 and mc.entry_at(cs.bits, cs.data, d.idx) = any (d.rtidx))),
          top as (select * from hit order by random() limit cap * iv)
     select array_agg(3), array_agg(h.cx * 16 + (h.idx & 15)), array_agg(h.sy * 16 + (h.idx >> 8)), array_agg(h.cz * 16 + ((h.idx >> 4) & 15)), array_agg(ds.sid),
-           array_agg(coalesce(ch.hm_world_surface[(h.idx & 15) + 16 * ((h.idx >> 4) & 15) + 1], 0) + (select min_y from mc.dimension where name = dim))
+           array_agg(coalesce(ch.hm_motion_blocking_no_leaves[(h.idx & 15) + 16 * ((h.idx >> 4) & 15) + 1], 0) + (select min_y from mc.dimension where name = dim))
       into kinds, xs, ys, zs, aux, hs
       from top h join mc.dyn_state ds on ds.name = h.nm left join mc.chunk ch on ch.dimension = dim and ch.cx = h.cx and ch.cz = h.cz;
     if kinds is null then return; end if;

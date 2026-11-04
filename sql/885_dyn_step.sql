@@ -98,7 +98,10 @@ end $$;
 create or replace function mc.dyn_step(p_cur bigint) returns void language plpgsql volatile as $$
 declare mx int := coalesce(mc.prop_int('dbcraft.dynamics-max-ticks'), 4000);
 begin
-    if not mc.dyn_enabled() then return; end if;
+    -- idle test in ONE statement (no tick due, nothing late, nobody to random-tick for): the whole step is about this
+    if not (select coalesce((select value <> 'off' from mc.server_property where key = 'dbcraft.dynamics'), true) and exists (select 1 from mc.dyn_vec)
+                   and (exists (select 1 from mc.block_tick where due <= p_cur) or exists (select 1 from mc.dyn_late_event)
+                        or (exists (select 1 from mc.player where conn_id is not null) and coalesce((select value::int from mc.game_rule where name = 'minecraft:random_tick_speed'), 3) > 0))) then return; end if;
     begin
         perform mc.dyn_release_late();
         if exists (select 1 from mc.block_tick where due <= p_cur) then

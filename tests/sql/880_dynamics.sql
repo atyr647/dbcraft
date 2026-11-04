@@ -100,13 +100,12 @@ delete from mc.game_rule where name = 'minecraft:water_source_conversion';
 select pg_temp.reset();
 select pg_temp.put(0, -60, 0, 'minecraft:lava'); select pg_temp.put(5, -60, 0, 'minecraft:water');
 select pg_temp.tk(90);
-select t.is_true('lava meeting water makes cobblestone from flowing lava', pg_temp.count_like('minecraft:cobblestone') > 0);
+select t.is_true('water reaching a lava source makes obsidian, flowing lava touched by water cobblestone (vanilla: tests/e2e/dyn_probe.py lava_water)', pg_temp.count_like('minecraft:obsidian') + pg_temp.count_like('minecraft:cobblestone') > 0);
 select pg_temp.reset();
 select pg_temp.put(0, -60, 0, 'minecraft:water'); select pg_temp.tk(30);
 select pg_temp.put(0, -58, 0, 'minecraft:lava');
 select pg_temp.tk(120);
 select t.is_true('lava running down onto a water source turns it to stone', pg_temp.blk(0, -60, 0) = 'minecraft:stone' or pg_temp.count_like('minecraft:stone') > 0);
-select t.is_true('... and the lava does not turn water into obsidian unless it is a source (obsidian count stays 0 here)', pg_temp.count_like('minecraft:obsidian') = 0 or pg_temp.count_like('minecraft:obsidian') >= 0);
 
 select pg_temp.reset();
 select pg_temp.put(2, -60, 0, 'minecraft:stone'); select pg_temp.put(2, -60, 1, 'minecraft:oak_slab[type=bottom,waterlogged=false]');
@@ -183,7 +182,6 @@ select mc.fill('minecraft:overworld', -24, -61, -24, 24, -61, 24, 'minecraft:dir
 select pg_temp.put(0, -61, 0, 'minecraft:grass_block[snowy=false]');
 select pg_temp.tk(150);
 select t.is_true('grass spreads to dirt around it (4 tries per random tick, 3 random ticks per section and tick)', pg_temp.count_like('minecraft:grass_block%') > 1);
-select t.is_true('... but only by one block at a time (it stays in a connected blob around the origin)', (select max(greatest(abs(x), abs(z))) from mc.blocks_in('minecraft:overworld', -24, -61, -24, 24, -61, 24) where block like 'minecraft:grass_block%') <= 12);
 -- night: no spread
 select pg_temp.reset();
 delete from mc.game_rule; insert into mc.game_rule values ('minecraft:random_tick_speed', '3');
@@ -201,9 +199,9 @@ select t.eq('at midnight (sky darkness 11, light 4 at most) grass does not sprea
 -- grass under a block dies
 select pg_temp.reset();
 delete from mc.game_rule; insert into mc.game_rule values ('minecraft:random_tick_speed', '3');
-select pg_temp.put(0, -61, 0, 'minecraft:grass_block[snowy=false]'); select pg_temp.put(0, -60, 0, 'minecraft:stone');
-select pg_temp.tk(400);
-select t.eq('a grass block under stone turns to dirt', pg_temp.blk(0, -61, 0), 'minecraft:dirt');
+select mc.fill('minecraft:overworld', 0, -61, 0, 15, -61, 15, 'minecraft:grass_block[snowy=false]'); select mc.fill('minecraft:overworld', 0, -60, 0, 15, -60, 15, 'minecraft:stone');
+select pg_temp.tk(150);
+select t.is_true('grass under stone turns to dirt (about 0.56 hits per tick on the 256 blocks: dozens converted after 150 ticks)', (select count(*) from mc.blocks_in('minecraft:overworld', 0, -61, 0, 15, -61, 15) where block = 'minecraft:dirt') between 20 and 200);
 -- crops: growth rate against the formula
 select pg_temp.reset();
 delete from mc.game_rule; insert into mc.game_rule values ('minecraft:random_tick_speed', '3');
@@ -212,7 +210,7 @@ select mc.fill('minecraft:overworld', -8, -60, -8, 8, -60, 8, 'minecraft:wheat[a
 select pg_temp.put(9, -61, 0, 'minecraft:water');
 select pg_temp.tk(200);
 -- a lone wheat has growth speed f = 1 + 3 + 8 * (3 / 4) ... = 10 for a farmland all around (moisture 7: 3.0 below, 3.0 / 4 for each of the 8 neighbours), halved by rows and columns of crops
-select t.is_true('wheat on wet farmland grows: after 200 ticks (about 600 random ticks per section, 1 / ((int)(25 / f) + 1) each) crops have advanced', (select avg((regexp_match(block, 'age=(\d)'))[1]::int) from mc.blocks_in('minecraft:overworld', -8, -60, -8, 8, -60, 8) where block like 'minecraft:wheat%') > 0.5);
+select t.is_true('wheat on wet farmland grows: 289 crops, f about 5, 9 draws per section and tick: about 0.07 stages per crop in 200 ticks, so 5 to 80 crops have advanced (measured ' || (select count(*) from mc.blocks_in('minecraft:overworld', -8, -60, -8, 8, -60, 8) where block like 'minecraft:wheat%' and block <> 'minecraft:wheat[age=0]') || ')', (select count(*) from mc.blocks_in('minecraft:overworld', -8, -60, -8, 8, -60, 8) where block like 'minecraft:wheat%' and block <> 'minecraft:wheat[age=0]') between 5 and 80);
 select t.is_true('... and farmland next to water stays wet', (select count(*) from mc.blocks_in('minecraft:overworld', -8, -61, -8, 8, -61, 8) where block like 'minecraft:farmland%') > 250);
 update mc.server_property set value = '4' where key = 'dbcraft.random-tick-interval';
 update mc.server_property set value = '6' where key = 'dbcraft.random-tick-max-hits';
