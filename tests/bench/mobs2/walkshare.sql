@@ -54,3 +54,9 @@ call pg_temp.run(:seconds);
 select g.grp, count(*) as cow_seconds, round((count(*) filter (where sqrt((b.x - a.x) ^ 2 + (b.z - a.z) ^ 2) > 0.5))::numeric / count(*), 3) as walking_share
   from _s a join _s b on b.id = a.id and b.sec = a.sec + 1 join _grp g on g.id = a.id group by g.grp order by g.grp;
 select 'dormant lanes at the end: ' || count(*) filter (where dormant) || ' of ' || count(*) as lanes from mc.entity_lane;
+\if :{?series}
+-- the per-second displacement series of every cow, one JSON line each (tools/entity/walkshare_stats.py reads them: run lengths, gaps, speed)
+\pset tuples_only on
+\pset format unaligned
+select json_build_object('tag', g.grp, 'cow', a.id, 'd', array_agg(round(sqrt((b.x - a.x) ^ 2 + (b.z - a.z) ^ 2)::numeric, 3) order by a.sec)) from _s a join _s b on b.id = a.id and b.sec = a.sec + 1 join _grp g on g.id = a.id group by g.grp, a.id;
+\endif

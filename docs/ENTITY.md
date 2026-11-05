@@ -66,7 +66,12 @@ and the tick-20 cadence (motion packet, then position sync) equals vanilla's ord
 ## What is faked / not modelled
 
 * No item merging, no entity-entity collision or cramming, no water/lava/ladders/cobweb, only full-cube solidity (no slabs, stairs, fences), no step-up.
-* Mob AI is wander + straight-line chase, not pathfinding, no real vanilla goal system, no mob-specific behaviour (breeding, loot, damage, drops).
+* Mob AI: **vanilla-like stroll rates** (sql/942, the default `dbcraft.entity_ai = vanilla`, docs/WHY-MOBS-COST.md section 10): a cow stands for 2 x Geometric(1/60) ticks (goal selection every second tick, 1 in 60 per
+  evaluation: a stroll every 120 ticks on average), then, **only if a player is within 32 blocks** (vanilla's `noActionTime` reset distance), strolls to a random block within +-10 (straight line, at the measured
+  vanilla cow speed 0.088 blocks per tick, duration from the octile path length: no A*, no obstacles); with no player within 2 chunks it goes **dormant** (no events, nothing simulated) until a player comes within
+  2 chunks.  Walking share: 21-28 % within 24 blocks of a player, 0 % beyond 32 blocks, as measured on the real server (`tools/entity/vanilla_walkshare.py`, `tests/bench/mobs2/walkshare.sql`).  `SET dbcraft.entity_ai = 'wander'`
+  gives the old model (60 % of the goals walk 20-79 ticks, 40 % stand 40-139, wherever the mob is).  Chasing zombies are unchanged (straight-line chase).  Not modelled: pathfinding, the other goals, the 100-tick grace of
+  `noActionTime`, freezing of a stroll in progress beyond the simulation distance, breeding, loot, damage, drops.
 * Solidity is a name-regex heuristic (`mc.block_class`: 1053 of 1286 states solid), not the real collision shapes.
 * Tracker: tracking ranges (6/10/8 chunks) are from memory, not verified; resting items send nothing (vanilla sends occasional extra checks and wobble motion packets, so deep sleep saves bandwidth versus vanilla: a deliberate deviation); `entity_position_sync` layout verified on item samples only, one captured cow packet did not parse, so the mob layout is unverified.
 * Spawner spawns at the player's height and ignores light, biome and spawn rules; pickup is checked every 4th tick, not every tick; walk speeds are approximate.
