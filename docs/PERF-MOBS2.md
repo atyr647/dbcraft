@@ -317,6 +317,10 @@ what it costs.  So `off` stays the default, and the server that wants items (dro
 an early exit in `mc.entity_step` when there are no entities and nobody to spawn for, a viewer refresh that only runs when a player changed chunk, and `mc.tick_quiet` accepting an empty entity table
 (sql/800 belongs to the idle track and was not touched).
 
+**Update (docs/WHY-MOBS-COST.md section 9):** the early exit asked for above is built: `mc.entity_tick` returns at once with no entity row (and the spawner off or nobody connected), and `mc.tick_quiet` accepts `inline` with no
+entity; the empty hook costs 35-75 us instead of 0.35-1.0 ms and does not grow with the players.  `off` is still the default.  The WAL figures of the in-view cells in this document ("about 0") were measured with the write
+position of the WAL; the insert position gives 12 KB per tick at 2,000 cows in view (WHY-MOBS-COST section 2).
+
 ### 6. Still a loss / not done
 * **A viewer connected, mobs just outside his view: 1.25x vanilla at 2,000 and 5,000 cows** (above).  The margin band and the lane that ends when a mob crosses the edge of his view are the cost; the
   fix (announce inside the lane statement, no end of the lane) was not built.

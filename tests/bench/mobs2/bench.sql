@@ -38,6 +38,14 @@
 \else
 \set scatter 0
 \endif
+-- profile=1: pg_stat_statements (nested statements) and function statistics are collected during the measured window and printed after the result line (docs/WHY-MOBS-COST.md);
+-- profile=0 (default): both are switched off for this session, so that the CPU numbers carry no instrumentation overhead
+\if :{?profile}
+\else
+\set profile 0
+\endif
+select case when :profile = 1 then 'all' else 'none' end as trk \gset
+select set_config('track_functions', :'trk', false), set_config('pg_stat_statements.track', :'trk', false), set_config('pg_stat_statements.track_planning', case when :profile = 1 then 'on' else 'off' end, false);
 select set_config('dbcraft.entity_spawner', 'off', false);
 select set_config('dbcraft.entity_walk_prob', :'walk', false);
 update mc.server_property set value = '5' where key = 'view-distance';
@@ -88,9 +96,9 @@ declare a bigint[]; b bigint[]; t0 timestamptz; l0 pg_lsn; l1 pg_lsn; r record; 
 begin
     for tk in p_from..p_to loop
         truncate mc.play_out;
-        l0 := pg_current_wal_lsn(); a := tickbench.sched(); t0 := clock_timestamp();
+        l0 := pg_current_wal_insert_lsn(); a := tickbench.sched(); t0 := clock_timestamp();
         perform mc.entity_tick(tk);
-        b := tickbench.sched(); l1 := pg_current_wal_lsn();
+        b := tickbench.sched(); l1 := pg_current_wal_insert_lsn();
         if p_rec then
             select * into r from mc.entity_tick_log where tick = tk;
             insert into _t select tk, (b[1] - a[1]) / 1e6, extract(epoch from clock_timestamp() - t0) * 1000, r.ms_ai, r.ms_physics, r.ms_tracker, r.ms_pickup, r.awake,
@@ -103,10 +111,38 @@ end $$;
 call pg_temp.run(1, :warm, false);
 vacuum analyze mc.entity, mc.entity_lane;
 -- (autovacuum_naptime = 10s in docker/postgresql.conf: a vacuum every 200 ticks or so; the measured window is 100 ticks after one)
+\if :profile
+select pg_stat_statements_reset() is not null as x \gset
+select pg_stat_reset() is not null as x \gset
+\endif
 call pg_temp.run(:warm + 1, :warm + :ticks, true);
+\if :profile
+select pg_stat_force_next_flush() is null as x \gset
+\endif
 select format('%s mobs=%s items=%s where=%s walk=%s viewers=%s | cpu ms avg %s p50 %s p99 %s | wall avg %s p99 %s | ai %s phys %s trk %s pick %s | awake %s lanes %s | out rows %s KB %s | wal KB %s | load %s',
               :'label', :mobs, :items, :'where', :'walk', :viewers,
               round(avg(cpu)::numeric, 2), round((percentile_cont(0.5) within group (order by cpu))::numeric, 2), round((percentile_cont(0.99) within group (order by cpu))::numeric, 2),
               round(avg(wall)::numeric, 2), round((percentile_cont(0.99) within group (order by wall))::numeric, 2),
               round(avg(ai)::numeric, 2), round(avg(phys)::numeric, 2), round(avg(trk)::numeric, 2), round(avg(pick)::numeric, 2), round(avg(awake)), (select count(*) from mc.entity_lane),
               round(avg(rows_out)), round(avg(bytes_out) / 1024), round(avg(wal) / 1024), (select split_part(pg_read_file('/proc/loadavg'), ' ', 1))) as result from _t;
+\if :profile
+\pset format aligned
+\pset footer off
+\pset tuples_only off
+select 'FUNCTIONS (per tick; total = with the functions it calls, self = without)' as section;
+select funcname, round(calls::numeric / :ticks, 2) as calls_tick, round((total_time / :ticks)::numeric, 3) as total_ms, round((self_time / :ticks)::numeric, 3) as self_ms,
+       round((total_time / nullif(calls, 0) * 1000)::numeric, 1) as us_call
+  from pg_stat_user_functions where schemaname in ('mc', 'proto', 'net') and funcname <> 'entity_tick' order by total_time desc limit 22;
+select 'STATEMENTS (nested ones included, per tick)' as section;
+select round((total_exec_time / :ticks)::numeric, 3) as ms_tick, round((total_plan_time / :ticks)::numeric, 3) as plan_ms_tick, round(calls::numeric / :ticks, 2) as calls_tick, round((mean_exec_time * 1000)::numeric, 1) as us_call,
+       round(rows::numeric / :ticks, 1) as rows_tick, round(wal_bytes::numeric / :ticks) as wal_b_tick, round((shared_blks_hit + shared_blks_read)::numeric / :ticks, 1) as blks_tick,
+       regexp_replace(left(query, 120), '\s+', ' ', 'g') as query
+  from pg_stat_statements
+ where query not like '%pg_stat_%' and query not like '%tickbench%' and query not like 'insert into _t%' and query not like '%from mc.entity_tick_log%' and query not like '%mc.entity_tick(%'
+   and query not like 'select set_config%' and query not like 'truncate%' and query not like 'COMMIT%' and query not like 'commit%'
+ order by total_exec_time desc limit 22;
+select 'TABLES (tuples per tick)' as section;
+select relname, round(n_tup_ins::numeric / :ticks, 1) as ins, round(n_tup_upd::numeric / :ticks, 1) as upd, round(n_tup_hot_upd::numeric / :ticks, 1) as hot, round(n_tup_del::numeric / :ticks, 1) as del,
+       round(seq_scan::numeric / :ticks, 2) as seqscan, round(seq_tup_read::numeric / :ticks, 1) as seq_rows, round(idx_scan::numeric / :ticks, 2) as idxscan, round(idx_tup_fetch::numeric / :ticks, 1) as idx_rows
+  from pg_stat_user_tables where schemaname = 'mc' and (n_tup_ins + n_tup_upd + n_tup_del + seq_scan + idx_scan) > 0 order by n_tup_upd + n_tup_ins + n_tup_del + idx_tup_fetch + seq_tup_read desc limit 12;
+\endif

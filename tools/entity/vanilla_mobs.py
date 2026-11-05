@@ -23,6 +23,8 @@ ap.add_argument("--jar", default=os.path.expanduser("~/.cache/dbcraft/server-26.
 ap.add_argument("--reps", type=int, default=1); ap.add_argument("--rep-offset", type=int, default=0); ap.add_argument("--scenarios", default="500v,2000v,5000v,2000n,5000n,5000i")
 ap.add_argument("--settle", type=float, default=45.0); ap.add_argument("--window", type=float, default=40.0); ap.add_argument("--tag", default="")
 ap.add_argument("--after", default="", help="shell command run right after each scenario window (strict V-D alternation); {code} {rep} are substituted; run with the machine as the server left it")
+ap.add_argument("--profile", type=float, default=0.0, help="seconds of `/debug start` ... `/debug stop` (the server's own section profiler) after each window; the report goes to <dir>/debug/ and its path into the record")
+ap.add_argument("--jfr", type=float, default=0.0, help="seconds of a Java Flight Recorder recording (jcmd JFR.start, settings=profile) after each window and its profile section; <dir>/<scenario>.jfr")
 ap.add_argument("--viewdist", type=int, default=5); ap.add_argument("--xmx", default="2G"); ap.add_argument("--xms", default="")
 a = ap.parse_args()
 rconmod.PORT = a.rcon; rconmod.PW = "mob2"
@@ -161,6 +163,11 @@ def main():
                            samples=samples, server_thread_cores=round((s1 - s0) / CLK / dt, 3), jvm_cores=round((t1j - t0j) / CLK / dt, 3),
                            load=open("/proc/loadavg").read().split()[0])
                 rec["probe_alive"] = probe.poll() is None
+                if a.jfr > 0:
+                    subprocess.call(["jcmd", str(pid), "JFR.start", "name=why", "settings=profile", f"filename={os.path.join(a.dir, code + '.jfr')}", f"duration={int(a.jfr)}s"], stdout=subprocess.DEVNULL)
+                    time.sleep(a.jfr + 3)
+                if a.profile > 0:
+                    r.cmd("debug start"); time.sleep(a.profile); rec["profile_msg"] = re.sub(r"\s+", " ", r.cmd("debug stop"))
                 rec["players"] = r.cmd("list").strip()
                 if c0 and c1 and c1["t"] > c0["t"]:
                     rec["viewer_pkts_per_s"] = {k: round((v[0] - c0["counts"].get(k, [0, 0])[0]) / (c1["t"] - c0["t"]), 1) for k, v in c1["counts"].items() if v[0] > c0["counts"].get(k, [0, 0])[0]}

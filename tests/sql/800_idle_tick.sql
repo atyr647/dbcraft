@@ -45,7 +45,13 @@ select t.quiet_flip('a block actor', 'insert into mc.block_actor (dimension, x, 
 select t.quiet_flip('a frame in the connection layer''s batch', 'insert into net.batch (conn_id, seq, payload) values (1, 1, ''\x00'')', 'truncate net.batch');
 select t.quiet_flip('a frame in the outbox', 'insert into net.outbox (conn_id, data) values (1, ''\x00'')', 'truncate net.outbox');
 select t.quiet_flip('a chunk request', 'insert into mc.chunk_request (dimension, cx, cz, prio) values (''minecraft:overworld'', 0, 0, 0)', 'truncate mc.chunk_request');
-select t.quiet_flip('entities switched on', 'update mc.server_property set value = ''inline'' where key = ''dbcraft.entity-mode''', 'update mc.server_property set value = ''off'' where key = ''dbcraft.entity-mode''');
+select t.quiet_flip('entities switched on (split)', 'update mc.server_property set value = ''split'' where key = ''dbcraft.entity-mode''', 'update mc.server_property set value = ''off'' where key = ''dbcraft.entity-mode''');
+select t.quiet_flip('entities switched on (inline) with an entity row', 'update mc.server_property set value = ''inline'' where key = ''dbcraft.entity-mode''; select mc.entity_spawn(''minecraft:item'', 0, 0, 0)',
+                    'delete from mc.entity; update mc.server_property set value = ''off'' where key = ''dbcraft.entity-mode''');
+-- sql/550 + sql/800: inline mode with NO entity row (and nobody connected) is as quiet as off: the entity tick would be empty (tests/sql/1010)
+update mc.server_property set value = 'inline' where key = 'dbcraft.entity-mode';
+select t.is_true('entities inline with no entity row: still quiet', mc.tick_quiet());
+update mc.server_property set value = 'off' where key = 'dbcraft.entity-mode';
 create or replace function mc.tick_extra_pending() returns boolean language sql immutable as $$ select true $$;
 select t.is_true('the hook makes the tick not quiet', not mc.tick_quiet());
 create or replace function mc.tick_extra_pending() returns boolean language sql immutable parallel safe as $$ select false $$;

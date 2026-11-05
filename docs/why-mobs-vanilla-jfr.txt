@@ -1,0 +1,21 @@
+.scratch/van-2000v.jfr: 2246 samples of the Server thread
+   99.8 %  whole server thread tick
+   99.3 %  level tick (ServerLevel.tick)
+   83.3 %  entities: per-entity tick (ServerLevel.tickNonPassenger / guardEntityTick)
+    1.3 %    entity.checkDespawn (nearest-player scan per mob per tick)
+   12.2 %    Mob.serverAiStep (sensing + goals + navigation + controls)
+    8.0 %      goal selectors: GoalSelector.tick (canUse of every non-running goal, every 2nd tick)
+    1.0 %      PathNavigation.tick / path following
+    0.6 %      path computation (A*: PathFinder.findPath / createPath)
+    0.9 %      MoveControl.tick
+    1.2 %      LookControl.tick
+   72.0 %    LivingEntity.aiStep (travel, fluids, effects, pushEntities)
+   41.7 %      LivingEntity.travel / Entity.move (collision)
+   34.1 %      collision shapes (Entity.collide / getBlockCollisions)
+    8.1 %      LivingEntity.pushEntities (entity-entity collision query)
+   15.9 %    Entity.baseTick / checks (fluids, block effects)
+    3.3 %  tracking: ChunkMap.tick (updatePlayers, sendChanges)
+    2.2 %    ServerEntity.sendChanges (delta, motion, rotation packets)
+    0.1 %    packet encode / send (Connection.send, PacketEncoder)
+   13.4 %  chunk system (ServerChunkCache.tick, chunk ticking, tickets)
+  top frames (self time):

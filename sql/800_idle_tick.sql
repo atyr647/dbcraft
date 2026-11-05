@@ -6,7 +6,7 @@
 --
 --   mc.tick_quiet()         true when the full tick would send nothing and change nothing but the clock: nobody is connected (net.conn and the players' conn_id are empty), every queue
 --                           the tick reads is empty (inbox, auth results, claim queue, parked logins, kicks, play_out, wanted chunks, block events, acknowledgements, block actors,
---                           the connection layer's batch), the login gate is idle, entities are off, and the hook mc.tick_extra_pending() says no.
+--                           the connection layer's batch), the login gate is idle, entities are off (or inline with no entity row: the entity tick of sql/550 would be empty), and the hook mc.tick_extra_pending() says no.
 --   mc.tick_quiet_step()    the whole tick in that case: game_time and day_time + 1, leftover claimed packets deleted, the once-a-second queue housekeeping, one mc.server_tick_log row.
 --                           (No mc.tick_log row: that table holds the phase timings of the game's tick, and a quiet tick has no phases.)
 --   mc.moves_idle()         true when mc.apply_player_moves / mc.moves_batched would do nothing: no movement-class packet in the work queue (position, rotation, status, teleport
@@ -71,7 +71,7 @@ begin
          and not exists (select 1 from net.play_inbox)
          and not exists (select 1 from net.outbox)
          and not exists (select 1 from mc.chunk_request)
-         and mc.entity_mode() = 'off';
+         and (mc.entity_mode() = 'off' or (mc.entity_mode() = 'inline' and not exists (select 1 from mc.entity)));     -- (inline with no entity and nobody connected: the entity tick is empty, sql/550)
     end if;
     if q and not mc.tick_extra_pending() then
         perform set_config('dbcraft.quiet_mark', case when fresh and mx = m and pg_snapshot_xmin(sn) = pg_snapshot_xmax(sn) then (m + 1)::text else '' end, false);

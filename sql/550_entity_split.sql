@@ -211,6 +211,17 @@ begin
     if coalesce(current_setting('dbcraft.entity_impl', true), '') = 'proto' then return mc.entity_tick_proto(t); end if;       -- the original prototype (tests/bench/entity/proto_baseline.sql), for comparison only
     if mc.entity_mode() = 'split' then perform mc.entity_cmd_apply(t); end if;      -- what the player connection asked for since the last tick (BEFORE the tick number moves: wake-ups use the last tick as their lane time)
     perform set_config('dbcraft.entity_tick', t::text, false);
+    -- THE EMPTY TICK (docs/WHY-MOBS-COST.md): no entity row at all and nothing that could create one (the prototype spawner is off, or nobody is connected for it to spawn for).  Every statement below
+    -- would find nothing to do and cost about 0.4-0.7 ms (about 30 statements: viewer refresh, goals, lanes, physics, tracker, pickup, despawn, the clock and the log row).  What an empty tick
+    -- does leave behind is only bookkeeping: the interest sets (who looks at which chunk cell), which nothing reads while there is nothing to see, and the clock/log rows.  The interest sets are
+    -- emptied once (if there are any); the first tick with an entity rebuilds them from the players' positions before it announces anything (the viewer refresh treats a player without a row as
+    -- new: its whole view is "entering"), and a clock that is behind makes it re-anchor the lanes, of which there are none.  No row in mc.entity_tick_log, mc.entity_clock stays where it was.
+    -- (sql/800: a server that nobody is connected to does not even call this.)
+    if coalesce(current_setting('dbcraft.entity_empty_exit', true), 'on') <> 'off' and not exists (select 1 from mc.entity)      -- (dbcraft.entity_empty_exit = off: the full tick, for comparison: tests/sql/1010)
+       and (coalesce(current_setting('dbcraft.entity_spawner', true), 'on') = 'off' or not exists (select 1 from mc.player where conn_id is not null)) then
+        if exists (select 1 from mc.entity_viewer_cell) then delete from mc.entity_cell_viewer; delete from mc.entity_viewer_cell; end if;
+        return 0;
+    end if;
     -- the steps of an autonomous lane (sql/940) are a closed form of the tick: they assume that the tick before this one ran.  When it did not (the entity connection jumped, a new
     -- clock after a crash) every lane is re-anchored at the last tick that did run, with the viewers' real delta base stored
     select c.last_tick into prev from mc.entity_clock c;
