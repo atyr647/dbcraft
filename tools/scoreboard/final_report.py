@@ -156,6 +156,8 @@ def build(rows):
             if not v and not d:
                 continue
             w, f = verdict(v, d, better)
+            if v and d and min(len(v), len(d)) < 3 and w != "-":
+                w = w + " (only %d repetition%s: no range, treat as indicative)" % (min(len(v), len(d)), "" if min(len(v), len(d)) == 1 else "s")
             out.append({"scenario": label, "metric": name, "vanilla": rng(v) if v else ("no usable samples" if not vk else "not run"), "dbcraft": rng(d) if d else "not run", "ratio": ("%.2f" % (C.percentile(d, 50) / C.percentile(v, 50)))
                         if v and d and C.percentile(v, 50) else "", "winner": w, "by": f, "reps": "%d/%d" % (len(v), len(d)),
                         "load": "%.1f-%.1f" % (min(loads), max(loads)) if loads else "", "errors": errs,
