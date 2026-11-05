@@ -58,10 +58,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--size", type=int, default=64)
     ap.add_argument("--reps", type=int, default=3)
-    ap.add_argument("--out", default=os.path.join(C.OUT, "results.jsonl"))
+    ap.add_argument("--out", default=os.environ.get("SCORE_RESULTS") or os.path.join(C.OUT, "results.jsonl"))
     a = ap.parse_args()
     for rep in range(a.reps):
         for server in ("vanilla", "dbcraft"):
+            if any((lambda r: r.get("scenario") == "terrain" and r.get("rep") == rep and r.get("n") == a.size and r.get("server", "").split(":")[0] == server and "error" not in r)(json.loads(l))
+                   for l in (open(a.out) if os.path.exists(a.out) else [])):
+                print("terrain", server, "rep", rep, "already done: skipped", flush=True)
+                continue
             waited, ok = wait_load(1.5, 900)
             load = C.load_snapshot()["load1"]
             rec = {"scenario": "terrain", "server": server if server == "vanilla" else "dbcraft:default", "n": a.size, "moving": 0, "vd": 0, "rep": rep, "tag": "terrain",

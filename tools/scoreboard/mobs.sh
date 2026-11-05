@@ -16,17 +16,27 @@ waitload() {
 }
 export PGDATABASE=dbcraft
 tools/scoreboard/dbcraft.sh stop > /dev/null 2>&1
+# resumable: the output directory is on disk (outside /dev/shm); a scenario that is already in vanilla.jsonl / dbcraft.txt for this repetition is not run again
+have_v() { grep -q "\"rep\": $1, \"scenario\": \"$2\"" "$out/vanilla.jsonl" 2>/dev/null; }
+have_d() { grep -q "^rep $1 | $3/$2 " "$out/dbcraft.txt" 2>/dev/null; }
 for rep in $(seq 1 "$reps"); do
-  waitload
-  python3 tools/entity/vanilla_mobs.py --dir /dev/shm/sb/mobvan --port 58607 --rcon 58608 --reps 1 --rep-offset $((rep - 1)) --scenarios "${scen// /,}" --settle 30 --window 30 \
-    --xms 1G --xmx 2G --tag final --out "$out/vanilla.jsonl" >> "$out/driver.log" 2>&1
-  for code in $scen; do
+  miss=""
+  for code in $scen; do have_v "$rep" "$code" || miss="$miss,$code"; done
+  if [ -n "$miss" ]; then
     waitload
-    echo "load before: $(cut -d' ' -f1 /proc/loadavg)" >> "$out/dbcraft.txt"
-    tests/bench/mobs2/run_one.sh "$code" "$rep" final "$out/dbcraft.txt" -v warm=150 -v reset=1 2>&1 | grep -v NOTICE
-    case "$code" in 2000v|5000v)
+    python3 tools/entity/vanilla_mobs.py --dir /dev/shm/sb/mobvan --port 58607 --rcon 58608 --reps 1 --rep-offset $((rep - 1)) --scenarios "${miss#,}" --settle 30 --window 30 \
+      --xms 1G --xmx 2G --tag final --out "$out/vanilla.jsonl" >> "$out/driver.log" 2>&1
+  fi
+  for code in $scen; do
+    if ! have_d "$rep" "$code" final; then
       waitload
-      tests/bench/mobs2/run_one.sh "$code" "$rep" final-walk1 "$out/dbcraft.txt" -v warm=150 -v reset=1 -v walk=1.0 2>&1 | grep -v NOTICE ;;
+      echo "load before: $(cut -d' ' -f1 /proc/loadavg)" >> "$out/dbcraft.txt"
+      # reset=1: the mob area is regenerated flat first (a world that other scenarios scribbled in gives mobs no lanes: the first campaign's in-view rows were inflated by that)
+      tests/bench/mobs2/run_one.sh "$code" "$rep" final "$out/dbcraft.txt" -v warm=150 -v reset=1 2>&1 | grep -v NOTICE
+    fi
+    case "$code" in
+      *n) have_d "$rep" "$code" final-nobody || { waitload; tests/bench/mobs2/run_one.sh "$code" "$rep" final-nobody "$out/dbcraft.txt" -v warm=150 -v reset=1 -v viewers=0 2>&1 | grep -v NOTICE; } ;;
+      2000v|5000v) have_d "$rep" "$code" final-walk1 || { waitload; tests/bench/mobs2/run_one.sh "$code" "$rep" final-walk1 "$out/dbcraft.txt" -v warm=150 -v reset=1 -v walk=1.0 2>&1 | grep -v NOTICE; } ;;
     esac
   done
 done

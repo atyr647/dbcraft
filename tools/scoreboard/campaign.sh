@@ -29,10 +29,11 @@ for phase in "$@"; do
       $R edit --n 1 --reps 3 --load-max 1.5 --quiet-wait 0 --tag edit
       $R blocks --reps 3 --load-max 1.5 --quiet-wait 0 --tag blocks
       $R world10k --reps 3 --load-max 1.5 --quiet-wait 0 --tag world10k ;;
-    crowd)
+    crowd)     # 500 players on BOTH servers: crowded (30 x 30 chunks) and sparse (100 x 100 chunks), all moving and 20% moving
       $R pop --n 500 --moving 1.0 --spread 240 --bound 230 $G --ready-timeout 400 --tag crowd
-      $R pop --n 500 --moving 1.0 --spread 800 --bound 780 $G --ready-timeout 400 --servers dbcraft --tag sparse
-      $R pop --n 500 --moving 0.2 --spread 800 --bound 780 $G --ready-timeout 400 --servers dbcraft --tag sparse ;;
+      $R pop --n 500 --moving 0.2 --spread 240 --bound 230 $G --ready-timeout 400 --tag crowd
+      $R pop --n 500 --moving 1.0 --spread 800 --bound 780 $G --ready-timeout 400 --tag sparse
+      $R pop --n 500 --moving 0.2 --spread 800 --bound 780 $G --ready-timeout 400 --tag sparse ;;
     soak)
       $R pop --n 200 --moving 1.0 --bound 500 --reps ${SOAK_REPS:-1} --hold 600 --load-max 1.5 --quiet-wait 0 --ready-timeout 300 --tag soak ;;
   esac

@@ -429,6 +429,8 @@ def scenario_pop(srv, a):
         time.sleep(a.settle)           # let the join burst drain before measuring steady state
         srv.window_begin()
         c0, t0 = srv.cpu(), time.time()
+        lg0 = sum(C.proc_cpu(p.pid)[0] for p in lg.procs)          # the load generator's own CPU over the window (it shares the cores with the server)
+        m0 = C.load_snapshot()
         lg.go()
         if os.environ.get("SCORE_PROFILE_CMD"):       # a profiler for the steady-state window (tools/scoreboard/capprof_live.sh): started here, runs beside the window, output is its own
             subprocess.Popen(os.environ["SCORE_PROFILE_CMD"], shell=True, stdout=open(os.path.join(C.OUT, "profile.txt"), "w"), stderr=subprocess.STDOUT)
@@ -437,8 +439,13 @@ def scenario_pop(srv, a):
             srv.window_poll()
             time.sleep(3.0 if srv.name == "vanilla" else 1.0)
         c1, t1 = srv.cpu(), time.time()
+        lg1 = sum(C.proc_cpu(p.pid)[0] for p in lg.procs)
+        m1 = C.load_snapshot()
         r = srv.window_end()
         done = lg.wait_event("DONE", 60)
+        dj = m1.get("total_jiffies", 0) - m0.get("total_jiffies", 0)
+        r.update({"loadgen_cpu_cores": (lg1 - lg0) / (t1 - t0), "loadgen_procs": len(lg.procs),
+                  "machine_busy_cores": (m1["busy_jiffies"] - m0["busy_jiffies"]) / dj * os.cpu_count() if dj > 0 else None})
         r.update({"cpu_cores": (c1 - c0) / (t1 - t0), "mem_mib": srv.mem(), "startup_s": srv.startup_s, "pregen_s": pregen_s})
         r.update(rs)
         r.update(client_summary(merge_done(done)))
@@ -589,15 +596,30 @@ def main():
     ap.add_argument("--load-wait", type=float, default=float(os.environ.get("SCORE_LOAD_WAIT", 900)), help="max seconds to wait for --load-max")
     ap.add_argument("--quiet-busy", type=float, default=0.30, help="CPU busy fraction below which the machine counts as quiet")
     ap.add_argument("--tag", default="")
-    ap.add_argument("--out", default=os.path.join(C.OUT, "results.jsonl"))
+    ap.add_argument("--out", default=os.environ.get("SCORE_RESULTS") or os.path.join(C.OUT, "results.jsonl"),
+                    help="results file (SCORE_RESULTS): a run whose (scenario, server, n, moving, tag, rep) is already in it without an error is skipped, so a campaign can be resumed after a restart")
     a = ap.parse_args()
     if a.scenario in SCENARIOS:
         fn = SCENARIOS[a.scenario]
     else:
         import run2
         fn = run2.SCENARIOS[a.scenario]
+    def done_already(server, rep):
+        try:
+            for l in open(a.out):
+                r = json.loads(l)
+                if (r.get("scenario"), r.get("n"), r.get("tag"), r.get("rep")) == (a.scenario, a.n, a.tag, rep) and abs(r.get("moving", 0) - a.moving) < 1e-9 \
+                        and r.get("server", "").split(":")[0] == server and "error" not in r and a.tag:
+                    return True
+        except OSError:
+            pass
+        return False
+
     for rep in range(a.reps):
         for server in a.servers.split(","):
+            if done_already(server, rep):
+                print("%s %s rep %d already in %s: skipped" % (a.scenario, server, rep, a.out), flush=True)
+                continue
             srv = make(server, a.dbmode)
             if a.load_max > 0:
                 waited, quiet_ok = wait_load(a.load_max, a.load_wait)
