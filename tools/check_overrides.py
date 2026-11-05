@@ -10,7 +10,7 @@ import glob, os, re, sys
 os.chdir(os.path.join(os.path.dirname(__file__), ".."))
 pat = re.compile(r"create\s+(?:or\s+replace\s+)?(?:function|procedure)\s+([a-z_][a-z_0-9]*\.[a-z_][a-z_0-9]*)\s*\(([^)]*)\)", re.I)
 defs = {}
-for f in sorted(glob.glob("sql/*.sql")):
+for f in sorted(glob.glob("sql/*.sql"), key=lambda p: (int(os.path.basename(p).split("_")[0]), p)):      # numeric order, as tools/migrate.sh applies them
     text = re.sub(r"--[^\n]*", "", open(f).read())
     seen = set()
     for m in pat.finditer(text):

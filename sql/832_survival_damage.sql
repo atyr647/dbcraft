@@ -90,6 +90,7 @@ begin
     into n, full_eids, dead_eids from u;
   if cardinality(full_eids) > 0 then
     perform mc.send_players_and_viewers(full_eids, array(select mc.pkt_damage_event(e, dt.id) from unnest(full_eids) e));
+    perform mc.snd_hurt(full_eids, dead_eids, p_type);                          -- (sql/1030) the hurt or death sound for the others, right after the damage event (recorded)
   end if;
   perform mc.survival_die(dead_eids, p_cur);
   return n;

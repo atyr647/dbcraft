@@ -114,12 +114,12 @@ create or replace function mc.apply_block_actions(cur_tick bigint) returns table
 declare
     i_act int := mc.sid('player_action'); i_use int := mc.sid('use_item_on'); dim text := 'minecraft:overworld';
     r record; act int; o int; f int; pos record; face int; sq int; hand int;
-    cur text; clicked text; item text; cnt int; blk text; v_slot int; tx int; ty int; tz int; ok boolean;
+    cur text; clicked text; item text; cnt int; blk text; v_slot int; tx int; ty int; tz int; ok boolean; face_nm text; repl boolean; pstate text; ccx float8; ccy float8; ccz float8; ax int; ay int; az int;
 begin
     breaks := 0; places := 0; refused := 0;
     -- (idle early return, the only change to this copy: no block packet this tick, nothing to do; saves planning and cursor setup every tick)
     if not exists (select 1 from mc.play_in_work m where m.packet_id in (i_act, i_use)) then return next; return; end if;
-    for r in select m.seq as mseq, m.packet_id, m.conn_id, m.body, p.uuid, p.gamemode, p.x, p.y, p.z, p.held_slot, p.inv_state
+    for r in select m.seq as mseq, m.packet_id, m.conn_id, m.body, p.uuid, p.gamemode, p.x, p.y, p.z, p.held_slot, p.inv_state, p.yaw, p.pitch, p.sneaking
              from mc.play_in_work m join mc.player p on p.conn_id = m.conn_id
              where m.packet_id in (i_act, i_use) order by m.seq loop
         begin
@@ -137,6 +137,7 @@ begin
                     refused := refused + 1;
                 else
                     perform mc.set_block(dim, pos.x, pos.y, pos.z, 'minecraft:air');
+                    perform mc.shape_neighbours(dim, pos.x, pos.y, pos.z);                                  -- (sql/1031) a fence next to it no longer connects
                     insert into mc.block_actor values (dim, pos.x, pos.y, pos.z, r.conn_id);
                     breaks := breaks + 1;
                     if r.gamemode = 0 then update mc.player set exhaustion = least(exhaustion + 0.005::real, 40::real) where conn_id = r.conn_id; end if;      -- (survival, sql/830) Block.playerDestroy: causeFoodExhaustion(0.005)
@@ -159,18 +160,34 @@ begin
                 ty := pos.y + case face when 0 then -1 when 1 then 1 else 0 end;
                 tz := pos.z + case face when 2 then -1 when 3 then 1 else 0 end;
                 clicked := mc.get_block(dim, pos.x, pos.y, pos.z);
+                -- (sql/1031) BlockPlaceContext: a clicked block that can be replaced (plants, snow, the free half of a slab) takes the new block into ITS cell; the state comes from the
+                -- block's class, the face, the cursor, the player's direction (mc.place_state)
+                face_nm := (array['down', 'up', 'north', 'south', 'west', 'east'])[face + 1];
+                ax := tx; ay := ty; az := tz;                                  -- the cell next to the clicked face: vanilla sends it to the placer whatever was placed
+                ccx := proto.f32_read(r.body, f); ccy := proto.f32_read(r.body, f + 4); ccz := proto.f32_read(r.body, f + 8);
+                repl := mc.place_replaces_clicked(clicked, blk, face_nm, ccy);
+                if repl then tx := pos.x; ty := pos.y; tz := pos.z; end if;
                 cur := mc.get_block(dim, tx, ty, tz);
-                ok := r.gamemode in (0, 1) and clicked is not null and cur is not null and mc.replaceable(cur)
+                -- ServerGamePacketListenerImpl.handleUseItemOn: a block out of reach is ignored after the acknowledgement, with no block update (recorded: tests/e2e/sound_probe.py place)
+                if clicked is not null and not mc.in_block_reach(r.x, r.y, r.z, pos.x, pos.y, pos.z, r.gamemode) then refused := refused + 1; continue; end if;
+                ok := r.gamemode in (0, 1) and clicked is not null and cur is not null and (repl or mc.cell_replaceable(cur))
                       and mc.in_block_reach(r.x, r.y, r.z, pos.x, pos.y, pos.z, r.gamemode) and not mc.overlaps_player(r.x, r.y, r.z, tx, ty, tz);
+                if ok then
+                    pstate := mc.place_state(dim, blk, tx, ty, tz, face_nm, pos.x + ccx - tx, pos.y + ccy - ty, pos.z + ccz - tz, repl, r.yaw, r.pitch, coalesce(r.sneaking, false));
+                    if pstate is null then ok := false; end if;                  -- nothing of the family survives here (a torch in mid-air)
+                end if;
                 if not ok then
                     perform mc.queue_block_update(r.conn_id, tx, ty, tz, cur);
                     perform mc.queue_block_update(r.conn_id, pos.x, pos.y, pos.z, clicked);
                     refused := refused + 1;
                     continue;
                 end if;
-                perform mc.set_block(dim, tx, ty, tz, blk);
+                perform mc.set_block(dim, tx, ty, tz, pstate);
+                if pstate like '%\_door[%half=lower%' then perform mc.set_block(dim, tx, ty + 1, tz, mc.st_set(pstate, 'half', 'upper')); end if;       -- (sql/1031) DoorBlock.setPlacedBy: the upper half
+                perform mc.shape_neighbours(dim, tx, ty, tz);                                                                                         -- (sql/1031) fences, panes, stairs, gates, chests follow the new block
                 insert into mc.block_actor values (dim, tx, ty, tz, r.conn_id);
                 places := places + 1;
+                perform mc.snd_place(r.conn_id, tx, ty, tz, pstate);          -- (sql/1030) the others hear it, before the swing animations (recorded)
                 -- the viewers of the placing player see its arm swing, twice (recorded from the real server: two identical swing_animation packets before the block update)
                 if mc.vis_on() then
                     insert into mc.play_out (conn_id, data)
@@ -179,8 +196,8 @@ begin
                 end if;
                 -- vanilla (recorded): the placing player is sent the clicked block's state and the new block's state, then the broadcast sends the new
                 -- block again, then the ack: [clicked, target, target, ack]
-                perform mc.queue_block_update(r.conn_id, pos.x, pos.y, pos.z, clicked);
-                perform mc.queue_block_update(r.conn_id, tx, ty, tz, mc.get_block(dim, tx, ty, tz));
+                perform mc.queue_block_update(r.conn_id, pos.x, pos.y, pos.z, mc.get_block(dim, pos.x, pos.y, pos.z));
+                perform mc.queue_block_update(r.conn_id, ax, ay, az, mc.get_block(dim, ax, ay, az));
                 if r.gamemode = 0 then
                     perform mc.set_slot(r.uuid, v_slot, item, cnt - 1);
                     update mc.player set inv_state = inv_state + 1 where uuid = r.uuid;
