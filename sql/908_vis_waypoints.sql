@@ -86,6 +86,8 @@ drop trigger if exists wp_cnt_del on mc.wp;
 create trigger wp_cnt_del after delete on mc.wp referencing old table as old_rows for each statement execute function mc.wp_cnt_del();
 drop trigger if exists wp_cnt_trunc on mc.wp;
 create trigger wp_cnt_trunc after truncate on mc.wp for each statement execute function mc.wp_cnt_trunc();
+-- (also under session_replication_role = replica, which the tests use to clear tables without the player triggers: the counts must follow the rows)
+alter table mc.wp enable always trigger wp_cnt_ins, enable always trigger wp_cnt_del, enable always trigger wp_cnt_trunc;
 -- (a database that already has rows: the counts of what is there)
 truncate mc.wp_cnt;
 insert into mc.wp_cnt select rcv, count(*)::int from mc.wp group by rcv;
