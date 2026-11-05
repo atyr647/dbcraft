@@ -9,6 +9,9 @@
 --   D  sql/800: mc.tick_quiet is true for inline mode with no entity row (and nobody connected), false with an entity row, false in split mode.
 \! python3 tools/load_world_ref.py >/dev/null
 select mc.block_class_refresh();
+-- This file pins the lane machinery against the 'wander' goal model (60 % walks of 20-79 ticks, 40 % stands of 40-139, wherever the mob is: mc.entity_goal, dbcraft.entity_walk_prob); the vanilla-like goals
+-- (sql/942, the default since docs/WHY-MOBS-COST.md section 10) are tested in tests/sql/1011.
+select set_config('dbcraft.entity_ai', 'wander', false);
 select set_config('dbcraft.entity_spawner', 'off', false);
 delete from mc.chunk where dimension = 'minecraft:overworld' and cx between -8 and 8 and cz between -8 and 8;
 select mc.generate_flat('minecraft:overworld', cx, cz) from generate_series(-8, 8) cx, generate_series(-8, 8) cz;
