@@ -399,3 +399,6 @@ round 2: split players=200 | hook cpu us avg 45 p50 0 min 0 (wall avg 60 p50 52)
  entity_lane        |   0.0 | 0.0 | 0.0 |    4.55 |      0.0 |    0.01 |      0.0
  entity             |   0.0 | 0.0 | 0.0 |   61.26 |      0.0 |    0.09 |      0.0
 DONE empty
+=== series (cpu only, 2026-11-05 15:42:43 UTC, load 2.84), 100 ticks after 150 warm-up ticks + VACUUM ANALYZE, two interleaved repetitions
+--- repetition 1
+S-view-0 mobs=0 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 0.00 p50 0.00 p99 0.00 | wall avg 0.28 p99 0.55 | ai  phys  trk  pick  | awake  lanes 0 | out rows 0 KB 0 | wal KB 0 | load 2.84

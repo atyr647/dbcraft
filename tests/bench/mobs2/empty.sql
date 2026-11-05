@@ -25,9 +25,13 @@
 \else
 \set spawner off
 \endif
+\if :{?exit}
+\else
+\set exit on
+\endif
 select case when :profile = 1 then 'all' else 'none' end as trk \gset
 select set_config('track_functions', :'trk', false), set_config('pg_stat_statements.track', :'trk', false) \gset
-select set_config('dbcraft.entity_spawner', :'spawner', false) \gset
+select set_config('dbcraft.entity_spawner', :'spawner', false), set_config('dbcraft.entity_empty_exit', :'exit', false) \gset
 update mc.server_property set value = :'mode' where key = 'dbcraft.entity-mode';
 truncate mc.play_out, mc.entity_cell_viewer, mc.entity_viewer_cell, mc.entity_tick_log;
 delete from mc.entity;
@@ -43,12 +47,12 @@ create procedure pg_temp.run(p_from int, p_to int, p_rec boolean) language plpgs
 declare x timestamptz; y timestamptz; z timestamptz; m text; s0 bigint[]; s1 bigint[]; s2 bigint[]; l0 pg_lsn; l1 pg_lsn;
 begin
     for tk in p_from..p_to loop
-        l0 := pg_current_wal_lsn(); s0 := tickbench.sched(); x := clock_timestamp();
+        l0 := pg_current_wal_insert_lsn(); s0 := tickbench.sched(); x := clock_timestamp();
         m := mc.entity_mode();
         if m <> 'off' then perform mc.entity_step(tk); end if;
         y := clock_timestamp(); s1 := tickbench.sched();
         if m = 'split' then perform mc.entity_tick(tk); end if;
-        z := clock_timestamp(); s2 := tickbench.sched(); l1 := pg_current_wal_lsn();
+        z := clock_timestamp(); s2 := tickbench.sched(); l1 := pg_current_wal_insert_lsn();
         if p_rec then insert into _t values (tk, (s1[1] - s0[1]) / 1e3, extract(epoch from y - x) * 1e6, (s2[1] - s1[1]) / 1e3, extract(epoch from z - y) * 1e6, (l1 - l0)::bigint); end if;
         commit;
     end loop;
@@ -63,7 +67,7 @@ call pg_temp.run(41, 40 + :ticks, true);
 \if :profile
 select pg_stat_force_next_flush() is null as x \gset
 \endif
-select format('%s players=%s | hook cpu us avg %s p50 %s min %s (wall avg %s p50 %s) | entity connection cpu us avg %s p50 %s | wal B/tick %s', :'mode', :players,
+select format('%s%s players=%s | hook cpu us avg %s p50 %s min %s (wall avg %s p50 %s) | entity connection cpu us avg %s p50 %s | wal B/tick %s', :'mode', case when :'exit' = 'off' then ' (full tick)' else '' end, :players,
               round(avg(a_cpu)::numeric), round((percentile_cont(0.5) within group (order by a_cpu))::numeric), round(min(a_cpu)::numeric), round(avg(a_wall)::numeric), round((percentile_cont(0.5) within group (order by a_wall))::numeric),
               round(avg(b_cpu)::numeric), round((percentile_cont(0.5) within group (order by b_cpu))::numeric), round(avg(wal)::numeric)) as result from _t;
 update mc.server_property set value = 'off' where key = 'dbcraft.entity-mode';

@@ -96,9 +96,9 @@ declare a bigint[]; b bigint[]; t0 timestamptz; l0 pg_lsn; l1 pg_lsn; r record; 
 begin
     for tk in p_from..p_to loop
         truncate mc.play_out;
-        l0 := pg_current_wal_lsn(); a := tickbench.sched(); t0 := clock_timestamp();
+        l0 := pg_current_wal_insert_lsn(); a := tickbench.sched(); t0 := clock_timestamp();
         perform mc.entity_tick(tk);
-        b := tickbench.sched(); l1 := pg_current_wal_lsn();
+        b := tickbench.sched(); l1 := pg_current_wal_insert_lsn();
         if p_rec then
             select * into r from mc.entity_tick_log where tick = tk;
             insert into _t select tk, (b[1] - a[1]) / 1e6, extract(epoch from clock_timestamp() - t0) * 1000, r.ms_ai, r.ms_physics, r.ms_tracker, r.ms_pickup, r.awake,

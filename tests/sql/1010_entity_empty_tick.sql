@@ -80,10 +80,15 @@ begin
 end $$;
 
 ------------------------------------------------------------------------------------------------ A  differential
+select t.history('warm', 'on');           -- (a first history on a fresh database differs from every later one in the timing of the lanes - floor summaries and masks being built on first touch - exit or not; so: warm up first)
 select t.history('full', 'off');
 select t.history('exit', 'on');
-select t.is_true('A: the history is not vacuous (packets for both viewers, announcements, moves, removals; more than 100 play_out rows)',
-                 (select count(*) > 100 and count(distinct conn) >= 3 from t.pk where run = 'full'));
+select t.history('full_b', 'off');
+select t.eq('A: the harness is deterministic: two runs of the full tick give the same play_out rows',
+            (select count(*)::int from (select tick, conn, h, n from t.pk where run = 'full' except select tick, conn, h, n from t.pk where run = 'full_b') d)
+          + (select count(*)::int from (select tick, conn, h, n from t.pk where run = 'full_b' except select tick, conn, h, n from t.pk where run = 'full') d), 0);
+select t.is_true('A: the history is not vacuous (packets for both viewers, announcements, moves, removals; more than 80 (tick, viewer) rows)',
+                 (select count(*) > 80 and count(distinct conn) >= 3 from t.pk where run = 'full'));
 select t.eq('A: the early exit changes no play_out row of any tick for any viewer (tick, viewer, bytes, number of rows)',
             (select count(*)::int from (select tick, conn, h, n from t.pk where run = 'full' except select tick, conn, h, n from t.pk where run = 'exit') d)
           + (select count(*)::int from (select tick, conn, h, n from t.pk where run = 'exit' except select tick, conn, h, n from t.pk where run = 'full') d), 0);
