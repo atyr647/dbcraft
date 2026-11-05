@@ -16,6 +16,8 @@ is compared with another comes from runs next to each other (A B A B) and the ra
 | ... mean tick of the window / CPU of the tick backend per tick (run.py) | 284 ms / 321 ms | 130 ms / 139 ms | 2.2 / 2.3 |
 | walking bench, crowd 30 x 30 chunks, 0.215 blocks per tick: visibility phase (4 runs each, quiet 2-3 load / shared 5.6) | 36.2 34.6 33.3 32.1 / 50.4 43.9 | 13.1 13.1 12.2 11.8 / 14.1 17.6 | 2.5 - 3.6 |
 | walking bench, crowd, 1.1 blocks per tick (a 250 ms tick): visibility phase | 159.2 157.4 160.3 153.7 / 216.6 219.9 | 42.6 43.4 42.3 41.7 / 61.6 61.7 | 3.5 - 3.7 |
+| walking bench, the final function, load 5.7-6.6 (everything about 2 times slower): crowd 0.215 / 1.1 | 63.6 / 244.3 | 22.6 / 65.8 | 2.8 / 3.7 |
+| walking bench, the same 30 x 30 chunks, 250 / 500 / 1000 players, 0.215 (load 5.2-6.5) | 17.9 / 63.6 / 197.0 | 6.7 / 22.6 / 42.7 | 2.7 / 2.8 / 4.6 |
 | walking bench, 500 sparse (100 x 100 chunks), 0.215 / 1.1 | 9.8 / 47.2 | 11.7 / 27.5 | 0.8 / 1.7 |
 | live harness, 500 sparse walkers: visibility phase / mean tick / tick CPU | 17.0 ms / 81 ms / 71 ms (load 3.6-5.3) | 10.0 and 9.4 ms / 62 and 58 ms / 65 and 63 ms (load 1.9 and 3.6) | |
 
@@ -65,7 +67,7 @@ Notation: `b(P)` = (vis_x, vis_z) of P, `pos(P)` = where P is now, `disp(P) = |p
    step 2 is false); **a dead player** (sql/836 deletes the pairs of a corpse 19 ticks after the death, behind this function's back, and the old function brings them back when somebody near it is dirty: a
    quirk that has to be kept to have the same output); **a dirty player whose chunk before the move is unknown** (`vis_ocx` is null: sql/468's marker for a player made dirty by anything but the movement step: join,
    respawn, view distance change, game mode re-check, teleport; the respawn in sql/836 deletes all pairs of the player, `tests/sql/830` found that when the first version did not know about it); and every dirty player
-   that jumped far has a disp that makes its ring cover everybody (a bound over 14 blocks is infinite).  The state is three columns of `mc.player` written by the update that already clears `vis_dirty` (no extra write).
+   that jumped far has a disp that makes its ring cover everybody (a bound over 14 blocks is infinite).  The state is three columns of `mc.player` written by the update that already clears `vis_dirty` (no extra write in the normal case).
    A player without a bound that is **not** evaluated itself (a waiting client, a radius or game mode that changed without marking it, a dead player) has its pairs evaluated by the dirty players with what it
    is now; so that it cannot look trustworthy again if what it is now changes back before it is evaluated (view distance 10, 8, 10), `vis_eid` is set to null at that point and it stays without a bound until
    it is evaluated.  (Found by the test with game modes changed behind the trigger of sql/900; the same for a view distance property edited twice.)
@@ -160,7 +162,7 @@ still the path taken) and shows nothing; the gain, 1.7 ms of 62, is within the n
   partial index on `(chunk_x, chunk_z)` cost one probe per cell column (1 us each, 20 columns for a circle of 160 blocks) or ring cells of 16 blocks (190 a dirty player, 0.15 us each), the ring of cells that
   can contain a pair whose bound is 10-20 blocks is 25-40 % of a crowd of 500 and the rest of the players are the same ones the loop skips cheaply; at 500 players, crowded or sparse, the grid is not cheaper than the loop.
   It would be at several thousand online players: **the candidate search here is O(dirty x online) with 0.1 us**, not O(changes); the probes, the inserts and the deletes are O(pairs near the edge).  At 1,000
-  crowded walkers a tick at 1.1 blocks a tick has about 270 dirty players x 1,000 = 270,000 pair tests, 27 ms.  An index-driven candidate source (the neighbourhood version's) for more than about 2,000 online
+  crowded walkers at 0.215 blocks a tick the phase measured 42.7 ms (the neighbourhood version 197), at 500 22.6 (63.6), at 250 6.7 (17.9).  An index-driven candidate source (the neighbourhood version's) for more than about 2,000 online
   players is the next step; the bound and the probes carry over unchanged.
 * **A hash index on the pair key** for the probes (`((viewer_eid::bigint << 24) | target_eid)`): 6.6 against 8.3 ms for 7,400 probes, a fifth, not worth a second index.
 * **Probing one direction of a pair** and skipping the other when it needs no change (both directions of a pair of equal players are evaluated together, so their state is equal): halves the probes, and
