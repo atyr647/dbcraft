@@ -18,7 +18,7 @@ every other row of [SCOREBOARD.md](SCOREBOARD.md) is explicitly marked "not re-r
 
 1. **500 players crowded**: campaign 1 446 ms against vanilla's 135 ms and 103-240 of 500 clients dropped; capacity track 778-884 ms, 0 dropped.
 2. **500 players sparse, all moving**: campaign 1 279 ms, 70-141 dropped; capacity track 131-143 ms (target 100 not met); vanilla never measured at 500 sparse.
-3. **Locator-bar cliff**: the bar is half a walking tick at 50-120 players and is switched off above 120 (`dbcraft.locator-bar-max-players`), so the 200-walker result above benefits from it being off.
+3. **Locator-bar cliff**: the bar is half a walking tick at 50-120 players and is switched off above 120 (`dbcraft.locator-bar-max-players`), so the 200-walker result above benefits from it being off. **Update: `docs/PERF-LOCATOR.md`: the pass is dirty-driven now (45-70 % of its old cost) and the cap default is 100,000, so the bar stays on above 120 players; the campaign rows above were measured with the bar off above 120 and not re-run.**
 4. **A viewer with mobs just outside his view**: 1.25x vanilla at 2,000 / 5,000 cows (PERF-MOBS2, own session); campaign 1 had 3.8-6.6x before the lazy lanes; `dbcraft.entity-mode` is `off` as shipped.
 5. **200-join login storm and edits with a viewer** (campaign 1: worst tick 948 against 545 ms; 1,000-block fill tick cost 80 against 19 ms); the storm round 2 and dynamics fixes target these, not measured here.
 

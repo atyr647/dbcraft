@@ -114,7 +114,7 @@ identical results in three and one extra `entity_position_sync` at the end of th
 * **Chat and command rate limits** follow the bytecode (counters, thresholds, `disconnect.spam`, operators exempt) and are tested in SQL only: no vanilla recording of a spam kick.
   Signed chat is out of scope.  `/title`, `/tellraw` and the other text commands belong to the commands track and are not built here.
 * **Entity data not modelled**: on fire, swimming, gliding, glowing, custom names, the air supply, absorption, the shoulder parrots, pose values other than standing and crouching.
-* **Scale**: the locator bar is a row per pair of players per tick: above `dbcraft.locator-bar-max-players` (default 120) it is switched off (see the cost table), a large crowd also
+* **Scale**: the locator bar was a row per pair of players per tick (docs/PERF-LOCATOR.md: dirty-driven now, cap default 100,000): above `dbcraft.locator-bar-max-players` it is switched off (see the cost table), a large crowd also
   pays for one add-entity bundle per viewer.  The movement fan-out no longer uses the per-chunk "cell" blob of `sql/430_tick_perf_fanout.sql` with the tracker on: who sees whom
   is not a function of the chunk any more.  The batched tick (`mc.server_tick_batched`, `sql/389`) does not run any of this.
 * **Entity tracker of mobs** (`sql/530`-`551`) still uses the server's view distance and a chunk-distance rule for mobs; only players are tracked by the new rule.
