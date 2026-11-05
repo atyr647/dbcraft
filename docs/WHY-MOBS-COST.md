@@ -14,9 +14,9 @@ the first was expected.
 | situation (2,000 cows, one viewer, CPU of the entity tick) | dbcraft | what it is made of | vanilla 26.3 (same machine) |
 |---|---|---|---|
 | **1. in view, flat uniform ground** (best case) | **5.1 ms** (4.7-5.1; 2.5 us per mob and tick) = 1.0 ms fixed + 2.0 us per mob | per tick about 36 goal events (a row update through SQL each, ~45-65 us all-in) = half of it; ~300 lane steps that build a packet (4 us each); one fan-out; three scans of the lane table | **40 ms** (0.80 cores; 8x more) |
-| **2. just outside his view** (ring 100-140 blocks, view 5 chunks) | **1.7-3.9 ms** (0.9-1.3 ms per 500, 7.5 ms per 5,000; 1.3-1.6 us per mob and tick + 0.6 ms fixed) | the same goal events (~35 a tick) on mobs nobody sees (lazy lanes replay them every 32nd tick) | **4.75 ms**, of which 3.2 ms is the empty server's own cost; the cows are *inert* (see below) |
+| **2. just outside his view** (ring 100-140 blocks, view 5 chunks) | **1.7-3.9 ms** (0.9-1.3 ms per 500, 7.5 ms per 5,000; 1.3-1.6 us per mob and tick + 0.6 ms fixed) | the same goal events (~35 a tick) on mobs nobody sees (lazy lanes replay them every 32nd tick) | **4.75 ms**, of which 3.2 ms is the empty server's own cost; the cows are *inert* (section 7) |
 | **3. ground with blocks on it: no lane** | **19 ms with 20 blocks scattered, 49 ms with 200, 141-145 ms with 2,000** (a mob that gets no lane: ~165 us per tick, plus ~11 ms per tick as soon as one mob is outside a lane) | the exact sweep, a generic tracker and a lane retry **every tick** for every mob that fails the uniform-floor test; two 12-CTE statements planned on every call | (not a different case in vanilla: the same ~40 ms) |
-| **4. nothing to simulate** (entity-mode `inline`, no entity at all) | **0.35-0.65 ms** per tick (0 to 200 players), **now about 0.02 ms and free when nobody is connected** (section 9) | ~30 statements that find nothing: viewer refresh, goals, lanes, physics, tracker, pickup, despawn, clock row, log row | 3.2 ms (empty JVM) |
+| **4. nothing to simulate** (entity-mode `inline`, no entity at all) | **0.35-0.65 ms** per tick (0 to 200 players), **now 0.04-0.07 ms, and nothing when nobody is connected** (section 9) | ~30 statements that find nothing: viewer refresh, goals, lanes, physics, tracker, pickup, despawn, clock row, log row | 3.2 ms (empty JVM) |
 
 In plain language:
 
@@ -163,7 +163,7 @@ profile of the 20-block cell sums to 19.9 instrumented ms against 5.5 for the sa
 
 **The negative result worth stating**: the no-lane cost is not "the sweep is slow" (a sweep step is 13 us) but that a mob outside a lane is touched by **five statements per tick, each with its own probe of the
 wide row and its own fixed cost**, forever, because nothing remembers that the lane test failed.  The part of the tick that tests it again and again (`auto_try` + `lane_try` + the verdict functions) is
-**60 % of the cost** (77 + 4 + 17 of 133 ms); physics and tracker are 35 %.
+**61 % of the cost** (`auto_try` 77, which contains the 17 ms of `entity_floor_ok`, plus `lane_try` 4, of 133 ms); physics and tracker are 35 % (32 + 14).
 
 ### 4.4 Scenario 4: the empty entity tick (inline mode, no entity at all)
 
@@ -244,7 +244,7 @@ Per mob and tick, in the order the server runs them (`ServerLevel.tick`, `ChunkM
 So **vanilla's cost per mob is collision and entity queries (about 60 %), not AI and not pathfinding (13 % and 0.6 %), and not the tracker (3 %)**: that is about 16-18 us per mob and tick (32-37 of the 40 ms, the rest is the chunk system).  dbcraft's
 lanes skip exactly the collision and entity-query work (a lane is on a floor proven uniform; mobs do not push each other), which is the whole reason a lane mob is 8 times cheaper.  The viewer received
 **148 KB/s, about 14,000 packets per second** from the 2,000 cows: 3,183 `move_entity_pos`, 2,444 `move_entity_pos_rot`, **5,455 `set_entity_motion`**, 3,127 `rotate_head`, 155 `sound`, 29
-`entity_position_sync` (dbcraft: ~20 `move_entity_pos` per tick for ~300 due mobs, no motion, no sound packets).
+`entity_position_sync` (dbcraft: about 300 `move_entity_pos` / `rotate_head` packets a tick, 4 KB per tick = 80 KB/s for the same cows, no motion packets, no sounds).
 
 What a mob **nobody can see** costs in vanilla is items 1-5 minus the tracker: the JVM measured **4.75 ms for 2,000 cows on the ring against 3.2 ms for the empty server**, i.e. **0.8 us per cow and tick** over the
 fixed cost; those cows do not walk (next section), so the stroll goal fails at once, and no pathfinding runs.
@@ -285,7 +285,18 @@ fixed cost; those cows do not walk (next section), so the stroll goal fails at o
     subtraction from inclusive JFR shares, not a measurement.)
   - *Outside the view (scenario 2)*: vanilla's cows do not walk and cost 0.8 us each over a JVM of 3.2 ms; dbcraft's walk 45 % of the time and cost 1.3-1.6 us each over 0.6 ms.  **Per mob, dbcraft is 1.7-2x
     more expensive than vanilla's inert cow; in absolute terms at 2,000 cows it is below the JVM's own fixed cost (3.2 ms), which is why the earlier "vanilla wins 1.25x" has flipped on this machine
-    (PERF-MOBS2 part 2: 8.2 against 6.6 ms; here 1.7-3.9 against 4.75).**  @@WALK@@
+    (PERF-MOBS2 part 2: 8.2 against 6.6 ms; here 1.7-3.9 against 4.75).**  **What the walking costs** (`tests/bench/mobs2/why_walk.sh`: the same 2,000 cows with `dbcraft.entity_walk_prob` = 0, 0.38, 0.6, 1.0; share of time walking 0 %, about 25 %, 45 %, 100 %; CPU ms, two repetitions):
+
+  | share of the time walking | 0 % (all goals stand) | about 25 % (vanilla near a player) | 45 % (default) | 100 % |
+  |---|---|---|---|---|
+  | on the ring (nobody sees them) | **0.75 / 0.91** | 2.7 / 2.1 | 3.0 / 2.9 | 4.8 / 4.6 |
+  | in view | 1.6 / 1.7 | 3.9 / 4.5 | 5.1 / 4.7 | 6.8 / 6.3 |
+  | WAL KB per tick (ring / in view) | 6 / 5 | 9 / 9 | 10 / 12 | 14 / 19 |
+
+  So **three quarters of scenario 2's cost is the walking that vanilla's cows do not do there**: with its cows standing, as vanilla's are beyond 32 blocks, dbcraft costs **0.8 ms for 2,000 cows = 0.4 us
+  per cow, half of vanilla's 0.8 us per inert cow** (and 0.8 against 4.75 ms in absolute terms); with vanilla's walking share near a player (25 %) it is 2.1-2.7 ms.  The model could make this
+  fair at no cost to fidelity by copying the rule (no new goals beyond 32 blocks of a player: the mob stands, its lane needs no event after the first); that is a behaviour change (cows far from every
+  player would stop wandering, as in vanilla) and was not made here.
 
 ## 8. Inherent, fixable, and the floors
 
@@ -303,7 +314,7 @@ fixed cost; those cows do not walk (next section), so the stroll goal fails at o
 | 5 reads and 1-2 rewrites of a 230-byte row per awake mob (no lane) | **yes**, in a row store | yes, by not being awake | -- | the lane tables of the no-lane path (narrow rows, array updates) |
 
 **Achievable floors with the fixes that are not redesigns** (negative cache, generic plans, early exits, due-queue): in view 2,000 cows ~3 ms (1.5 us per mob), outside the view ~1.5 ms, no lane at 2,000 blocks
-scattered ~60 ms (from 141), empty 0.02 ms.  **With the redesigns** (cell rows with arrays, population summaries, no ticking beyond the simulation distance): in view ~1.5-2 ms, outside the view ~0.2 ms
+scattered ~60 ms (from 141), empty 0.04-0.07 ms.  **With the redesigns** (cell rows with arrays, population summaries, no ticking beyond the simulation distance): in view ~1.5-2 ms, outside the view ~0.2 ms
 and independent of the number of mobs, no lane ~30 ms.  The last row is the one that matters for real servers: a built-up world is where mobs live, and the ratio of 29 (141 against 5 ms) between a mob
 outside and inside a lane is a larger factor than anything between dbcraft and vanilla.
 
