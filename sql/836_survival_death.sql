@@ -31,7 +31,7 @@ begin
   -- viewers who still see the corpse forget it; the new player is announced by the next visibility pass, which also tells the respawned client about everybody
   insert into mc.play_out (conn_id, data) select v.viewer_conn, mc.pkt_remove_entities(array[p.entity_id]) from mc.visible v where v.target_eid = p.entity_id;
   delete from mc.visible where viewer_eid = p.entity_id or target_eid = p.entity_id;
-  delete from mc.entity_viewer_cell where conn_id = p.conn_id;                  -- (the entity tracker's view of this client: its world was reset)
+  delete from mc.entity_viewer_cell where conn_id = p.conn_id; insert into mc.entity_view_dirty (conn_id) values (p.conn_id) on conflict do nothing;                  -- (the entity tracker's view of this client: its world was reset)
   update mc.player set dead = false, death_tick = null, health = 20, food = 20, saturation = 5, exhaustion = 0, food_timer = 0, fall_distance = 0, fall_tp = tid, hurt_tick = null,
          last_hurt = 0, cb_tick = null, cb_fall = 0, cb_type = null, use_slot = null, use_until = null, pend_slot = null, sprinting = false,
          xp_level = case when keep then xp_level else 0 end, xp_progress = case when keep then xp_progress else 0 end, xp_total = case when keep then xp_total else 0 end,

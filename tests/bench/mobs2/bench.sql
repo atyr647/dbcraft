@@ -49,6 +49,7 @@ select set_config('track_functions', :'trk', false), set_config('pg_stat_stateme
 select set_config('dbcraft.entity_spawner', 'off', false);
 select set_config('dbcraft.entity_walk_prob', :'walk', false);
 update mc.server_property set value = '5' where key = 'view-distance';
+update mc.server_property set value = '10' where key = 'simulation-distance';
 -- reset=1: the chunks of the mob area are regenerated flat first.  Mobs get lanes only on a uniform floor: a world that other scenarios scribbled in (the scoreboard's edit scenario leaves 2,000 stone
 -- and gold blocks in +-45) keeps most mobs out of their lanes (about 1,400 awake instead of 300 and 3-4x the cost), which is NOT a property of the simulation distance.
 delete from mc.chunk where :reset = 1 and dimension = 'minecraft:overworld' and cx between -12 and 11 and cz between -12 and 11;
@@ -82,7 +83,7 @@ from (
     select nextval('mc.entity_id_seq')::int as id, 'minecraft:item' as tp, (-40 + random() * 80) as x, -59.75 as y, (-40 + random() * 80) as z, -1000 as born, true as asleep, 0 as goal, 0::real as yaw
       from generate_series(1, :items)
     union all
-    select nextval('mc.entity_id_seq')::int, 'minecraft:cow', q.x, -60.0, q.z, -floor(random() * 60)::int, false, 1 + (random() * 60)::int, (random() * 360)::real
+    select nextval('mc.entity_id_seq')::int, 'minecraft:cow', q.x, -60.0, q.z, -floor(random() * 60)::int, false, case when coalesce(current_setting('dbcraft.entity_ai', true), 'vanilla') = 'wander' then 1 + (random() * 60)::int else 1 + floor(-120 * ln(1 - random()))::int end, (random() * 360)::real
       from (select case when :'where' = 'ring' then (case when r.u1 < 0.5 then (case when r.u2 < 0.5 then -1 else 1 end) * (100 + r.u3 * 40) else -140 + r.u3 * 280 end) else (-r.area + r.u3 * 2 * r.area) end as x,
                    case when :'where' = 'ring' then (case when r.u1 < 0.5 then -140 + r.u4 * 280 else (case when r.u2 < 0.5 then -1 else 1 end) * (100 + r.u4 * 40) end) else (-r.area + r.u4 * 2 * r.area) end as z
               -- one set of random numbers per mob: random() in a sub-select that does not depend on the row is evaluated ONCE (the first version of the ring put all 2,000 mobs into one chunk)

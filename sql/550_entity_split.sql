@@ -80,6 +80,8 @@ begin
                                               on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 4 and ev.ecx + 4 and l.cz between ev.ecz - 4 and ev.ecz + 4));
     perform mc.entity_auto_end(array(select l.id from mc.entity_lane l join (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from unnest(p_dim, p_x, p_y, p_z) u(dimension, x, y, z)) ev
                                        on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 3 and ev.ecx + 3 and l.cz between ev.ecz - 3 and ev.ecz + 3), lt, lt);
+    update mc.entity e set lane_retry = 0 from (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from unnest(p_dim, p_x, p_y, p_z) u(dimension, x, y, z)) ev       -- the lane verdicts of mobs near the change are void (sql/940)
+     where e.lane_retry > 0 and e.dimension = ev.dimension and e.cx between ev.ecx - 2 and ev.ecx + 2 and e.cz between ev.ecz - 2 and ev.ecz + 2;
 end $$;
 
 ------------------------------------------------------------------------------------------------ the trigger: in split mode a command instead of an UPDATE of B's rows
@@ -114,6 +116,8 @@ begin
     perform mc.entity_auto_end(array(select l.id from mc.entity_lane l join (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from new_ev) ev
                                        on l.auto and l.dim = ev.dimension and l.cx between ev.ecx - 3 and ev.ecx + 3 and l.cz between ev.ecz - 3 and ev.ecz + 3),
                                coalesce((select c.last_tick from mc.entity_clock c), lt), coalesce((select c.last_tick from mc.entity_clock c), lt));
+    update mc.entity e set lane_retry = 0 from (select distinct dimension, x >> 4 as ecx, z >> 4 as ecz from new_ev) ev                                          -- the lane verdicts of mobs near the change are void (sql/940)
+     where e.lane_retry > 0 and e.dimension = ev.dimension and e.cx between ev.ecx - 2 and ev.ecx + 2 and e.cz between ev.ecz - 2 and ev.ecz + 2;
     return null;
 end $$;
 
@@ -150,6 +154,7 @@ end $$;
 create or replace function mc.entity_pickup_dispatch(p_tick bigint) returns int language plpgsql volatile as $$
 declare n int;
 begin
+    if not exists (select 1 from mc.entity e where e.type = 'minecraft:item') then return 0; end if;      -- no dropped item (the partial index entity_item_cell_idx): no scan of the players
     if mc.entity_mode() <> 'split' then return mc.entity_pickup(p_tick); end if;
     with c as (
         select distinct on (e.id) e.id as eid, pl.uuid, pl.entity_id as peid

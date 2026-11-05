@@ -290,7 +290,9 @@ end $$;
 create or replace function mc.entity_ai_ids(p_tick bigint) returns int[] language plpgsql volatile as $$
 declare a int[]; b int[]; wp float8 := coalesce(nullif(current_setting('dbcraft.entity_walk_prob', true), '')::float8, 0.6);     -- share of new goals that are walks (the rest: stand still); benchmarks set 1.0
 begin
-    if mc.entity_ai_vanilla() then
+    a := '{}'; b := '{}';
+    if not exists (select 1 from mc.entity e where e.goal_until > 0 and e.goal_until <= p_tick) then null;      -- nothing expired (one probe of the partial index entity_goal_idx)
+    elsif mc.entity_ai_vanilla() then
         -- vanilla-like rates (sql/942): the goal is a wait (2 * Geometric(1/60) ticks, evaluated every second tick) followed by a decision: a stroll to a random block within +-10 if a player is
         -- within 32 blocks, nothing (dormant: goal_until = 2^62, no events) if no player is within 2 chunks
         with u as (
@@ -317,6 +319,7 @@ begin
              where e.id = g.id returning e.id)
         select coalesce(array_agg(id), '{}') into a from u;
     end if;
+    if exists (select 1 from mc.entity z where z.type = 'minecraft:zombie') then
     with u as (
         update mc.entity e set gx = c.gx, gz = c.gz, goal_until = p_tick + 5, yaw = c.yaw, deep_sleep = false, phys_tick = case when e.deep_sleep then p_tick - 1 else e.phys_tick end
           from (select distinct on (z.id) z.id, (p.walk_speed * (pl.px - z.x) / sqrt((pl.px - z.x) ^ 2 + (pl.pz - z.z) ^ 2)) as gx, (p.walk_speed * (pl.pz - z.z) / sqrt((pl.px - z.x) ^ 2 + (pl.pz - z.z) ^ 2)) as gz,
@@ -329,6 +332,7 @@ begin
                  order by z.id, (pl.px - z.x) ^ 2 + (pl.pz - z.z) ^ 2) c
          where e.id = c.id returning e.id)
     select coalesce(array_agg(id), '{}') into b from u;
+    end if;
     return a || b;
 end $$;
 
@@ -379,12 +383,21 @@ set enable_hashjoin = off set enable_mergejoin = off as $$      -- the joins her
 declare vr int := mc.prop_int('view-distance'); cc int[]; ncx int[]; ncz int[]; ocx int[]; ocz int[]; n int := 0;
         rm_conn int[]; rm_cx int[]; rm_cz int[]; rm_ox int[]; rm_oz int[];      -- cells that left a view (and the old centre of that view)
         ad_conn int[]; ad_cx int[]; ad_cz int[]; ad_nx int[]; ad_nz int[];      -- cells that entered a view (and the new centre)
+        dirty int[]; ovr int;
 begin
-    with gone as (delete from mc.entity_viewer_cell vc where vc.conn_id not in (select pl.conn_id from mc.player pl where pl.conn_id is not null) returning conn_id)      -- NOT IN (hashed): the function-level enable_hashjoin = off turned the NOT EXISTS anti-join into 500 x 500 comparisons (8 ms per tick at 500 players)
+    -- dirty-driven (sql/500: mc.entity_view_dirty): only the players that joined, left, changed chunk, or whose view distance changed are looked at; nobody dirty: nothing to do
+    select c.vr into ovr from mc.entity_clock c;
+    if ovr is distinct from vr then
+        insert into mc.entity_view_dirty select pl.conn_id from mc.player pl where pl.conn_id is not null on conflict do nothing;
+        insert into mc.entity_clock (id, last_tick, vr) values (true, null, vr) on conflict (id) do update set vr = excluded.vr;
+    end if;
+    if not exists (select 1 from mc.entity_view_dirty) then return 0; end if;
+    with d as (delete from mc.entity_view_dirty returning conn_id) select array_agg(conn_id) into dirty from d;
+    with gone as (delete from mc.entity_viewer_cell vc where vc.conn_id = any(dirty) and vc.conn_id not in (select pl.conn_id from mc.player pl where pl.conn_id is not null) returning conn_id)      -- NOT IN (hashed): the function-level enable_hashjoin = off turned the NOT EXISTS anti-join into 500 x 500 comparisons (8 ms per tick at 500 players)
     delete from mc.entity_cell_viewer v using gone g where v.conn_id = g.conn_id;
     select array_agg(pl.conn_id), array_agg(pl.chunk_x), array_agg(pl.chunk_z), array_agg(vc.cx), array_agg(vc.cz) into cc, ncx, ncz, ocx, ocz
       from mc.player pl left join mc.entity_viewer_cell vc on vc.conn_id = pl.conn_id
-     where pl.conn_id is not null and (vc.conn_id is null or vc.cx <> pl.chunk_x or vc.cz <> pl.chunk_z or vc.r <> vr);
+     where pl.conn_id = any(dirty) and (vc.conn_id is null or vc.cx <> pl.chunk_x or vc.cz <> pl.chunk_z or vc.r <> vr);
     if cc is null then return 0; end if;
     n := cardinality(cc);
     -- the rings first (a few dozen cells per crossing player), as arrays: the planner then knows how small the driving side is
