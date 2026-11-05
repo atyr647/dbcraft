@@ -163,6 +163,8 @@ class Dbcraft:
         sh(dc, "tickmode", self.mode)
         sh(dc, "reset-world")
         sh(dc, "settings", str(vd))
+        # SCORE_STORM_PROF=1 (docs/PERF-STORM-MEASURED.md): per-function statistics of the storm window (new sessions only, so before the gateway starts); off otherwise
+        dbq("alter database dbcraft %s" % ("set track_functions = 'pl'" if os.environ.get("SCORE_STORM_PROF") else "reset track_functions"))
         if n:
             self.seed_players(first_names, spread)
         t0 = time.time()
@@ -208,6 +210,8 @@ class Dbcraft:
         self.t0_tick = int(dbq("select coalesce(max(tick), 0) from mc.server_tick_log") or 0)
         self.t0 = time.time()
         self.be0 = self.backend_cpu()
+        if os.environ.get("SCORE_STORM_PROF"):
+            dbq("select pg_stat_reset()")
         self.gw0 = C.proc_cpu(self.gateway_pid())[0] if self.gateway_pid() else 0.0
 
     def window_poll(self):
@@ -233,6 +237,17 @@ class Dbcraft:
                           for i in sorted(range(len(data)), key=lambda i: -data[i][0])[:10]]      # tick, total, process, game, blocks, chunks, drain, tick % 20, tick % 300
         for i, k in enumerate(["process", "game", "blocks", "chunks", "drain"], start=1):
             out["phase_" + k + "_mean"] = sum(r[i] for r in data) / len(data)
+        # the phases of the game's tick (mc.tick_log: moves, misc, chat, visibility, keep-alive round, time, survival) next to the tick's own phases, for the ten slowest ticks of the window
+        try:
+            q = ("select s.tick, s.players, s.ms_total, s.ms_process, s.ms_game, s.ms_blocks, s.ms_chunks, s.ms_drain, t.ms_moves, t.ms_misc, t.ms_chat, t.ms_visibility, t.ms_keepalive, t.ms_time, t.ms_survival, "
+                 "s.frames_in, s.frames_out from mc.server_tick_log s left join mc.tick_log t using (tick) where s.tick > %d order by s.ms_total desc limit 10" % self.t0_tick)
+            out["slowest_phases"] = [[round(float(x), 1) if x else 0.0 for x in r.split(",")] for r in dbq(q).splitlines() if r]
+        except Exception:
+            pass
+        if os.environ.get("SCORE_STORM_PROF"):
+            time.sleep(1.5)
+            out["prof_functions"] = [r.split(",") for r in dbq("select funcid::regproc, calls, round(total_time::numeric, 1), round(self_time::numeric, 1) from pg_stat_user_functions "
+                                                                   "order by total_time desc limit 60").splitlines()]
         # CPU time per tick (docs/PERF-CAPACITY.md): the backend that used most CPU in the window is the tick connection; the gateway process is counted separately
         try:
             be1 = self.backend_cpu()
