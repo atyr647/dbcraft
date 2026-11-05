@@ -1,4 +1,4 @@
--- Chunk cursors (sql/1020, docs/PERF-STORM.md "Round 3"): the previous implementation of net.hook_chunks, net.stream_chunks and mc.deliver_ready_chunks (pasted below as t.old_*) against the new one.
+-- Chunk cursors (sql/930, docs/PERF-STORM.md "Round 3"): the previous implementation of net.hook_chunks, net.stream_chunks and mc.deliver_ready_chunks (pasted below as t.old_*) against the new one.
 -- A random SCRIPT of joins (at different places and view distances), walks over chunk borders, teleports, changes of the view distance, connections that leave and chunk generation is run
 -- twice from the same state, once with each implementation, tick by tick, in async and in inline generation mode, under small budgets (a few chunks per connection and tick, a shared cap) so
 -- that the delivery takes many ticks.  Compared per tick and connection: the bytes of everything the connection is sent (chunk batches, forgets, cache centres), the bytes of the chunks a join

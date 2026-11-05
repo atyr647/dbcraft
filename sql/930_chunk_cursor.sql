@@ -9,7 +9,7 @@
 --
 -- and mc.chunk_cursor holds exactly that: one row per connection.  mc.chunk_spiral is the spiral, precomputed for every radius that can occur.
 --
--- What is the same as with rows (tests/sql/1020_chunk_cursor.sql proves it against the previous implementation on random scripts of joins, walks over borders, teleports,
+-- What is the same as with rows (tests/sql/930_chunk_cursor.sql proves it against the previous implementation on random scripts of joins, walks over borders, teleports,
 -- view distance changes, leaving connections and generation, per tick and per connection, bytes and order):
 --   * a cursor exists only for a connection that has NO other wanted rows and whose chunks all exist when it is made, so it is exactly the set of rows the previous code would have inserted;
 --   * anything that would add rows for the connection (a border crossing, a view change) first turns the cursor into the rows it stands for (mc.chunk_cursor_flush), and the delivery step

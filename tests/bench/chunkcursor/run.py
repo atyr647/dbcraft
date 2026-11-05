@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A/B of the chunk path before and after the chunk cursors (sql/1020, docs/PERF-STORM.md "Round 3"), in one database, interleaved.
+"""A/B of the chunk path before and after the chunk cursors (sql/930, docs/PERF-STORM.md "Round 3"), in one database, interleaved.
 
 usage: run.py [--reps 3] [--xmod 25] [--ref f09cc54]      env: PGHOST (default /tmp), PGPORT (default 54329), PGUSER (postgres), PGDATABASE (dbcraft)
 The database must be migrated (the tree's sql/ applied); the bench installs the functions net.hook_chunks, net.stream_chunks, mc.deliver_ready_chunks of the commit --ref

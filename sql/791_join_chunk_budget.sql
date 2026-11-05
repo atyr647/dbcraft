@@ -34,7 +34,7 @@ declare
     tb    numeric := coalesce(nullif(case when lower(mc.prop('dbcraft.tick-budget-ms')) in ('off', '0', '-1', '') then null else mc.prop('dbcraft.tick-budget-ms') end, '')::numeric, 0);
     t0    timestamptz; el numeric;
     conns int[]; dead int[]; live int[]; cfl int[];
-    kc int[]; kd2 text[]; kx int[]; kz int[]; kdist int[]; ko int[];          -- the next positions of the cursors (sql/1020): connection, dimension, chunk, distance, ordinal in the spiral
+    kc int[]; kd2 text[]; kx int[]; kz int[]; kdist int[]; ko int[];          -- the next positions of the cursors (sql/930): connection, dimension, chunk, distance, ordinal in the spiral
     rc int[]; rd text[]; rx int[]; rz int[]; rdist int[]; ro int[];          -- what is sent now: connection, dimension, chunk, distance, ordinal (0: a wanted row), kept in arrays: see sql/437 on temp tables
 begin
     if not exists (select 1 from mc.chunk_wanted) and not exists (select 1 from mc.chunk_cursor) then return 0; end if;

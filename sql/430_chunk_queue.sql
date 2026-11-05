@@ -211,7 +211,7 @@ begin
     if lim < 2147483647 then
         -- the rest of the square (everything after the nearest `lim`) is wanted: mc.deliver_ready_chunks sends it in the next ticks, nearest first, in batches of at most
         -- dbcraft.chunk-batch-max.  When all of it exists (an explored world, or inline generation, which has just made what was missing) and the connection wants nothing else, that is ONE
-        -- row, a cursor over the spiral of the square (sql/1020; 480 rows of three indexes were 4 ms a join); otherwise the rows, as before (the missing ones are already in the queue
+        -- row, a cursor over the spiral of the square (sql/930; 480 rows of three indexes were 4 ms a join); otherwise the rows, as before (the missing ones are already in the queue
         -- above and may be wanted rows already)
         if (r_cx is null or not mc.chunk_generation_async()) and r <= 40 and not exists (select 1 from mc.chunk_wanted w where w.conn_id = p_conn) then
             delete from mc.chunk_cursor where conn_id = p_conn;

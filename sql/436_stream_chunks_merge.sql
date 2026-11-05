@@ -31,7 +31,7 @@ begin
             from unnest(sc, sncx, sncz, socx, socz, snr, sor) as s(conn_id, ncx, ncz, ocx, ocz, nr, orr), generate_series(-s.orr, s.orr) dx, generate_series(-s.orr, s.orr) dz
             where abs(s.ocx + dx - s.ncx) > s.nr or abs(s.ocz + dz - s.ncz) > s.nr
             order by s.conn_id, s.ocx + dx, s.ocz + dz;
-            -- (sql/1020) a chunk cursor of a connection whose view moves becomes the rows it stands for before anything new is wanted for it: rows keep the order and the distances of the
+            -- (sql/930) a chunk cursor of a connection whose view moves becomes the rows it stands for before anything new is wanted for it: rows keep the order and the distances of the
             -- squares they were made for, and the rows below overwrite the distance of a chunk that enters again
             if exists (select 1 from mc.chunk_cursor) then perform mc.chunk_cursor_flush(sc); end if;
             -- the client's view moves now, so the chunks that entered the square pass the range check of the delivery step
@@ -48,7 +48,7 @@ begin
                           from unnest(sc, sncx, sncz, socx, socz, snr, sor) as s(conn_id, ncx, ncz, ocx, ocz, nr, orr), generate_series(-s.nr, s.nr) dx, generate_series(-s.nr, s.nr) dz
                          where abs(s.ncx + dx - s.ocx) > s.orr or abs(s.ncz + dz - s.ocz) > s.orr) q;
                 if wc_c is not null then
-                    -- (sql/1020, docs/PERF-STORM.md "Round 3") a connection that wants nothing else and whose entered chunks all exist (an explored world: the usual case) gets ONE cursor row over
+                    -- (sql/930, docs/PERF-STORM.md "Round 3") a connection that wants nothing else and whose entered chunks all exist (an explored world: the usual case) gets ONE cursor row over
                     -- the spiral of its new square, outside the old one, instead of its 23-47 rows (1,063 rows a tick with 500 walkers: 7 ms of insert, the same rows found again one by one by the
                     -- delivery).  The first ordinal to look at is the first with a squared distance of at least the least any entered chunk can have (|offset + shift| > old radius).
                     select array_agg(g.c) into ecn from (select u.c from unnest(wc_c, wc_x, wc_z) as u(c, x, z) group by u.c
