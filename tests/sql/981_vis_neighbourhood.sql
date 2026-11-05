@@ -35,7 +35,7 @@ begin
   create temp table if not exists t_w as select * from mc.wp with no data;
   create temp table if not exists t_k as select * from mc.vtrk with no data;
   truncate t_p, t_v, t_w, t_k; insert into t_p select * from mc.player; insert into t_v select * from mc.visible; insert into t_w select * from mc.wp; insert into t_k select * from mc.vtrk;
-  select * into a_new from mc.refresh_visibility_vis();
+  select * into a_new from mc.refresh_visibility_vis_nb();
   create temp table if not exists t_nv as select * from mc.visible with no data;
   create temp table if not exists t_np as select * from mc.player with no data;
   create temp table if not exists t_no (conn_id int, seq bigint, data bytea);
