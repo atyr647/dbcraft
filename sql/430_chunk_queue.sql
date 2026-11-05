@@ -209,19 +209,28 @@ begin
     if r_cx is not null then perform mc.want_chunks(p_conn::int, dim, r_cx, r_cz, r_d, false); end if;
     lim := case when inl > 0 and (2 * r + 1) * (2 * r + 1) > inl then inl else 2147483647 end;
     if lim < 2147483647 then
-        -- the rest of the square (everything after the nearest `lim`) is wanted: mc.deliver_ready_chunks sends it in the next ticks, nearest first (set-based insert: 5 ms
-        -- through mc.want_chunks' unnest and ON CONFLICT DO UPDATE, 1.5 ms like this; the missing ones are already in the queue above and may be wanted rows already)
-        insert into mc.chunk_wanted (conn_id, dimension, cx, cz, dist)
-        select p_conn, dim, p_cx + s.dx, p_cz + s.dz, s.dx * s.dx + s.dz * s.dz
-          from (select dx, dz, row_number() over (order by dx * dx + dz * dz, dx, dz) o from generate_series(-r, r) dx cross join generate_series(-r, r) dz) s
-         where s.o > lim
-        on conflict (conn_id, dimension, cx, cz) do nothing;
+        -- the rest of the square (everything after the nearest `lim`) is wanted: mc.deliver_ready_chunks sends it in the next ticks, nearest first, in batches of at most
+        -- dbcraft.chunk-batch-max.  When all of it exists (an explored world, or inline generation, which has just made what was missing) and the connection wants nothing else, that is ONE
+        -- row, a cursor over the spiral of the square (sql/1020; 480 rows of three indexes were 4 ms a join); otherwise the rows, as before (the missing ones are already in the queue
+        -- above and may be wanted rows already)
+        if (r_cx is null or not mc.chunk_generation_async()) and r <= 40 and not exists (select 1 from mc.chunk_wanted w where w.conn_id = p_conn) then
+            delete from mc.chunk_cursor where conn_id = p_conn;
+            insert into mc.chunk_cursor (conn_id, dimension, cx, cz, r, next_o) values (p_conn, dim, p_cx, p_cz, r, lim);
+            insert into mc.chunk_wanted (conn_id, dimension, cx, cz, dist) values (p_conn, 'cursor', 0, 0, -1);
+        else
+            insert into mc.chunk_wanted (conn_id, dimension, cx, cz, dist)
+            select p_conn, dim, p_cx + s.dx, p_cz + s.dz, s.dx * s.dx + s.dz * s.dz
+              from (select dx, dz, row_number() over (order by dx * dx + dz * dz, dx, dz) o from generate_series(-r, r) dx cross join generate_series(-r, r) dz) s
+             where s.o > lim
+            on conflict (conn_id, dimension, cx, cz) do nothing;
+        end if;
     end if;
+    -- the head of the square, nearest first.  (Each chunk is probed by its primary key: written as a join the planner read the whole of mc.chunk, 4 ms at 8,000 chunks and more as the world grows.)
     return query
     select mc.packet_body(coalesce(k.packet, mc.chunk_packet(dim, c.cx, c.cz)))
       from (select dx, dz, row_number() over (order by dx * dx + dz * dz, dx, dz) o from generate_series(-r, r) dx cross join generate_series(-r, r) dz) s
-      join mc.chunk c on c.dimension = dim and c.cx = p_cx + s.dx and c.cz = p_cz + s.dz
-      left join mc.chunk_cache k on k.dimension = c.dimension and k.cx = c.cx and k.cz = c.cz and k.version = c.version and not c.dirty and not c.hm_dirty
+      cross join lateral (select cc.cx, cc.cz, cc.version, cc.dirty, cc.hm_dirty from mc.chunk cc where cc.dimension = dim and cc.cx = p_cx + s.dx and cc.cz = p_cz + s.dz) c
+      left join mc.chunk_cache k on k.dimension = dim and k.cx = c.cx and k.cz = c.cz and k.version = c.version and not c.dirty and not c.hm_dirty
      where s.o <= lim
      order by s.dx * s.dx + s.dz * s.dz, s.dx, s.dz;
 end $$;

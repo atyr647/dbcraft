@@ -9,7 +9,7 @@ create or replace function net.stream_chunks() returns int language plpgsql as $
 declare srv int := mc.prop_int('view-distance'); vison boolean := mc.vis_on(); dim text := 'minecraft:overworld'; n int;
         i_ctr int := mc.pid('set_chunk_cache_center'); i_fg int := mc.pid('forget_level_chunk');
         sc int[]; sncx int[]; sncz int[]; socx int[]; socz int[]; snr int[]; sor int[];            -- the players whose view changes: connection, new chunk, chunk their client is centred on, radii of the new and the old square
-        wc_c int[]; wc_x int[]; wc_z int[]; wc_d int[];                                            -- the chunks that entered their squares: connection, chunk, squared distance (async mode)
+        wc_c int[]; wc_x int[]; wc_z int[]; wc_d int[]; ecn int[];                                            -- the chunks that entered their squares: connection, chunk, squared distance (async mode)
 begin
     if mc.world_ready() then
         -- a player's square has the radius view distance + 1; the view distance is the server's, or (dbcraft.vanilla-tracker, sql/909) the one the client asked for, clamped to 2 .. the server's
@@ -31,6 +31,9 @@ begin
             from unnest(sc, sncx, sncz, socx, socz, snr, sor) as s(conn_id, ncx, ncz, ocx, ocz, nr, orr), generate_series(-s.orr, s.orr) dx, generate_series(-s.orr, s.orr) dz
             where abs(s.ocx + dx - s.ncx) > s.nr or abs(s.ocz + dz - s.ncz) > s.nr
             order by s.conn_id, s.ocx + dx, s.ocz + dz;
+            -- (sql/1020) a chunk cursor of a connection whose view moves becomes the rows it stands for before anything new is wanted for it: rows keep the order and the distances of the
+            -- squares they were made for, and the rows below overwrite the distance of a chunk that enters again
+            if exists (select 1 from mc.chunk_cursor) then perform mc.chunk_cursor_flush(sc); end if;
             -- the client's view moves now, so the chunks that entered the square pass the range check of the delivery step
             update net.conn c set view_cx = s.ncx, view_cz = s.ncz, view_r = s.nr from unnest(sc, sncx, sncz, snr) as s(conn_id, ncx, ncz, nr) where c.conn_id = s.conn_id;
             -- the chunks that entered the square are wanted (generated now in inline mode, requested in async mode)
@@ -44,6 +47,24 @@ begin
                   from (select s.conn_id, s.ncx + dx as x, s.ncz + dz as z, dx * dx + dz * dz as d
                           from unnest(sc, sncx, sncz, socx, socz, snr, sor) as s(conn_id, ncx, ncz, ocx, ocz, nr, orr), generate_series(-s.nr, s.nr) dx, generate_series(-s.nr, s.nr) dz
                          where abs(s.ncx + dx - s.ocx) > s.orr or abs(s.ncz + dz - s.ocz) > s.orr) q;
+                if wc_c is not null then
+                    -- (sql/1020, docs/PERF-STORM.md "Round 3") a connection that wants nothing else and whose entered chunks all exist (an explored world: the usual case) gets ONE cursor row over
+                    -- the spiral of its new square, outside the old one, instead of its 23-47 rows (1,063 rows a tick with 500 walkers: 7 ms of insert, the same rows found again one by one by the
+                    -- delivery).  The first ordinal to look at is the first with a squared distance of at least the least any entered chunk can have (|offset + shift| > old radius).
+                    select array_agg(g.c) into ecn from (select u.c from unnest(wc_c, wc_x, wc_z) as u(c, x, z) group by u.c
+                                                           having bool_and(exists (select 1 from mc.chunk ch where ch.dimension = dim and ch.cx = u.x and ch.cz = u.z))) g
+                     where not exists (select 1 from mc.chunk_wanted w where w.conn_id = g.c);
+                    if ecn is not null then
+                        insert into mc.chunk_cursor (conn_id, dimension, cx, cz, r, ocx, ocz, orr, next_o)
+                        select s.conn_id, dim, s.ncx, s.ncz, s.nr, s.ocx, s.ocz, s.orr,
+                               coalesce((select min(sp.o) from mc.chunk_spiral sp where sp.r = s.nr and sp.d >= l.l * l.l), 1) - 1
+                          from unnest(sc, sncx, sncz, socx, socz, snr, sor) as s(conn_id, ncx, ncz, ocx, ocz, nr, orr),
+                               lateral (select least(greatest(s.orr + 1 - abs(s.ncx - s.ocx), 0), greatest(s.orr + 1 - abs(s.ncz - s.ocz), 0)) as l) l
+                         where s.conn_id = any (ecn);
+                        insert into mc.chunk_wanted (conn_id, dimension, cx, cz, dist) select u.c, 'cursor', 0, 0, -1 from unnest(ecn) u(c);
+                        select array_agg(u.c), array_agg(u.x), array_agg(u.z), array_agg(u.d) into wc_c, wc_x, wc_z, wc_d from unnest(wc_c, wc_x, wc_z, wc_d) as u(c, x, z, d) where u.c <> all (ecn);
+                    end if;
+                end if;
                 if wc_c is not null then
                     insert into mc.chunk_wanted (conn_id, dimension, cx, cz, dist) select u.c, dim, u.x, u.z, u.d from unnest(wc_c, wc_x, wc_z, wc_d) as u(c, x, z, d)
                     on conflict (conn_id, dimension, cx, cz) do update set dist = excluded.dist;

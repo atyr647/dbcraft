@@ -25,7 +25,7 @@ create index if not exists chunk_wanted_order on mc.chunk_wanted (conn_id, dist,
 
 create or replace function mc.deliver_ready_chunks() returns int language plpgsql volatile as $$
 declare
-    r     int := mc.prop_int('view-distance') + 1;
+    rv    int := mc.prop_int('view-distance') + 1;
     cap   int := coalesce(mc.prop_int('dbcraft.chunk-batch-max'), 64);                                   -- per connection and tick
     gcap  int := nullif(coalesce(mc.prop_int('dbcraft.chunk-budget-per-tick'), 600), 0);                 -- all connections together; null: unlimited
     i_bs  int := mc.pid('chunk_batch_start');
@@ -33,10 +33,11 @@ declare
     n     int; nc int; m int;
     tb    numeric := coalesce(nullif(case when lower(mc.prop('dbcraft.tick-budget-ms')) in ('off', '0', '-1', '') then null else mc.prop('dbcraft.tick-budget-ms') end, '')::numeric, 0);
     t0    timestamptz; el numeric;
-    conns int[]; dead int[]; live int[];
-    rc int[]; rd text[]; rx int[]; rz int[]; rdist int[];       -- what is sent now: connection, dimension, chunk, distance (kept in arrays: see sql/437 on temp tables)
+    conns int[]; dead int[]; live int[]; cfl int[];
+    kc int[]; kd2 text[]; kx int[]; kz int[]; kdist int[]; ko int[];          -- the next positions of the cursors (sql/1020): connection, dimension, chunk, distance, ordinal in the spiral
+    rc int[]; rd text[]; rx int[]; rz int[]; rdist int[]; ro int[];          -- what is sent now: connection, dimension, chunk, distance, ordinal (0: a wanted row), kept in arrays: see sql/437 on temp tables
 begin
-    if not exists (select 1 from mc.chunk_wanted) then return 0; end if;
+    if not exists (select 1 from mc.chunk_wanted) and not exists (select 1 from mc.chunk_cursor) then return 0; end if;
     -- dbcraft.tick-budget-ms: the shared cap shrinks with the time this tick has already used (process_fast records its start): a tick that spent 25 ms of a 35 ms budget on a join
     -- sends 40% of the cap, a tick without joins all of it.  Without a recorded start (anything but the tick) or with an implausible one (a test running many ticks inside one statement) the cap is not scaled.
     if tb > 0 and gcap is not null then
@@ -44,44 +45,87 @@ begin
         el := extract(epoch from clock_timestamp() - t0) * 1000;
         if el >= 0 and el < 2000 then gcap := greatest(1, ceil(gcap * greatest(0.4, least(1, (tb - el) / tb)))::int); end if;
     end if;
-    -- the connections that have wanted rows (a loose index scan: the rows are many during a storm, the connections are few), and which of them still play
+    -- the connections that have wanted rows (a loose index scan: the rows are many during a storm, the connections are few; a cursor's marker row counts), and which of them still play
     select coalesce(array_agg(q.c), '{}') into conns from (
-        with recursive cs(c) as (select min(conn_id) from mc.chunk_wanted union all select (select min(w.conn_id) from mc.chunk_wanted w where w.conn_id > cs.c) from cs where cs.c is not null)
-        select c from cs where c is not null) q;
+        select c from (
+            with recursive cs(c) as (select min(conn_id) from mc.chunk_wanted union all select (select min(w.conn_id) from mc.chunk_wanted w where w.conn_id > cs.c) from cs where cs.c is not null)
+            select c from cs where c is not null) z
+        union select cu.conn_id from mc.chunk_cursor cu) q;                                     -- (a cursor whose marker row was truncated away is still a cursor)
     select coalesce(array_agg(u.c) filter (where lv.conn_id is null), '{}'), coalesce(array_agg(u.c) filter (where lv.conn_id is not null), '{}') into dead, live
       from unnest(conns) u(c) left join net.conn lv on lv.conn_id = u.c and lv.state = 'play' and not lv.closing and lv.view_cx is not null;
     if cardinality(dead) > 0 then
         delete from mc.chunk_wanted where conn_id = any (dead);
+        delete from mc.chunk_cursor where conn_id = any (dead);
         delete from mc.chunk_wanted_view where conn_id = any (dead);
     end if;
     nc := cardinality(live);
     if nc = 0 then return 0; end if;
+    -- a cursor made for a view the client no longer has (its view moved or changed size since: net.stream_chunks turns the cursors of those it moves into rows itself, this is for any other
+    -- change) becomes the rows it stands for
+    if exists (select 1 from mc.chunk_cursor) then
+        select array_agg(cu.conn_id) into cfl from mc.chunk_cursor cu join net.conn c on c.conn_id = cu.conn_id
+         where (c.view_cx, c.view_cz, coalesce(c.view_r, rv)) is distinct from (cu.cx, cu.cz, cu.r);
+        if cfl is not null then perform mc.chunk_cursor_flush(cfl); end if;
+    end if;
     -- a client whose view moved since its rows were last cleaned: what left its square is not wanted any more
-    with mv as (select c.conn_id, c.view_cx as vx, c.view_cz as vz, coalesce(c.view_r, r) as vr from net.conn c left join mc.chunk_wanted_view v on v.conn_id = c.conn_id
+    with mv as (select c.conn_id, c.view_cx as vx, c.view_cz as vz, coalesce(c.view_r, rv) as vr from net.conn c left join mc.chunk_wanted_view v on v.conn_id = c.conn_id
                  where c.conn_id = any (live) and (v.conn_id is null or v.vcx <> c.view_cx or v.vcz <> c.view_cz)),
-         del as (delete from mc.chunk_wanted w using mv where w.conn_id = mv.conn_id and (abs(w.cx - mv.vx) > mv.vr or abs(w.cz - mv.vz) > mv.vr) returning 1)
+         del as (delete from mc.chunk_wanted w using mv where w.conn_id = mv.conn_id and w.dimension <> 'cursor' and (abs(w.cx - mv.vx) > mv.vr or abs(w.cz - mv.vz) > mv.vr) returning 1)
     insert into mc.chunk_wanted_view (conn_id, vcx, vcz) select conn_id, vx, vz from mv
     on conflict (conn_id) do update set vcx = excluded.vcx, vcz = excluded.vcz;
-    -- every connection's nearest wanted chunks that exist now; round-robin across connections (rank 1 of everybody, then rank 2, ...) up to the shared cap
     m := case when gcap is null then cap else least(cap, greatest(1, ceil(gcap::numeric / nc)::int)) end;
-    select array_agg(x.conn_id), array_agg(x.dimension), array_agg(x.cx), array_agg(x.cz), array_agg(x.dist) into rc, rd, rx, rz, rdist
+    -- the next m positions of every cursor, each probed for existence (the chunk may have been deleted since the cursor was made): a cursor with a missing one in its window turns into rows
+    -- and goes the way of the rows below, a cursor with nothing left is removed
+    if exists (select 1 from mc.chunk_cursor) then
+        with win as (
+            select cu.conn_id, cu.dimension, cu.cx + s.dx as cx, cu.cz + s.dz as cz, s.d as dist, s.o, (ch.cx is null) as missing
+              from mc.chunk_cursor cu
+              cross join lateral (select sp.dx, sp.dz, sp.d, sp.o from mc.chunk_spiral sp
+                                   where sp.r = cu.r and sp.o > cu.next_o
+                                     and (cu.orr is null or abs(cu.cx + sp.dx - cu.ocx) > cu.orr or abs(cu.cz + sp.dz - cu.ocz) > cu.orr)
+                                   order by sp.o limit m) s
+              left join mc.chunk ch on ch.dimension = cu.dimension and ch.cx = cu.cx + s.dx and ch.cz = cu.cz + s.dz),
+        wb as (select win.*, bool_or(win.missing) over (partition by win.conn_id) as bad from win)
+        select coalesce(array_agg(distinct wb.conn_id) filter (where wb.bad), '{}'),
+               array_agg(wb.conn_id) filter (where not wb.bad), array_agg(wb.dimension) filter (where not wb.bad), array_agg(wb.cx) filter (where not wb.bad),
+               array_agg(wb.cz) filter (where not wb.bad), array_agg(wb.dist) filter (where not wb.bad), array_agg(wb.o) filter (where not wb.bad)
+          into cfl, kc, kd2, kx, kz, kdist, ko from wb;
+        if cardinality(cfl) > 0 then perform mc.chunk_cursor_flush(cfl); end if;
+        with gone as (delete from mc.chunk_cursor cu where not exists (select 1 from unnest(kc) k(c) where k.c = cu.conn_id) returning cu.conn_id)          -- nothing left to send (the flushed ones are gone already)
+        delete from mc.chunk_wanted mk using gone where mk.conn_id = gone.conn_id and mk.dimension = 'cursor';
+    end if;
+    -- every connection's nearest wanted chunks that exist now (rows and cursors); round-robin across connections (rank 1 of everybody, then rank 2, ...) up to the shared cap
+    select array_agg(x.conn_id), array_agg(x.dimension), array_agg(x.cx), array_agg(x.cz), array_agg(x.dist), array_agg(x.o) into rc, rd, rx, rz, rdist, ro
       from (select q.*, row_number() over (order by q.rn, q.conn_id) as gr
               from (select l.*, row_number() over (partition by l.conn_id order by l.dist, l.cx, l.cz) as rn
-                      from unnest(live) u(c) join net.conn n on n.conn_id = u.c
-                      cross join lateral (select w.conn_id, w.dimension, w.cx, w.cz, w.dist
-                                            from mc.chunk_wanted w join mc.chunk ch on ch.dimension = w.dimension and ch.cx = w.cx and ch.cz = w.cz
-                                           where w.conn_id = n.conn_id and abs(n.view_cx - w.cx) <= coalesce(n.view_r, r) and abs(n.view_cz - w.cz) <= coalesce(n.view_r, r)
-                                           order by w.dist, w.cx, w.cz limit m) l) q) x
+                      from (select u2.conn_id, u2.dimension, u2.cx, u2.cz, u2.dist, u2.o
+                              from unnest(live) u(c) join net.conn n on n.conn_id = u.c
+                              cross join lateral (select w.conn_id, w.dimension, w.cx, w.cz, w.dist, 0 as o
+                                                    from mc.chunk_wanted w join mc.chunk ch on ch.dimension = w.dimension and ch.cx = w.cx and ch.cz = w.cz
+                                                   where w.conn_id = n.conn_id and abs(n.view_cx - w.cx) <= coalesce(n.view_r, rv) and abs(n.view_cz - w.cz) <= coalesce(n.view_r, rv)
+                                                   order by w.dist, w.cx, w.cz limit m) u2
+                            union all
+                            select k.c, k.d, k.x, k.z, k.dist, k.o from unnest(kc, kd2, kx, kz, kdist, ko) k(c, d, x, z, dist, o)) l) q) x
      where gcap is null or x.gr <= gcap;
     n := coalesce(cardinality(rc), 0);
     if n = 0 then return 0; end if;
+    -- the cursors move on by what they sent; one that sent everything its window held, and the window was not full, has nothing left and is removed
+    if kc is not null then
+        with sent as (select d.conn_id, max(d.o) as mo, count(*) as k from unnest(rc, ro) d(conn_id, o) where d.o > 0 group by d.conn_id),
+             win as (select k.c as conn_id, count(*) as w from unnest(kc) k(c) group by k.c),
+             st as (select sent.conn_id, sent.mo, (sent.k = win.w and win.w < m) as fin from sent join win on win.conn_id = sent.conn_id),
+             upd as (update mc.chunk_cursor cu set next_o = st.mo from st where cu.conn_id = st.conn_id and not st.fin returning cu.conn_id),
+             del as (delete from mc.chunk_cursor cu using st where cu.conn_id = st.conn_id and st.fin returning cu.conn_id)
+        delete from mc.chunk_wanted mk using del where mk.conn_id = del.conn_id and mk.dimension = 'cursor';
+    end if;
     -- (docs/PERF-CAPACITY.md) the rows are found by primary key, one probe per row, and deleted by tuple id.  As a plain DELETE ... USING the planner, which believes this churned queue
     -- table holds one row (its statistics say 0 after every vacuum), scanned the whole of the primary key index once and rescanned the unnest list for each entry: 1,527 buffer hits
     -- and 8.7 ms for 63 rows, 47 us a row, in a tick with 200 walkers
     delete from mc.chunk_wanted w
-     where w.ctid = any (array(select x.tid from unnest(rc, rd, rx, rz) as d(conn_id, dimension, cx, cz)
+     where w.ctid = any (array(select x.tid from unnest(rc, rd, rx, rz, ro) as d(conn_id, dimension, cx, cz, o)
                                  cross join lateral (select w2.ctid as tid from mc.chunk_wanted w2
-                                                      where w2.conn_id = d.conn_id and w2.dimension = d.dimension and w2.cx = d.cx and w2.cz = d.cz) x));
+                                                      where w2.conn_id = d.conn_id and w2.dimension = d.dimension and w2.cx = d.cx and w2.cz = d.cz) x
+                                where d.o = 0));
     insert into mc.play_out (conn_id, data) select distinct d.conn_id, proto.frame(i_bs, '\x') from unnest(rc) as d(conn_id);
     insert into mc.play_out (conn_id, data)
     select d.conn_id, coalesce(k.packet, mc.chunk_packet(d.dimension, d.cx, d.cz))
