@@ -1,0 +1,107 @@
+# tests/bench/chunkcursor/run.py --xmod 25 --reps 3 (20 border crossings a tick, 500 walkers; 50 joins), database with the explored patch (-14..46)^2, load 5.7-6.4 (shared machine), old = rows (f09cc54), new = cursors
+old rep 0 (load 4.83)
+    F deliver_ready_chunks | calls 50 self ms per call | 11.325
+    F stream_chunks | calls 50 self ms per call | 11.143
+    A joins | deliver total ms for the 50 tails | 1582.0
+    A joins | deliver: 40 ticks, 24000 chunks; ms per tick | 39.55
+    A joins | hook_chunks ms per join (head 49 chunks) | 5.35
+    B walkers | cursors at the end | 0
+    B walkers | stream_chunks ms per tick (50 ticks, 20 crossings a tick) | 23.36
+    B walkers | wanted rows at the end of a tick, mean | 0.0
+    B walkers | worst tick ms | 52.18
+new rep 0 (load 4.93)
+    F deliver_ready_chunks | calls 50 self ms per call | 10.995
+    F stream_chunks | calls 50 self ms per call | 8.169
+    A joins | deliver total ms for the 50 tails | 538.3
+    A joins | deliver: 40 ticks, 24000 chunks; ms per tick | 13.46
+    A joins | hook_chunks ms per join (head 49 chunks) | 2.18
+    B walkers | cursors at the end | 0
+    B walkers | stream_chunks ms per tick (50 ticks, 20 crossings a tick) | 20.28
+    B walkers | wanted rows at the end of a tick, mean | 0.0
+    B walkers | worst tick ms | 37.93
+old rep 1 (load 4.85)
+    F deliver_ready_chunks | calls 50 self ms per call | 8.648
+    F stream_chunks | calls 50 self ms per call | 8.710
+    A joins | deliver total ms for the 50 tails | 1686.6
+    A joins | deliver: 40 ticks, 24000 chunks; ms per tick | 42.16
+    A joins | hook_chunks ms per join (head 49 chunks) | 7.75
+    B walkers | cursors at the end | 0
+    B walkers | stream_chunks ms per tick (50 ticks, 20 crossings a tick) | 17.96
+    B walkers | wanted rows at the end of a tick, mean | 0.0
+    B walkers | worst tick ms | 38.50
+new rep 1 (load 4.85)
+    F chunk_packet | calls 3721 self ms per call | 0.009
+    F deliver_ready_chunks | calls 91 self ms per call | 8.175
+    F stream_chunks | calls 50 self ms per call | 5.217
+    A joins | deliver total ms for the 50 tails | 443.2
+    A joins | deliver: 40 ticks, 24000 chunks; ms per tick | 11.08
+    A joins | hook_chunks ms per join (head 49 chunks) | 2.36
+    B walkers | cursors at the end | 0
+    B walkers | stream_chunks ms per tick (50 ticks, 20 crossings a tick) | 12.35
+    B walkers | wanted rows at the end of a tick, mean | 0.0
+    B walkers | worst tick ms | 26.46
+old rep 2 (load 4.86)
+    F deliver_ready_chunks | calls 50 self ms per call | 9.517
+    F stream_chunks | calls 50 self ms per call | 8.327
+    A joins | deliver total ms for the 50 tails | 1564.7
+    A joins | deliver: 40 ticks, 24000 chunks; ms per tick | 39.12
+    A joins | hook_chunks ms per join (head 49 chunks) | 7.38
+    B walkers | cursors at the end | 0
+    B walkers | stream_chunks ms per tick (50 ticks, 20 crossings a tick) | 18.35
+    B walkers | wanted rows at the end of a tick, mean | 0.0
+    B walkers | worst tick ms | 51.66
+new rep 2 (load 4.86)
+    F chunk_packet | calls 3721 self ms per call | 0.009
+    F deliver_ready_chunks | calls 91 self ms per call | 8.688
+    F stream_chunks | calls 50 self ms per call | 5.591
+    A joins | deliver total ms for the 50 tails | 449.6
+    A joins | deliver: 40 ticks, 24000 chunks; ms per tick | 11.24
+    A joins | hook_chunks ms per join (head 49 chunks) | 2.48
+    B walkers | cursors at the end | 0
+    B walkers | stream_chunks ms per tick (50 ticks, 20 crossings a tick) | 13.96
+    B walkers | wanted rows at the end of a tick, mean | 0.0
+    B walkers | worst tick ms | 30.66
+# --xmod 14 --reps 2 (35 crossings a tick: 805 chunks a tick wanted against the budget of 600)
+old rep 0 (load 4.89)
+    F deliver_ready_chunks | calls 50 self ms per call | 55.223
+    F stream_chunks | calls 50 self ms per call | 15.912
+    A joins | deliver total ms for the 50 tails | 1805.9
+    A joins | deliver: 40 ticks, 24000 chunks; ms per tick | 45.15
+    A joins | hook_chunks ms per join (head 49 chunks) | 6.90
+    B walkers | cursors at the end | 0
+    B walkers | stream_chunks ms per tick (50 ticks, 35 crossings a tick) | 72.81
+    B walkers | wanted rows at the end of a tick, mean | 5810.4
+    B walkers | worst tick ms | 155.28
+new rep 0 (load 4.97)
+    F chunk_cursor_flush | calls 49 self ms per call | 0.784
+    F deliver_ready_chunks | calls 50 self ms per call | 50.208
+    F stream_chunks | calls 50 self ms per call | 16.689
+    A joins | deliver total ms for the 50 tails | 391.9
+    A joins | deliver: 40 ticks, 24000 chunks; ms per tick | 9.80
+    A joins | hook_chunks ms per join (head 49 chunks) | 2.47
+    B walkers | cursors at the end | 69
+    B walkers | stream_chunks ms per tick (50 ticks, 35 crossings a tick) | 69.30
+    B walkers | wanted rows at the end of a tick, mean | 3283.2
+    B walkers | worst tick ms | 163.42
+old rep 1 (load 5.27)
+    F deliver_ready_chunks | calls 50 self ms per call | 55.678
+    F stream_chunks | calls 50 self ms per call | 16.600
+    A joins | deliver total ms for the 50 tails | 32285.5
+    A joins | deliver: 40 ticks, 24000 chunks; ms per tick | 807.14
+    A joins | hook_chunks ms per join (head 49 chunks) | 9.26
+    B walkers | cursors at the end | 0
+    B walkers | stream_chunks ms per tick (50 ticks, 35 crossings a tick) | 73.71
+    B walkers | wanted rows at the end of a tick, mean | 5810.4
+    B walkers | worst tick ms | 152.48
+new rep 1 (load 5.33)
+    F chunk_cursor_flush | calls 49 self ms per call | 0.855
+    F chunk_packet | calls 3721 self ms per call | 0.008
+    F deliver_ready_chunks | calls 91 self ms per call | 30.457
+    F stream_chunks | calls 50 self ms per call | 15.527
+    A joins | deliver total ms for the 50 tails | 590.7
+    A joins | deliver: 40 ticks, 24000 chunks; ms per tick | 14.77
+    A joins | hook_chunks ms per join (head 49 chunks) | 2.10
+    B walkers | cursors at the end | 69
+    B walkers | stream_chunks ms per tick (50 ticks, 35 crossings a tick) | 62.41
+    B walkers | wanted rows at the end of a tick, mean | 3283.2
+    B walkers | worst tick ms | 206.20
