@@ -116,8 +116,8 @@ select t.eq('fall: damage_event (fall, entity of Surv)', encode(t.frame((select 
 select t.eq('fall: health 11.0 in the entity data', encode(t.frame((select s_out from fall_log order by tick limit 1), 3), 'hex'),
   encode(mc.pkt_data_health((select entity_id from mc.player where conn_id = 1), 11), 'hex'));
 select t.eq('fall: set_health 11.0 / 20 / 5.0 (vanilla 0a6a413000001440a00000)', encode(t.frame((select s_out from fall_log order by tick limit 1), 4), 'hex'), '0a6a413000001440a00000');
-select t.eq('fall: the observer sees particles, damage_event and the entity data, not set_health',
-  t.names((select o_out from fall_log order by tick limit 1)), array['level_particles', 'damage_event', 'set_entity_data']);
+select t.eq('fall: the observer sees particles, the two landing sounds, damage_event, the hurt sound and the entity data, not set_health (vanilla order; sounds: sql/838)',
+  t.names((select o_out from fall_log order by tick limit 1)), array['level_particles', 'sound', 'sound', 'damage_event', 'sound', 'set_entity_data']);
 select t.eq('regeneration: the set_health packets after the landing, hex of (health, saturation) as vanilla sent them',
   (select array_agg(encode(substring(f from 3 for 4), 'hex') || '/' || encode(substring(f from 8 for 4), 'hex') order by tick)
      from (select tick, t.frame(s_out, n) as f from fall_log, generate_series(1, 2) n where tick > (select min(tick) from fall_log)) q where f is not null and get_byte(f, 1) = mc.pid('set_health')),
@@ -154,8 +154,8 @@ select t.eq('void: every set_health of the run as vanilla sent it (health / satu
      from (select tick, n, t.frame(s_out, n) as f from void_log, generate_series(1, 6) n) q where f is not null and get_byte(f, 1) = mc.pid('set_health')),
   array['41800000/40a00000', '4186aaab/40a00000', '414d5556/40800000', '41580001/40800000', '41180001/40400000', '41200001/40400000', '40c00002/40400000', '40d00002/40400000', '40200004/40000000', '40355559/40000000', '00000000/3f800000']);
 select t.eq('void: the entity data follows one tick later (damage came from the entity tick)', t.names((select s_out from void_log order by tick offset 1 limit 1)), array['set_entity_data']);
-select t.eq('void: the observer sees damage_event first, then the entity data a tick later', array[t.names((select o_out from void_log order by tick limit 1)), t.names((select o_out from void_log order by tick offset 1 limit 1))],
-  array[array['damage_event'], array['set_entity_data']]);
+select t.eq('void: the observer sees damage_event first, then the entity data a tick later (sounds: sql/838, the hurt sound goes to the others within 16 blocks)',
+  (array_remove(t.names((select o_out from void_log order by tick limit 1)), 'sound'))::text || (array_remove(t.names((select o_out from void_log order by tick offset 1 limit 1)), 'sound'))::text, '{damage_event}{set_entity_data}');
 select t.is_true('void: dead after the 6th hit', (select dead and health = 0 from mc.player where conn_id = 1));
 select t.eq('void: the death tick (as recorded): the pending entity data, damage_event, the death screen, the message, the death event, set_health 0',
   t.names((select s_out from void_log where t.names(s_out) @> array['player_combat_kill'])), array['set_entity_data', 'damage_event', 'player_combat_kill', 'system_chat', 'entity_event', 'set_health']);       -- (the first is the previous tick's regeneration reaching the entity data, as in the recording)
@@ -202,7 +202,7 @@ select t.eq('/kill: the death packets, then the feedback (vanilla order)', t.nam
 select t.eq('/kill: the damage event is generic_kill (id 19)', encode(t.frame(t.out(1), 1), 'hex'), encode(mc.pkt_damage_event((select entity_id from mc.player where conn_id = 1), 19), 'hex'));
 select t.eq('/kill: the feedback is commands.kill.success.single (vanilla)', encode(t.frame(t.out(1), 5), 'hex'),
   encode(mc.pkt_system_chat(proto.nbt_root(mc.tc_translate('commands.kill.success.single', array[mc.tc_player('6e527204-260b-3f15-8570-6f6e4efb3898', 'Surv')]))), 'hex'));
-select t.eq('/kill: the observer gets damage_event, the death message and entity_event 3', t.names(t.out(2)), array['damage_event', 'system_chat', 'entity_event']);
+select t.eq('/kill: the observer gets damage_event, the death sound, the death message and entity_event 3 (vanilla order)', t.names(t.out(2)), array['damage_event', 'sound', 'system_chat', 'entity_event']);
 select mc.survival_entities((select game_time from mc.game_state));
 select t.eq('/kill: then the entity data and set_health (vanilla: set_entity_data, set_health)', t.names(t.out(1)), array['damage_event', 'player_combat_kill', 'system_chat', 'entity_event', 'system_chat', 'set_entity_data', 'set_health']);
 select t.eq('/kill: set_health 0 / 20 / 5.0', encode(t.frame(t.out(1), 7), 'hex'), '0a6a000000001440a00000');
@@ -381,16 +381,22 @@ select t.eq('eating: the first tick sets the "using an item" flag (vanilla: set_
   array[encode(t.frame((select s_out from eat_log order by tick limit 1), 1), 'hex'), (select acks::text from eat_log order by tick limit 1)],
   array['0665' || lpad(to_hex((select entity_id from mc.player where conn_id = 1)), 2, '0') || '080001ff', '1']);
 select t.eq('eating: nothing more until the 32nd tick', (select count(*)::int from eat_log where tick between (select min(tick) + 1 from eat_log) and (select min(tick) + 31 from eat_log) and length(s_out) > 0), 0);
-select t.eq('eating: tick 32: entity_event 9, then set_health 20 / 20 / 2.4 (vanilla 0a6a41a00000144019999a)', t.names((select s_out from eat_log order by tick offset 32 limit 1)), array['entity_event', 'set_health']);
+select t.eq('eating: tick 32: entity_event 9, then set_health 20 / 20 / 2.4 (vanilla 0a6a41a00000144019999a)', t.names((select s_out from eat_log order by tick offset 32 limit 1)), array['entity_event', 'sound', 'sound', 'set_health']);   -- (the eating sound and the burp, sql/838: recorded order)
 select t.eq('eating: the entity event is 9 (finished using the item)', encode(t.frame((select s_out from eat_log order by tick offset 32 limit 1), 1), 'hex'),
   '0622' || lpad(to_hex((select entity_id from mc.player where conn_id = 1)), 8, '0') || '09');
-select t.eq('eating: set_health', encode(t.frame((select s_out from eat_log order by tick offset 32 limit 1), 2), 'hex'), '0a6a41a00000144019999a');
+select t.eq('eating: set_health', encode(t.frame((select s_out from eat_log order by tick offset 32 limit 1), 4), 'hex'), '0a6a41a00000144019999a');
+select t.eq('eating: the eater hears the finished item and the burp (vanilla: entity.generic.eat NEUTRAL volume 1, entity.player.burp PLAYERS volume 0.5), nothing of the 7 use sounds',
+  array[encode(substring(t.frame((select s_out from eat_log order by tick offset 32 limit 1), 2) from 3 for 2), 'hex'), encode(substring(t.frame((select s_out from eat_log order by tick offset 32 limit 1), 3) from 3 for 2), 'hex'),
+        (select count(*)::text from eat_log where tick < (select min(tick) + 32 from eat_log) and 'sound' = any (t.names(s_out)))],
+  array['bf05', 'a30a', '0']);
 select t.eq('eating: tick 33: the flag is cleared and the stack re-sent (vanilla: set_entity_data 08 00 00, container_set_slot)', t.names((select s_out from eat_log order by tick offset 33 limit 1)), array['set_entity_data', 'container_set_slot']);
 select t.eq('eating: the flag reset', encode(t.frame((select s_out from eat_log order by tick offset 33 limit 1), 1), 'hex'), '0665' || lpad(to_hex((select entity_id from mc.player where conn_id = 1)), 2, '0') || '080000ff');
 select t.eq('eating: the slot update (window 0, state 8, slot 36, 2 apples)', encode(t.frame((select s_out from eat_log order by tick offset 33 limit 1), 2), 'hex'),
   encode(mc.pkt_container_set_slot(8, 36, 'minecraft:apple', 2), 'hex'));
-select t.eq('eating: the observer sees the flag and its reset, but not the finish event (recorded: the observer got 2 set_entity_data)', array[array_to_string(t.names((select o_out from eat_log order by tick limit 1)), ','), array_to_string(t.names((select o_out from eat_log order by tick offset 32 limit 1)), ','), array_to_string(t.names((select o_out from eat_log order by tick offset 33 limit 1)), ',')],
+select t.eq('eating: the observer sees the flag and its reset, but not the finish event (recorded: the observer got 2 set_entity_data)', array[array_to_string(t.names((select o_out from eat_log order by tick limit 1)), ','), array_to_string(array_remove(t.names((select o_out from eat_log order by tick offset 32 limit 1)), 'sound'), ','), array_to_string(t.names((select o_out from eat_log order by tick offset 33 limit 1)), ',')],
   array['set_entity_data', '', 'set_entity_data']);
+select t.eq('eating: the observer hears 7 eating sounds during the use (every 4 ticks from tick 8 to tick 32) and the finished item and the burp in the last tick (vanilla: 9)',
+  (select count(*)::int from eat_log, unnest(t.names(o_out)) n where n = 'sound'), 9);
 select t.eq('eating: food 20, saturation 2.4, one apple less', array[t.p('food'), t.p('saturation'), (select count::text from mc.inventory_slot where player = (select uuid from mc.player where conn_id = 1) and slot = 36)], array['20', '2.4', '2']);
 -- not hungry: nothing happens (apples cannot be eaten at 20 food), but golden apples can
 select t.food(0, 5, 20, 20, 0); select t.send(1, 'use_item', '\x00'::bytea || '\x01'::bytea || '\x0000000000000000'::bytea); select mc.survival_input((select game_time from mc.game_state));

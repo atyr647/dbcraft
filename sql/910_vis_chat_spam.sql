@@ -1,6 +1,9 @@
 -- Player visibility, part 11: chat and command rate limits.  ServerGamePacketListenerImpl.detectRateSpam / util.TickThrottler (26.3, javap -c): every chat message and every
 -- command adds 20 to its counter (separate counters), the counter loses 1 each tick, and a player who is not an operator whose counter reaches
 -- 20 x chat-spam-threshold-seconds (command-spam-threshold-seconds: server.properties, default 10, 0 = off) is disconnected with the translation key disconnect.spam.
+-- Recorded from the real server (tests/e2e/spam_probe.py): a CHAT message is refused when the counter BEFORE it is already at the threshold (10 messages in a burst are answered,
+-- the 11th is not and kicks); a COMMAND is executed and the player kicked when the counter AFTER it reaches the threshold (the 10th /list is answered, then the kick).  Messages
+-- of the same tick after the offending one are still answered here (vanilla stops at it).
 -- At the default that is 10 messages in a burst, or a steady rate above one a second.  Messages are counted from mc.chat_log, which the chat intake (sql/360) writes for
 -- every chat message and command; the tick after the last counted row is where the next one continues.
 
@@ -30,7 +33,7 @@ begin
           spam_chat = case when calc.chats > 0 then greatest(0, calc.c1 - 1) else p.spam_chat end, spam_chat_tick = case when calc.chats > 0 then p_cur else p.spam_chat_tick end,
           spam_cmd  = case when calc.cmds  > 0 then greatest(0, calc.k1 - 1) else p.spam_cmd  end, spam_cmd_tick  = case when calc.cmds  > 0 then p_cur else p.spam_cmd_tick  end
         from calc where p.uuid = calc.uuid
-      returning calc.conn_id, calc.uuid, ((calc.chats > 0 and cthr > 0 and calc.c1 >= cthr) or (calc.cmds > 0 and kthr > 0 and calc.k1 >= kthr)) as over)
+      returning calc.conn_id, calc.uuid, ((calc.chats > 0 and cthr > 0 and calc.c1 - 20 >= cthr) or (calc.cmds > 0 and kthr > 0 and calc.k1 >= kthr)) as over)
     select * from u
   loop
     if r.over and not exists (select 1 from mc.op where uuid = r.uuid) then perform mc.kick(r.conn_id, 'disconnect.spam'); end if;

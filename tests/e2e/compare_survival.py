@@ -13,7 +13,7 @@ import json, os, struct, sys
 
 KEEP = {"set_health", "set_experience", "damage_event", "player_combat_kill", "entity_event", "level_particles", "respawn", "player_abilities", "player_position",
         "set_default_spawn_position", "change_difficulty", "post_effects", "initialize_border", "game_event", "ticking_state", "ticking_step", "set_chunk_cache_center",
-        "container_set_content", "container_set_slot", "commands", "remove_entities", "set_time_full"}          # (update_attributes: vanilla sends it twice after a respawn, dbcraft once)
+        "container_set_content", "container_set_slot", "commands", "remove_entities", "set_time_full", "update_attributes"}      # (update_attributes: the entries sorted, vanilla's order is a hash order)
 ENTITY_DATA_KEEP = True        # set_entity_data of the player itself (health, flags, score)
 
 def load(path):
@@ -87,6 +87,15 @@ def reduce_events(events, who):
         if n == "entity_event":
             if b[:4] != eid_i: continue
             out.append((n, "EID" + b[4:].hex())); continue
+        if n == "update_attributes":
+            if not b.startswith(eid_v): continue
+            r = b[len(eid_v):]; cnt, o = varint(r, 0); ents = []
+            for _ in range(cnt):
+                s0 = o; _a, o = varint(r, o); o += 8; mc_, o = varint(r, o)
+                for _ in range(mc_):
+                    ln, o = varint(r, o); o += ln + 8 + 1
+                ents.append(r[s0:o].hex())
+            out.append((n, "EID" + ";".join(sorted(ents)))); continue
         if n in ("damage_event", "set_entity_data"):
             if not b.startswith(eid_v): continue
             out.append((n, "EID" + b[len(eid_v):].hex())); continue

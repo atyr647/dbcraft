@@ -80,6 +80,11 @@ begin
   end if;
   update mc.menu_state set state_id = 1 where player = p_uuid;
   perform mc.mi_store(p_uuid, a, st);                                                   -- (a carried item went back into the inventory above)
+  -- (sql/838) the first player to look into a chest, ender chest or barrel makes the lid sound, to everybody in range and BEFORE the menu (recorded)
+  if ci.blk in ('minecraft:chest', 'minecraft:trapped_chest', 'minecraft:ender_chest', 'minecraft:barrel')
+     and (select count(*) from mc.menu_state s where s.open and s.x = bx and s.y = bby and s.z = bz) = 1 then
+    perform mc.snd_container(ci.blk, bx, bby, bz, x2, y2, z2, true, state);
+  end if;
   if p.conn_id is not null then insert into mc.play_out (conn_id, data) values (p.conn_id, st.pkts); end if;
   if p_run_hook then perform mc.menu_opened_state_hook(p_dim, bx, bby, bz, ci.blk); perform mc.menu_opened_event_hook(p_uuid, p_dim, ci.blk); end if;
   return true;
@@ -123,6 +128,10 @@ declare blk text;
 begin
   if not ms.open then return; end if;
   blk := split_part(mc.get_block(coalesce(ms.dimension, 'minecraft:overworld'), ms.x, ms.y, ms.z), '[', 1);
+  if blk in ('minecraft:chest', 'minecraft:trapped_chest', 'minecraft:ender_chest', 'minecraft:barrel')       -- (sql/838) the last player to leave makes the lid sound
+     and not exists (select 1 from mc.menu_state o where o.open and o.player <> ms.player and o.x = ms.x and o.y = ms.y and o.z = ms.z) then
+    perform mc.snd_container(blk, ms.x, ms.y, ms.z, ms.x2, ms.y2, ms.z2, false, mc.get_block(coalesce(ms.dimension, 'minecraft:overworld'), ms.x, ms.y, ms.z));
+  end if;
   if blk = 'minecraft:barrel' then
     if not exists (select 1 from mc.menu_state o where o.open and o.player <> ms.player and o.dimension = ms.dimension and o.x = ms.x and o.y = ms.y and o.z = ms.z)
        and mc.get_block(ms.dimension, ms.x, ms.y, ms.z) like '%open=true%' then
@@ -259,6 +268,12 @@ begin
     end if;
   end if;
   if not mc.menu_open(p.uuid, dim, pos.x, pos.y, pos.z, false) then return false; end if;
+  -- the viewers see the arm swing, twice, after the lid sound (recorded, as for a placed block: sql/432)
+  if mc.vis_on() then
+    insert into mc.play_out (conn_id, data)
+    select v.viewer_conn, mc.pkt_swing(v.target_eid, case when get_byte(body, 0) = 0 then 0 else 1 end, 1, 6) || mc.pkt_swing(v.target_eid, case when get_byte(body, 0) = 0 then 0 else 1 end, 1, 6)
+      from mc.visible v where v.target_eid = p.entity_id and v.viewer_conn <> p.conn_id order by v.viewer_conn;
+  end if;
   -- the block's menu provider ran (a barrel's state is open now)
   perform mc.menu_opened_state_hook(dim, pos.x, pos.y, pos.z, ci.blk);
   -- ServerGamePacketListenerImpl.handleUseItemOn: the clicked block (as it is now) and the block beside the clicked face are sent again (the client undoes its prediction), then the ack

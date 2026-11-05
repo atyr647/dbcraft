@@ -67,6 +67,7 @@ begin
   new.sent_xp_total := new.xp_total; new.sent_score := new.xp_score; new.sent_using := false;
   new.fall_distance := 0; new.fall_tp := 0; new.food_timer := 0; new.hurt_tick := null; new.last_hurt := 0; new.sprinting := false;
   new.use_slot := null; new.use_until := null; new.cb_tick := null; new.cb_fall := 0; new.cb_type := null;
+  new.spam_chat := 0; new.spam_chat_tick := null; new.spam_cmd := 0; new.spam_cmd_tick := null;       -- the rate-limit counters (sql/910) live as long as the connection: a new session starts at zero (recorded)
   new.join_tick := (select game_time from mc.game_state);
   return new;
 end $$;

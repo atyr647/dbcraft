@@ -297,6 +297,8 @@ begin
       perform mc.set_slot(p_target.uuid, sl, p_item, st + add_n);
       chunk := chunk - add_n; changed := changed || sl;
     end loop;
+    -- (sql/838) GiveCommand: the pickup sound goes to everybody in range, the receiver too, BEFORE the slot updates of that stack (recorded)
+    if cardinality(changed) > 0 then perform mc.sound_near(null, 'entity.item.pickup', 7, p_target.x, p_target.y, p_target.z, 0.2, ((random() - random()) * 0.7 + 1.0) * 2.0); end if;
     for c in select distinct x from unnest(changed) x order by x loop
       update mc.player set inv_state = inv_state + 1 where uuid = p_target.uuid returning inv_state into state;
       insert into mc.play_out (conn_id, data) values (p_target.conn_id, mc.pkt_container_set_slot(state, c, p_item, (select i.count from mc.inventory_slot i where i.player = p_target.uuid and i.slot = c)));

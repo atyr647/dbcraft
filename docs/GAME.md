@@ -52,7 +52,8 @@ server parses what the client sends against the same graph.  Here that graph is 
 
 Implemented commands (the first column is what a level-0 player may use, the rest needs the level vanilla needs): `/list [uuids]` `/me` `/msg /tell /w` `/help [command]` (usage
 text derived from the graph with Brigadier's smart-usage algorithm); `/say` `/seed` `/gamerule` (all 58 rules, stored in `mc.game_rule`, defaults in `mc.gamerule_default`)
-`/clear` `/give` `/gamemode` `/teleport /tp` `/time set add query` `/weather` `/difficulty` `/kill` (levels 2 and up); `/op` `/deop` `/whitelist` `/ban` `/pardon` (3 and up).
+`/clear` `/give` `/gamemode` `/teleport /tp` `/time set add query` `/weather` `/difficulty` `/kill` `/experience (/xp)` `/damage` `/kick` `/defaultgamemode` (levels 2 and up); `/op` `/deop` `/whitelist` `/ban` `/pardon` (3 and up).
+`/experience`, `/damage`, `/kick` and `/defaultgamemode` (`sql/839`) came after the recorded 392-step session and are checked by a shorter one, `tests/e2e/cmd_mini.py` (33 steps on the real server and on dbcraft: every `system_chat`, `set_experience`, `disconnect` and `damage_event` compared): `add` and `set` of points and levels (also negative and for `@a`), `set ... points` beyond the level's need (`commands.experience.set.points.invalid`), `query` (the points INSIDE the level, not the total), `/damage` with and without a type (the amount is a float tag in the message), `/kick` with a reason (the disconnect carries a bare string tag), `/defaultgamemode`.
 
 **Verified byte for byte against the real server**
 
@@ -75,12 +76,12 @@ text derived from the graph with Brigadier's smart-usage algorithm); `/say` `/se
 * clock totals in `/time add`, `/time query time` and `/time query gametime` are run-specific: only the shape of the answer is compared (`time set` totals are compared exactly);
 * the death steps (`/kill` of a player, `perform_respawn`) belong to the survival module and are compared only with `--survival`; `/kill` itself selects the victims, answers
   `commands.kill.success.*` and calls `mc.kill_players(uuid[])` when that function exists (without it the command says so and kills nobody);
-* only the packet kinds above are compared: vanilla also sends entity metadata, sounds, item entities (`/give`), set_equipment, recipe book and advancements around these commands,
-  which dbcraft does not (see Not implemented).
+* only the packet kinds above are compared: vanilla also sends entity metadata, item entities (`/give`), set_equipment, recipe book and advancements around these commands,
+  which dbcraft does not (see Not implemented); the sounds around the commands that make them (`/give`'s pickup sound) are compared by `tests/e2e/compare_sound.py` ([DIFFERENCES.md](DIFFERENCES.md) item 2).
 
 **Not supported (said in the error text, not hidden):** item components and NBT in item arguments (`stone[...]`), the selector options `advancements nbt predicate scores x_rotation
 y_rotation`, `/tp ... facing`, `/time` forms other than `set`, `add`, `query time|gametime`, every other command of the graph (they answer "is not implemented").
-Differences that are not errors: `weather rain|thunder` accepts a duration and ignores it (no weather timer); `op`, `deop`, `whitelist`, `ban` and `pardon` only know players the
+Differences that are not errors: `weather rain|thunder` accepts a duration and ignores it (no weather timer: [DIFFERENCES.md](DIFFERENCES.md) item 9); `op`, `deop`, `whitelist`, `ban` and `pardon` only know players the
 server has seen (vanilla in offline mode accepts any name and shows it in lower case: `argument.player.unknown` here); game rules are stored and reported but only
 `reduced_debug_info` (entity event 22/23) acts on clients here; the survival module reads them from `mc.game_rule`.
 
@@ -137,7 +138,7 @@ To regenerate the recordings: start a vanilla 26.3 server (offline, whitelist of
 
 ## Not implemented
 
-Anything that hurts a player other than falls, the void, starvation and `/kill` (see [SURVIVAL.md](SURVIVAL.md): the survival core, its recorded comparisons and its limits); `/experience`, `/damage`, `/effect`; the other ~70 commands of vanilla's graph (they are in the player's command tree, so clients complete them, and answer "not implemented"); chat rate limits and message signing (offline mode only); entity metadata, attributes and the waypoint packets other players receive when someone joins (`set_entity_data`, `update_attributes`, `waypoint`); item pickup, sound and equipment packets around `/give` and `/clear`; latency broadcasts to the tab list; containers other than chests, barrels, ender chests, the crafting table and furnaces (see [CONTAINERS.md](CONTAINERS.md)); `entity-broadcast-range-percentage`.  Recipes, advancements and the player's own entity data are still replayed from a capture (`net.static_packet`); the command tree is no longer one of them.
+Anything that hurts a player other than falls, the void, starvation, `/kill` and `/damage` (see [SURVIVAL.md](SURVIVAL.md): the survival core, its recorded comparisons and its limits); `/effect`, `/title`, `/tellraw`, `/setblock`, `/fill`, `/summon`, `/tick`, `/worldborder`, `/scoreboard` and the other ~65 commands of vanilla's graph (they are in the player's command tree, so clients complete them, and answer "not implemented"; the list by cost is in [DIFFERENCES.md](DIFFERENCES.md)); chat rate limits and message signing (offline mode only); entity metadata, attributes and the waypoint packets other players receive when someone joins (`set_entity_data`, `update_attributes`, `waypoint`); item pickup and equipment packets around `/give` and `/clear` (the pickup sound of `/give` exists); latency broadcasts to the tab list; containers other than chests, barrels, ender chests, the crafting table and furnaces (see [CONTAINERS.md](CONTAINERS.md)); `entity-broadcast-range-percentage`.  Recipes, advancements and the player's own entity data are still replayed from a capture (`net.static_packet`); the command tree is no longer one of them.
 With `dbcraft.vanilla-tracker = false` visibility is the old simplification: two players see each other when their chunk coordinates differ by at most `view-distance` (capped at 32) in both axes.
 With the default (`true`) it is vanilla's circle: `min(512 * entity-broadcast-range-percentage / 100, the client's view distance * 16)` blocks, horizontal and exact (PLAYER-VISIBILITY.md).  Entity data, attributes, equipment, the waypoint packets and latency broadcasts of players exist since `sql/900`-`910`.
 

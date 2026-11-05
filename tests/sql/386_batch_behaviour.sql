@@ -181,8 +181,8 @@ select t.feed_pkt(12, 'play', 'minecraft:use_item_on', proto.varint(0) || proto.
 select mc.server_tick_batched();
 select t.grab(12, 'b5');
 select t.eq('out of reach: nothing is placed', mc.get_block('minecraft:overworld', 15, -60, 0), 'minecraft:air');
-select t.eq('out of reach: the client gets both authoritative states, then the ack',
-            (select array_agg(name order by idx) from t.g_b5 where name in ('minecraft:block_update', 'minecraft:block_changed_ack')), array['minecraft:block_update', 'minecraft:block_update', 'minecraft:block_changed_ack']);
+select t.eq('out of reach: only the ack (recorded from the real server: handleUseItemOn returns after the acknowledgement, no block update)',
+            (select array_agg(name order by idx) from t.g_b5 where name in ('minecraft:block_update', 'minecraft:block_changed_ack')), array['minecraft:block_changed_ack']);
 select t.eq('out of reach: the item is not consumed', (select count from mc.inventory_slot where player = net.offline_uuid('Bob') and slot = 36)::int, 2);
 select t.feed_pkt(12, 'play', 'minecraft:player_action', proto.varint(3) || proto.position(0, -62, 0) || proto.i8(1) || proto.varint(7));
 select mc.server_tick_batched(); select t.take(11); select t.take(12);
