@@ -14,7 +14,9 @@ for rep in $(seq 1 "$REPS"); do
     L=$(cut -d' ' -f1 /proc/loadavg)
     s=$(date +%s)
     line=$(cd "$d" && JB_PORT=$p JB_DB=jb python3 tests/bench/joinbudget/run.py --joiners "$J" --online "$O" --budget 25 --vd 10 --side 30 --walk 0.2 --label "$w ${J}into${O} r$rep" --json)
-    echo "$line" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); d['load_at_start']=$L; d['seconds']=$(date +%s)-$s; print(json.dumps(d))" >> "$OUT"
+    # the same statistics without the first 8 ticks (the harness's own setup and plan caching: 400-600 ms in tick 1) and with the tick numbers of the worst three
+    ex=$(psql -X -q -At -h /tmp -p $p -U postgres jb -c "select json_build_object('cpu_max8', round(max(cpu_ms)::numeric,1), 'cpu_p99_8', round((percentile_cont(.99) within group (order by cpu_ms))::numeric,1), 'cpu_avg8', round(avg(cpu_ms)::numeric,1), 'cpu_over100_8', count(*) filter (where cpu_ms > 100), 'wall_max8', round(max(wall_ms)::numeric,1), 'wall_p99_8', round((percentile_cont(.99) within group (order by wall_ms))::numeric,1), 'ticks8', count(*), 'worst_ticks', (select json_agg(json_build_array(t, round(cpu_ms::numeric), in_play)) from (select * from jbp.ticks where t > 8 order by cpu_ms desc limit 4) w)) from jbp.ticks where t > 8")
+    echo "$line" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); d['load_at_start']=$L; d['seconds']=$(date +%s)-$s; d['x8']=json.loads('$ex'); print(json.dumps(d))" >> "$OUT"
     echo "$w ${J}into${O} r$rep: $(( $(date +%s) - s )) s, load at start $L"
   done
 done
