@@ -197,7 +197,10 @@ end $$;
 --   same state now as at tau: nothing to do.  Everything else (about 10 % of the pairs of a crowd) is tested exactly as before.
 --   Who has no such bound is tested against everybody, as before: a player that was never evaluated (a join; vis_eid is the session), whose range or spectator state differs from what its pairs were
 --   evaluated with (a changed view distance or game mode), that waited for the chunks of a teleport (its pairs were evaluated at positions that are not its vis), or that has moved 4 blocks without being
---   dirty (not possible through the movement step, but then the bound would be wrong); and every dirty player that jumped far has a disp that makes its ring cover everybody.
+--   dirty (not possible through the movement step, but then the bound would be wrong); a dead player (sql/836 removes its pairs behind this function's back, and the old function brings them back when
+--   somebody near it is dirty); a dirty player whose chunk before the move is not recorded (vis_ocx is null: what marks a player dirty for any reason but the movement step, a respawn among them, which
+--   deletes its pairs in sql/836); and every dirty player that jumped far (a bound over 14 blocks is no bound).  A player without a bound that is not evaluated itself is set to "never evaluated" at the end
+--   (vis_eid null) so that it does not look trustworthy again when what made it unbounded changes back before it is evaluated.
 --   The pairs found are probed in mc.visible (the primary key) and only the changes are written: O(pairs near the edge), not O(dirty x online).  A pair to delete is deleted by the tuple id the probe found.
 create or replace function mc.refresh_visibility_vis() returns table(added int, removed int) language plpgsql as $$
 declare srv int := least(mc.prop_int('view-distance'), 32); trk float8 := ((coalesce(mc.prop_int('entity-broadcast-range-percentage'), 100) * 512) / 100)::float8;
