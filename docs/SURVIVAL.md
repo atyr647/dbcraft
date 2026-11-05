@@ -42,9 +42,9 @@ entity motion, waypoints, the forced "player standing on air" block update and t
 | **void**: teleport to y = -140, six hits 10 ticks apart with regeneration between, death, the corpse removed | 34 / 21 | identical |
 | **eat**: an apple at food 19 / saturation 0 (the state vanilla reached with the Hunger effect, copied into dbcraft with `UPDATE`) | 5 / 2 | identical (the eater gets `entity_event` 9, the observer does not) |
 
-Not compared by the harness although vanilla sent them: sounds (random seeds), `set_entity_motion` after a hit, the one forced `block_update` below a landing player (vanilla
-only), `update_advancements` after eating, the second `update_attributes` after a respawn, `waypoint`, and the operator's command tree in the respawn burst (dbcraft replays a
-recorded level-0 tree).  Reproduce: `tests/e2e/survival.sh record VANILLA_PORT` (a vanilla server in survival, normal, no mobs, spawn radius 0, "Surv" an operator), then
+Sounds are compared by `tests/e2e/compare_sound.py` (see [Sounds](#sounds)).  Not compared by the harness although vanilla sent them: `set_entity_motion` after a hit, the one forced `block_update` below a landing player (vanilla
+only), `update_advancements` after eating, `waypoint`, and the operator's command tree in the respawn burst (dbcraft replays a
+recorded level-0 tree).  The second `set_entity_data` and `update_attributes` of a respawned player that vanilla's observers get after the add-entity bundle are sent here since `sql/836` (`mc.survival_resp_dup`) and compared.  Reproduce: `tests/e2e/survival.sh record VANILLA_PORT` (a vanilla server in survival, normal, no mobs, spawn radius 0, "Surv" an operator), then
 `tests/e2e/survival.sh compare DBCRAFT_PORT` (see the header of that script for the dbcraft side).
 
 In SQL (`tests/sql/830_survival.sql`, 136 checks) the same recordings are replayed through the tick functions and compared byte for byte: the **fall** (particles with
@@ -66,17 +66,20 @@ order is progress, **level**, total; `net.play_entry_packets` wrote total first 
   spawned: the experience is lost on death.
 * **Respawn** is always at the world spawn (vanilla spreads respawns over `spawn_radius`; the recorded run used radius 0); beds, respawn anchors, `immediate_respawn`
   behaviour of the server side, hardcore, and respawning in another dimension are not modelled.  A player who disconnects dead comes back alive (vanilla keeps the death screen).
-* **Packets sent by vanilla and not by dbcraft**: sounds (they carry random seeds), `set_entity_motion` after a hit (it needs a server-side player physics simulation: the
-  recorded value was the velocity of three simulated ticks), the one-time forced `block_update` below a landing player, `update_advancements` after eating, `hurt_animation`
-  (only sent for knockback, which needs an attacker), `player_combat_enter/end`, the `waypoint` packets.  The respawned client gets the recorded command tree
+* **Packets sent by vanilla and not by dbcraft**: `set_entity_motion` after a hit (vanilla sends the victim's `getDeltaMovement` to the victim and the viewers: (0, -0.0784, 0) for a standing player, the last movement for a falling one: `01 faff7ffe7569` after the recorded 12-block fall, `05 f9ff7ffeebed` after `/kill`), the one-time forced `block_update` below a landing player, `update_advancements` after eating, `hurt_animation`
+  (only sent for knockback, which needs an attacker), `player_combat_enter/end` (vanilla sends them only for damage with an attacker entity: `CombatTracker.recordDamage` checks `isCombatRelevant`), the `waypoint` packets.  The respawned client gets the recorded command tree
   (`net.static_packet`), not the operator's tree vanilla sends.
 * **Not checked against vanilla**: hay/honey/slime fall factors (read from the bytecode only), the starvation cases on easy and hard, peaceful regeneration (cadence from the
   bytecode, the phase against vanilla's `tickCount` is approximated by the join tick), the gamerule paths, `keep_inventory`, hunger from sprinting and jumping (the tick order
   of the exhaustion is the packet phase for movement and one tick later for block breaking), eating for any item but the apple, the `show_death_messages=false` empty message,
   cooldown behaviour against real mobs.  Online mode and a real vanilla client were not used: the clients are scripted.
 * **The batched tick** does not run any of this; `mc.tick_core` (used by `mc.tick` and `mc.server_tick`) does.
-* The `player_loaded` gate (vanilla ignores damage and movement until the client reports it loaded) is not implemented: a player is vulnerable from the join tick.
+* The `player_loaded` gate is not implemented: a player is vulnerable from the join tick.  Vanilla (read from `ServerGamePacketListenerImpl`: `hasClientLoaded`, `tickClientLoadTimeout`, `restartClientLoadTimerAfterRespawn`, `markClientUnloadedAfterDeath`) makes the player invulnerable (`ServerPlayer.isInvulnerableTo`: `!connection.hasClientLoaded()`, for every damage type) and ignores `player_input`, movement, `player_action`, `use_item_on`, `use_item`, `player_command`, `attack`, `interact` from the join, and from every respawn, until the client sends `player_loaded` or 60 ticks have passed.  Left out on purpose: every SQL test that injects damage right after a join would need the flag; the change is `mc.player.load_until` (join tick + 60, cleared by `net.hook_player_loaded`, set again by `mc.respawn_player`), a test in `mc.hurt` and a delete of the gated packet kinds in `mc.survival_pre`.
 * Armor value and max health are fixed at 20 health (no attribute system).
+
+## Sounds
+
+Recorded from the real server and compared in order with `tests/e2e/compare_sound.py` (scenarios `fall`, `kill`, `eat`, `place`, `chest` of `tests/e2e/sound.sh`; the seed of every sound and the pitch of the random ones are masked): the others in range (16 blocks, strictly less) hear a player's **fall** (`entity.player.big_fall` for damage above 4, else `small_fall`, then the block fall sound at volume x 0.5 and pitch x 0.75, both before the damage event), a **hit** (`entity.player.hurt`, right after the damage event) and a **death** (`entity.player.death`), and the **eating** (`entity.generic.eat` every 4 ticks of the last 24, 7 for an apple); everybody hears the finished item (`entity.generic.eat` NEUTRAL, then `entity.player.burp`).  The player's own client plays its own hurt, fall and use sounds.  Nothing is heard from the void in the recorded run because the observer was 80 blocks away.  `sql/838_sounds.sql` has the functions and the layout; the block sound types come from the jar (`tools/gen_sounds.sh`).  Not modelled: step and jump sounds (client side), `small_fall` for falls without damage, drowning and fire sounds beyond the type names, swimming, the levelup sound.
 
 ## Cost per tick
 

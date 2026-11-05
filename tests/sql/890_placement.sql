@@ -1,4 +1,4 @@
--- Block placement states (sql/1031): mc.place_state against what the REAL vanilla 26.3 server produced for the same click (tests/e2e/place_probe.py, compared in full by
+-- Block placement states (sql/890): mc.place_state against what the REAL vanilla 26.3 server produced for the same click (tests/e2e/place_probe.py, compared in full by
 -- tests/e2e/compare_place.py: pillar 42 of 42, stairs 56 of 56 ... see docs/GAME.md).  Every row is one recorded placement: the item, the clicked face of the anchor block at
 -- (11, -58, 10), the cursor on that face, the player's yaw and pitch, the blocks around, and the state vanilla placed in the target cell (NULL: vanilla placed nothing there).
 -- A selection of the recording (the full matrix is the e2e comparison); needs the world-dynamics data (tools/gen_dynamics.sh): without it the file is skipped.

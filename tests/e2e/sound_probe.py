@@ -32,9 +32,9 @@ def use_on(x, y, z, face, seq): return m.varint(0) + m.position(x, y, z) + m.var
 def clear_area():
     if a.dbcraft:
         import subprocess
-        subprocess.run(["psql", "-X", "-q", "-At", "-c", "select mc.fill('minecraft:overworld', -2, -60, -2, 9, -57, 9, 'minecraft:air')"], check=True, capture_output=True)
+        subprocess.run(["psql", "-X", "-q", "-At", "-c", "select mc.fill('minecraft:overworld', -2, -60, -2, 9, -57, 9, 'minecraft:air'), mc.fill('minecraft:overworld', -2, -61, -2, 9, -61, 9, 'minecraft:grass_block[snowy=false]')"], check=True, capture_output=True)
     else:
-        cmd(s, "fill -2 -60 -2 9 -57 9 minecraft:air")
+        cmd(s, "fill -2 -60 -2 9 -57 9 minecraft:air"); cmd(s, "fill -2 -61 -2 9 -61 9 minecraft:grass_block")      # (the grass under a placed block turns to dirt in a world that lives on)
     time.sleep(0.4)
 def select(c, slot): c.send("minecraft:set_carried_item", struct.pack(">h", slot))
 
@@ -42,6 +42,8 @@ s = m.Client(a.host, a.port, a.name); o = m.Client(a.host, a.port, a.observer)
 s.settle(1.0, 20.0); o.settle(1.0, 15.0)
 for c in (s, o):                           # a player that quit dead comes back dead: get up (ignored by the server when alive)
     c.send("minecraft:client_command", m.varint(0)); c.settle(0.5, 3.0)
+for nm in (a.name, a.observer): cmd(s, "gamemode survival " + nm)       # a vanilla world keeps the game mode of the last probe
+s.settle(0.5, 3.0); o.settle(0.5, 3.0)
 clear_area(); s.settle(0.5, 3.0); o.settle(0.5, 3.0)
 # a known place: both next to each other at the spawn, clean inventory, full health
 cmd(s, "tp %s 0.5 -60 0.5" % a.name); cmd(s, "tp %s 0.5 -60 3.5" % a.observer); cmd(s, "clear %s" % a.name); s.settle(0.5, 3.0); o.settle(0.5, 3.0)

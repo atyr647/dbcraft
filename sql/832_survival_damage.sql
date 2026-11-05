@@ -90,7 +90,7 @@ begin
     into n, full_eids, dead_eids from u;
   if cardinality(full_eids) > 0 then
     perform mc.send_players_and_viewers(full_eids, array(select mc.pkt_damage_event(e, dt.id) from unnest(full_eids) e));
-    perform mc.snd_hurt(full_eids, dead_eids, p_type);                          -- (sql/1030) the hurt or death sound for the others, right after the damage event (recorded)
+    perform mc.snd_hurt(full_eids, dead_eids, p_type);                          -- (sql/838) the hurt or death sound for the others, right after the damage event (recorded)
   end if;
   perform mc.survival_die(dead_eids, p_cur);
   return n;
@@ -145,4 +145,4 @@ create or replace function mc.xp_set_levels(p_uuid uuid, p_level int) returns vo
   update mc.player set xp_level = p_level, sent_xp_total = -1 where uuid = p_uuid and xp_level <> p_level $$;
 create or replace function mc.xp_set_points(p_uuid uuid, p_points int) returns void language sql as $$
   update mc.player set xp_progress = greatest(0, least(p_points::real / mc.xp_needed(xp_level)::real, (mc.xp_needed(xp_level) - 1)::real / mc.xp_needed(xp_level)::real)), sent_xp_total = -1
-   where uuid = p_uuid $$;
+   where uuid = p_uuid and xp_progress is distinct from greatest(0, least(p_points::real / mc.xp_needed(xp_level)::real, (mc.xp_needed(xp_level) - 1)::real / mc.xp_needed(xp_level)::real)) $$;      -- (nothing changed: no packet, recorded)

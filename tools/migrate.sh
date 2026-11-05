@@ -20,7 +20,7 @@ done
 if [ "$FRESH" = 1 ]; then
   $PSQL -X -q -v ON_ERROR_STOP=1 -c "drop schema if exists ref, proto, mc, net cascade"
 fi
-for f in $(ls sql/*.sql | sort -V); do      # numeric order: sql/1030_x.sql comes after sql/981_x.sql (a plain glob sorts 1030 before 110)
+for f in sql/*.sql; do
   echo "== $f"
   $PSQL -X -q -v ON_ERROR_STOP=1 -f "$f"
 done

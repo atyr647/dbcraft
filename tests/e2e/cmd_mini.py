@@ -28,6 +28,9 @@ def record(port, out, host="127.0.0.1"):
     c = {"Surv": m.Client(host, port, "Surv"), "Obs": m.Client(host, port, "Obs")}
     for x in c.values(): x.settle(1.0, 20.0)
     for x in c.values(): x.send("minecraft:client_command", m.varint(0)); x.settle(0.4, 2.0)
+    for who in ("Surv", "Obs"):                      # an earlier probe may have left them in creative (a vanilla world keeps the game mode)
+        c["Surv"].send("minecraft:chat_command", m.string("gamemode survival " + who)); time.sleep(0.3)
+    for x in c.values(): x.settle(0.4, 2.0)
     res = []
     for who, cmd in STEPS:
         ks = {n: len(x.events) for n, x in c.items()}
@@ -43,7 +46,8 @@ def record(port, out, host="127.0.0.1"):
             for e in x.events[ks[n]:]:
                 if e["state"] == "mark" or e["dir"] != "clientbound" or e["name"] not in KEEP: continue
                 b = e["body"]
-                if e["name"] in MASK_ID: b = b[1:] if e["name"] == "minecraft:damage_event" else b[4:]
+                if e["name"] == "minecraft:damage_event": b = b[m.parse_varint(b, 0)[1]:]          # the entity id (a varint) differs between the servers
+                elif e["name"] == "minecraft:entity_event": b = b[4:]
                 step["got"][n] = step["got"].get(n, []) + [[e["name"].replace("minecraft:", ""), b.hex()]]
         res.append(step)
         time.sleep(0.3)

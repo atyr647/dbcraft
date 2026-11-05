@@ -137,7 +137,7 @@ begin
                     refused := refused + 1;
                 else
                     perform mc.set_block(dim, pos.x, pos.y, pos.z, 'minecraft:air');
-                    perform mc.shape_neighbours(dim, pos.x, pos.y, pos.z);                                  -- (sql/1031) a fence next to it no longer connects
+                    perform mc.shape_neighbours(dim, pos.x, pos.y, pos.z);                                  -- (sql/890) a fence next to it no longer connects
                     insert into mc.block_actor values (dim, pos.x, pos.y, pos.z, r.conn_id);
                     breaks := breaks + 1;
                     if r.gamemode = 0 then update mc.player set exhaustion = least(exhaustion + 0.005::real, 40::real) where conn_id = r.conn_id; end if;      -- (survival, sql/830) Block.playerDestroy: causeFoodExhaustion(0.005)
@@ -160,7 +160,7 @@ begin
                 ty := pos.y + case face when 0 then -1 when 1 then 1 else 0 end;
                 tz := pos.z + case face when 2 then -1 when 3 then 1 else 0 end;
                 clicked := mc.get_block(dim, pos.x, pos.y, pos.z);
-                -- (sql/1031) BlockPlaceContext: a clicked block that can be replaced (plants, snow, the free half of a slab) takes the new block into ITS cell; the state comes from the
+                -- (sql/890) BlockPlaceContext: a clicked block that can be replaced (plants, snow, the free half of a slab) takes the new block into ITS cell; the state comes from the
                 -- block's class, the face, the cursor, the player's direction (mc.place_state)
                 face_nm := (array['down', 'up', 'north', 'south', 'west', 'east'])[face + 1];
                 ax := tx; ay := ty; az := tz;                                  -- the cell next to the clicked face: vanilla sends it to the placer whatever was placed
@@ -183,11 +183,11 @@ begin
                     continue;
                 end if;
                 perform mc.set_block(dim, tx, ty, tz, pstate);
-                if pstate like '%\_door[%half=lower%' then perform mc.set_block(dim, tx, ty + 1, tz, mc.st_set(pstate, 'half', 'upper')); end if;       -- (sql/1031) DoorBlock.setPlacedBy: the upper half
-                perform mc.shape_neighbours(dim, tx, ty, tz);                                                                                         -- (sql/1031) fences, panes, stairs, gates, chests follow the new block
+                if pstate like '%\_door[%half=lower%' then perform mc.set_block(dim, tx, ty + 1, tz, mc.st_set(pstate, 'half', 'upper')); end if;       -- (sql/890) DoorBlock.setPlacedBy: the upper half
+                perform mc.shape_neighbours(dim, tx, ty, tz);                                                                                         -- (sql/890) fences, panes, stairs, gates, chests follow the new block
                 insert into mc.block_actor values (dim, tx, ty, tz, r.conn_id);
                 places := places + 1;
-                perform mc.snd_place(r.conn_id, tx, ty, tz, pstate);          -- (sql/1030) the others hear it, before the swing animations (recorded)
+                perform mc.snd_place(r.conn_id, tx, ty, tz, pstate);          -- (sql/838) the others hear it, before the swing animations (recorded)
                 -- the viewers of the placing player see its arm swing, twice (recorded from the real server: two identical swing_animation packets before the block update)
                 if mc.vis_on() then
                     insert into mc.play_out (conn_id, data)

@@ -1,4 +1,4 @@
--- Sounds (sql/1030): the `sound` packet, who hears what, and the block sound types read from the jar.  Every packet marked (vanilla) is one the REAL vanilla 26.3 server
+-- Sounds (sql/838): the `sound` packet, who hears what, and the block sound types read from the jar.  Every packet marked (vanilla) is one the REAL vanilla 26.3 server
 -- sent (tests/e2e/sound_probe.py and the survival scenarios, compared in order by tests/e2e/compare_sound.py): the frame is rebuilt byte for byte, the random seed taken from
 -- the recording.  Needs the registries (ref.registry: sound events) and the sound data (tools/gen_sounds.sh) for the block types; the packet checks need only the registries.
 select (select count(*) from ref.registry where registry = 'minecraft:sound_event') > 0 as have_reg, (select count(*) from mc.sound_type) > 0 as have_types \gset

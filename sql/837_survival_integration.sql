@@ -24,10 +24,11 @@ begin
    where p.conn_id is not null
      and (p.sent_health is distinct from p.health or p.sent_food is distinct from p.food or p.sent_sat_zero is distinct from (p.saturation = 0) or p.sent_xp_total is distinct from p.xp_total
           or p.sent_eh is distinct from p.health or p.sent_using is distinct from (p.use_slot is not null) or p.sent_score is distinct from p.xp_score or p.pend_slot is not null
-          or (p.dead and p.death_tick is not null) or (not p.dead and p.y < -128) or p.use_slot is not null
+          or (p.dead and p.death_tick is not null) or (not p.dead and p.y < -128) or p.use_slot is not null or p.resp_dup is not null
           or p.exhaustion > 4 or (p.health > 0 and p.health < 20) or p.food <= 0 or p.food_timer <> 0
           or (peaceful and p.join_tick is not null and (p_cur - p.join_tick) % 10 = 0 and (p.food < 20 or p.health < 20 or p.saturation < 20)));
   if ids is null then return; end if;
+  perform mc.survival_resp_dup(p_cur, ids);                                          -- (recorded) the second entity data and attributes of a respawned player
   perform mc.survival_tracker(p_cur, ids);
   perform mc.survival_deaths(p_cur, ids);
   perform mc.survival_void(p_cur, ids);

@@ -9,7 +9,7 @@ begin
   unit := case when op = 'query' then parts[4] else coalesce(parts[5], 'points') end;
   if op = 'query' then
     select * into t from mc.player where uuid = tgts[1].uuid;
-    perform mc.cmd_success(me, mc.tc_translate('commands.experience.query.' || unit, array[mc.tc_player(t.uuid, t.name), mc.tc_arg_int(case when unit = 'levels' then t.xp_level else t.xp_total end)]), false);
+    perform mc.cmd_success(me, mc.tc_translate('commands.experience.query.' || unit, array[mc.tc_player(t.uuid, t.name), mc.tc_arg_int(case when unit = 'levels' then t.xp_level else round(t.xp_progress * mc.xp_needed(t.xp_level)::real)::int end)]), false);       -- (recorded) the points inside the level, not the total
     return;
   end if;
   foreach t in array tgts loop
@@ -41,7 +41,7 @@ begin
   if not exists (select 1 from mc.damage_type where name = 'minecraft:' || ty) then perform mc.cmd_fail(me, mc.tc_translate('argument.resource.invalid_type')); return; end if;
   n := mc.hurt(array[t.entity_id], array[amt], ty, (select game_time from mc.game_state));
   if n = 0 then perform mc.cmd_fail(me, mc.tc_translate('commands.damage.invulnerable')); return; end if;
-  perform mc.cmd_success(me, mc.tc_translate('commands.damage.success', array[proto.nbt_str('text', regexp_replace(trim_scale(amt::numeric)::text, '^(-?[0-9]+)$', '\1.0')), mc.tc_player(t.uuid, t.name)]));
+  perform mc.cmd_success(me, mc.tc_translate('commands.damage.success', array[proto.nbt_float('', amt), mc.tc_player(t.uuid, t.name)]));       -- (recorded) the amount is a float tag
 end $$;
 
 -- /kick <targets> [<reason>]: the disconnect packet carries the reason (the default is the translatable multiplayer.disconnect.kicked); the operators get commands.kick.success
@@ -49,7 +49,7 @@ create or replace function mc.cmd_run_kick(me mc.player, lvl int, input text, si
 declare tgts mc.player[]; t mc.player; reason text := nullif(args #>> '{reason,text}', ''); nbt bytea; comp bytea; n int := 0;
 begin
   tgts := mc.cmd_players(me, args -> 'targets'); if tgts is null then return; end if;
-  nbt := proto.nbt_root(case when reason is null then proto.nbt_str('translate', 'multiplayer.disconnect.kicked') else proto.nbt_str('text', reason) end);
+  nbt := case when reason is null then proto.nbt_root(proto.nbt_str('translate', 'multiplayer.disconnect.kicked')) else mc.nbt_root_text(reason) end;       -- (recorded) a plain reason is a bare string tag
   comp := case when reason is null then proto.nbt_str('translate', 'multiplayer.disconnect.kicked') else proto.nbt_str('text', reason) end;
   foreach t in array tgts loop
     if t.conn_id is not null then

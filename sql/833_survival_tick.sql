@@ -101,7 +101,7 @@ begin
      group by o.conn_id order by o.conn_id;
   end if;
   if cardinality(fe) > 0 then
-    perform mc.snd_fall(fe, fa);                                                   -- (sql/1030) the others hear the landing, before the damage event
+    perform mc.snd_fall(fe, fa);                                                   -- (sql/838) the others hear the landing, before the damage event
     perform mc.hurt(fe, fa, 'fall', p_cur);
     update mc.player set fall_distance = 0 where entity_id = any (fe);
   end if;

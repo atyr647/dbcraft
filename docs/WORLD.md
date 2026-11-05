@@ -351,6 +351,30 @@ and random ticks against a private copy of the sections, the neighbour-update ca
 (vanilla's `setBlock` sends no level event 2001; only a block destroyed by lost support does, and that stays a `block` event), and falling blocks that land are announced by the NEXT tick's
 broadcast (vanilla's entity phase follows its broadcast).  A statement trigger on `mc.block_event` (`mc.dyn_on_events`) runs the reactions to a change from outside inside the same statement.
 
+## Block placement states (`sql/890`)
+
+A block a player placed used to be the block's default state whatever was clicked.  `mc.place_state` now computes what vanilla's `BlockItem.getPlacementState` / `Block.getStateForPlacement`
+compute, from the block's class (`mc.dyn_state.chain`, read from the jar), the clicked face, the cursor on it, the player's yaw and pitch, its sneaking flag and the neighbours:
+logs, pillars, hay, bone, chains (axis of the face), slabs (bottom / top by face and cursor, double when the free half is clicked, which also makes the clicked block the target:
+`mc.place_replaces_clicked`), stairs (direction, half, corner shape), furnaces, stonecutters, looms, lecterns, carved pumpkins, glazed terracotta, repeaters, comparators, bells, anvils,
+campfires, fence gates (`in_wall`), chests (single / left / right from a neighbouring chest and sneaking) and ender chests, dispensers, droppers, observers, pistons, barrels, command
+blocks (the nearest looking direction: Direction.orderedByNearest), hoppers, trapdoors, signs, banners and skulls (16 rotations, wall variants through the looking directions), torches,
+lanterns, ladders, levers, buttons, grindstones (the looking directions with `canSurvive` from the sturdy faces), doors (both halves, the hinge), fences, glass panes and iron bars
+(connections).  After the placement (and after a break) the six neighbours recompute their shape in vanilla's order (west, east, north, south, down, up: `mc.shape_neighbours`): fences, panes,
+stairs, fence gates and chests follow, so a fence placed next to a fence connects both.  The placing player is told the clicked cell and the cell next to the clicked face (not
+the target, which differs when a slab is merged), then the broadcast sends the changes (`sql/432`: `mc.apply_block_actions`).  A use of an item on a block out of reach is ignored
+after its acknowledgement with no block update (recorded).
+
+**Verified against the real server** (`tests/e2e/place_probe.py`, `compare_place.py`): one creative operator places 509 items against an anchor block with chosen face, cursor, yaw
+and pitch and neighbours; every block change the server sends back is compared.  **503 of 509 identical**: pillars 42 of 42, slabs 16 of 16 (merging included), stairs 56 of 56 (24 corner
+shapes), facing blocks 102 of 102, directional blocks 90 of 90, trapdoors 24 of 24, signs / banners / skulls 39 of 39, torches / lanterns / ladders / levers / buttons 96 of 96, doors 12 of 12,
+fences / panes / bars 26 of 26 and walls 0 of 6 (below).  `tests/sql/890_placement.sql` pins 322 of the recorded cases in the suite (the placement state of each).
+
+**Not done:** walls (`north / east / south / west` = none / low / tall and `up`: the six recorded cases fail), beds (two blocks), vines and multiface blocks, snow layers, candles, sea pickles,
+leaves (`persistent`), tall plants, rails (shapes), redstone components, `waterlogged` for blocks other than the families above, the `canSurvive` check of plants and the `canPlace`
+collision check against entities other than the placing player, and the shape update of a neighbour that already stands when the placement is by `/setblock`, `/fill` or SQL (only
+player placements and breaks run `mc.shape_neighbours`).
+
 ## Gaps and next steps
 
 * **Packet compression.**  `mc.chunk_cache` holds the uncompressed framed packet (stored pglz-compressed, plus the compressed frame `packet_z` since sql/440).  `docs/COMPRESSION.md` describes the plan (per-section deflate fragments, an RLE-style encoder
