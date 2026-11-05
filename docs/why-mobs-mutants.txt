@@ -1,0 +1,17 @@
+== 1011 vanilla AI
+psql:tests/sql/1011_entity_vanilla_ai.sql:78: ERROR:  FAIL B: nobody within 2 chunks: DORMANT (standing, a long segment, flagged) : condition false/null
+mutant killed (sql/942_entity_vanilla_ai.sql: a\.decide and not exists \(select 1 from mc\.entity_viewer_cell v where abs\(v\.cx - p_cx\) <= p_near and abs\(v\.cz - p_cz\) <= p_near\) as dorm)
+psql:tests/sql/1011_entity_vanilla_ai.sql:70: ERROR:  FAIL B: a player within 2 chunks but 40 blocks away: no stroll (noActionTime is not reset beyond 32 blocks) and not dormant (a player could come closer without changi
+mutant killed (sql/942_entity_vanilla_ai.sql: \^ 2 < 1024\) as inside)
+psql:tests/sql/1011_entity_vanilla_ai.sql:74: ERROR:  FAIL B: a spectator within 10 blocks does not count (EntitySelector.NO_SPECTATORS): no stroll : condition false/null
+mutant killed (sql/942_entity_vanilla_ai.sql: and pl\.gamemode <> 3)
+psql:tests/sql/1011_entity_vanilla_ai.sql:39: ERROR:  FAIL A: the wait: mean 120 ticks over 40,000 draws (2 * Geometric(1/60), evaluated every second tick) : condition false/null
+mutant killed (sql/942_entity_vanilla_ai.sql: ln\(59\.0 / 60\))
+psql:tests/sql/1011_entity_vanilla_ai.sql:42: ERROR:  FAIL A: ... always on an evaluation tick ((tick - born + id) even) and at least 1 tick after the tick it is drawn for : condition false/null
+mutant killed (sql/942_entity_vanilla_ai.sql: \(\(\(p_born - p_id - \(p_tick \+ 1\)\) % 2\) \+ 2\) % 2)
+psql:tests/sql/1011_entity_vanilla_ai.sql:124: ERROR:  FAIL D: a player within 2 chunks wakes the dormant lanes within reach of his chunk: not dormant, a wait drawn from this tick (goal_until = mc.entity_stroll_wait) : c
+mutant killed (sql/541_entity_lanes.sql: update mc\.entity_lane l set dormant = false, lazy = false, goal_until = w\.td, gend = w\.td)
+== 1012 lane retry
+psql:tests/sql/1012_entity_lane_retry.sql:98: ERROR:  FAIL B: ... for 1000 ticks : condition false/null
+mutant killed (sql/940_entity_auto_lanes.sql: p_tick \+ rt where e\.id = any\(fails\))
+done

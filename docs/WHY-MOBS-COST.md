@@ -394,3 +394,106 @@ python3 tools/entity/vanilla_mobs.py ... --scenarios 2000v --jfr 30     # then: 
 python3 tools/entity/vanilla_walkshare.py --n 40 --seconds 100         # walking share by distance from the player
 tests/bench/mobs2/why_tests.sh                        # the tests the change touches, each through tests/sql/prun.sh
 ```
+
+## 10. Second round: vanilla-like behaviour and the performance levers
+
+The owner asked for the behaviour differences of section 7 to be removed and for the levers of section 8 to be pulled.  What follows is what was done, what changed **on purpose**, what is proved equal, and
+the numbers, measured the same way as before (CPU of the backend, interleaved, two repetitions).  The machine was at load 6-7 during this round because other agents were running: **compare the columns of this
+round with each other, not with section 4**, where the load was 1-3 and the same cells cost 25-40 % less.
+
+### 10.1 Behaviour that changes on purpose (sql/942, `dbcraft.entity_ai = 'vanilla'`, now the default; `'wander'` is the old model)
+
+| | before (`wander`) | now (`vanilla`) | where it comes from |
+|---|---|---|---|
+| goal selection | an event when a goal ends | a decision on an **evaluation tick**: `(tick - born + id)` even (every second tick) | `Mob.serverAiStep`: `(tickCount + entityId) % 2 == 0` |
+| standing before a stroll | 40-139 ticks, then a coin flip (60 % walk) | **2 x Geometric(1/60) ticks (mean 120)**, then a stroll for certain: drawn in closed form from a hash of (id, tick) | `RandomStrollGoal.canUse`: `nextInt(60) == 0` per evaluation |
+| a stroll starts only if | always | **a player (not a spectator) is within 32 blocks** | `RandomStrollGoal.canUse` is false from `noActionTime >= 100`; `Mob.checkDespawn` resets it only when the nearest player is closer than 32 blocks |
+| where to | a random direction, 20-79 ticks at 0.06-0.1 b/t | **a random block within +-10 on both axes** (`nextInt(21) - 10`); the walk takes (octile path length) / 0.088 ticks and ends exactly on the block (no A\*: a straight line, no obstacles) | `LandRandomPos.getPos(mob, 10, 7)`; speed **measured on the real server**: 1.76 blocks/s at the 75th-99th percentile of the moving seconds (`tools/entity/walkshare_stats.py`) |
+| nobody within 32 blocks | the mob wanders on | it stands; **with no player within 2 chunks it goes dormant**: no events, no scans, nothing simulated, until a player comes within 2 chunks (then it draws a wait) | vanilla: no tick at all beyond the simulation distance, no stroll beyond 32 blocks |
+| a newborn | a goal at once | a wait first (stroll chance 1/60 per evaluation, not 1 at birth) | `tickCount <= 1` evaluates once |
+
+Not modelled (deviations that remain): the 100-tick grace of `noActionTime` (a stroll may still start up to 5 s after the last player left the 32-block circle: dbcraft decides at the decision tick, with the
+players as they are then); a stroll in progress when the last player leaves the simulation distance (vanilla freezes it, dbcraft finishes it, then goes dormant); pathfinding around obstacles (a straight line; a
+block in the way stops the mob as before); the other goals; the dormancy radius of 2 chunks is the smallest square that contains the 32-block circle around any player position inside his chunk
+(`least(2, simulation-distance)`).  Zombies keep the chase AI of sql/541 (re-aim every 5 ticks).
+
+**Walking share, measured like the real server's** (`tests/bench/mobs2/walkshare.sql` = `tools/entity/vanilla_walkshare.py` on the entity rows: 40 cows at 8-24, 40 at 40-70, 40 at 100-130 blocks of one player,
+sampled once a second, "walking" = more than 0.5 blocks in a second; series in `docs/why-mobs-walkshare-series*.jsonl`):
+
+| | vanilla (100 s / 240 s) | dbcraft (100 s / 240 s; the cows' positions differ from run to run) |
+|---|---|---|
+| near (8-24 blocks) | 28.3 % / 21.4 % | 35.5 % / 21.9-26.8 % |
+| mid (40-70 blocks) | 0.0 % | 0.0 % |
+| far (100-130 blocks) | 0.0 % | 0.0 % |
+| walking run, standing gap (near, 240 s) | 4.9 s, 6.8 s | 5.7 s, 6.1 s |
+| speed while moving (blocks/s, 10th-99th percentile) | 0.88 - 1.79 | 0.97 - 1.76 |
+
+(The near share falls with time in both: cows wander off the 32-block disc and stop there for good.)  The 100-second dbcraft figure is 7 points above vanilla's single run; the 240-second figures agree.  Test 1011
+asserts 12-40 % near and exactly 0 beyond 32 blocks.
+
+### 10.2 The levers
+
+1. **Negative cache of lane attempts** (sql/940: `mc.entity.lane_nogo` / `lane_retry`, `dbcraft.entity_lane_retry`, default 8; 1 = the old behaviour).  A walking mob whose walk is not on uniform floor stays in the
+   sweep; the verdict "no lane for this goal" is kept for 8 ticks, voided by a new goal (the verdict is about one `goal_until`) and by a block change within 2 chunks (the block-event trigger, `mc.entity_wake_apply`
+   for split mode, and the floor-summary hook).  A refused mob is no longer asked by three statements every tick.
+2. **Cheaper events**: the rate cut of 10.1 (goal events per tick at 2,000 cows in view: 36 -> 15.6, and none at all for dormant mobs).  Not done: lane state in per-chunk-cell array rows (10.5).
+3. **Unobserved mobs cost nothing**: dormant mobs (10.1) have no events, are excluded from the lazy-slot probe (`entity_lane_lazy_idx ... and not dormant`) and from the eager scans (a dormant lane is lazy), and wake
+   through a partial index by cell (`entity_lane_dormant_idx`) when a player enters within 2 chunks (`mc.entity_viewers_refresh`).  This is vanilla's "entities beyond the simulation distance cost nothing", without a
+   per-cell summary row: a mob is its lane row, and a row that never changes costs nothing but its place in the table.
+4. **Dirty-driven viewer refresh and pickup** (sql/500, 541, 550): row triggers on `mc.player` note joins, leaves and chunk changes in `mc.entity_view_dirty`; `mc.entity_viewers_refresh` looks at those players only
+   (a view-distance change makes everybody dirty); the pickup scan is skipped when no item entity exists; the AI statements are skipped when no goal has expired / no zombie exists.  (One line in sql/836: a respawn
+   that clears a player's interest row marks him dirty.)
+
+### 10.3 Before / after (CPU ms per entity tick, 2 repetitions, 400 warm-up ticks, load 6-7)
+
+OLD = `dbcraft.entity_ai = wander` and `dbcraft.entity_lane_retry = 1`; RETRY = wander and the cache (isolates lever 1); NEW = the defaults.
+
+| cell | OLD | RETRY | **NEW** | NEW / OLD |
+|---|---|---|---|---|
+| 500 cows in view | 2.8 / 2.9 | | **2.7 / 2.4** | 0.89 |
+| 2,000 cows in view (+-40 blocks of the viewer) | 6.3 / 6.7 | | **5.6 / 5.6** | 0.86 |
+| 5,000 cows in view (+-72 blocks) | 14.9 / 13.6 | | **7.2 / 6.0** | 0.46 |
+| 2,000 cows on the ring (nobody sees them) | 4.7 / 4.0 | | **0.77 / 0.79** | **0.18** |
+| 5,000 cows on the ring | 8.2 / 9.9 | | **1.26 / 1.03** | **0.13** |
+| 2,000 cows in view, 20 blocks scattered (no lane for ~20 mobs) | 23.4 / 24.2 | 19.2 / 18.1 | **16.0 / 16.0** | 0.67 |
+| ... 200 blocks | 72.2 / 71.7 | 38.6 / 41.3 | **25.6 / 30.6** | 0.39 |
+| ... 2,000 blocks | 201 / 201 | 96.5 / 94.1 | **47.8 / 49.1** | **0.24** |
+| WAL KB per tick: 2,000 in view / ring / scatter 2,000 | 13 / 11 / 245 | | **6 / 0 / 111** | |
+| lane rows updated per tick (events), 2,000 in view | 36 | | 15.6 | |
+
+* **Outside the view: 5-8 times cheaper** (0.4 us per mob, WAL zero): the mobs are dormant, there are no events.  This is the cell that was "still a loss" against vanilla's idle cow in PERF-MOBS2.
+* **In view the gain is smaller (14 % at 2,000, 54 % at 5,000)**: only the cows within 32 blocks of the viewer act (about half of the 2,000, 15 % of the 5,000 because that scenario spreads them over +-72 blocks),
+  and what is left is mostly **fixed cost of the lane statements**.  Profile of the NEW 2,000-cow cell (instrumented): the replay statement 2.1 ms for ~12.5 events (most of it set-up and the scan of the lane
+  table), the step statement 0.75, the fan-out 0.6, the "what is due" probe 0.4.
+* **No lane: the cache alone halves it** (RETRY: 201 -> 95 ms at 2,000 scattered blocks), the vanilla rates halve it again (fewer walking mobs, dormant mobs stand: 49 ms, 4x below OLD).  The fixed part of the
+  no-lane path remains (the tracker statement is still planned on every call).
+* **Lever 4** (`tests/bench/mobs2/why2_viewers.sh`, 5 resting items, N players standing still, old tree against new): 50 players 0.07-0.17 -> 0.06 ms, 200 players 0.12-0.17 -> 0.04-0.08 ms per tick: the O(players)
+  refresh and pickup scans are gone.  (The CPU clock quantum is 4 ms: these small means are +-0.02 ms.)
+
+### 10.4 What is proved equal, what is not, and the mutation checks
+
+* **Negative cache (`tests/sql/1012`)**: the same 400-tick history on rough ground (500 scattered blocks, 80 cows, a block placed and removed in the middle) with `dbcraft.entity_lane_retry` = 1 and 8: **the exact
+  position of every mob after every 20th tick is the same to 1e-9** (a lane is the closed form of the sweep), and **the packets the viewer receives agree as a multiset per tick in at least 99 % of the cases
+  (9,765 of 9,767 (tick, viewer, packet) groups in the run measured)**: not byte-identical, because a mob that starts its lane later is tracked by the generic tracker a few ticks longer; the differing groups
+  are first steps.  A block change voids the verdict in the same tick; a new goal voids it.
+* **Vanilla AI (`tests/sql/1011`)**: the wait distribution (mean 120, evaluation parity, geometric tail), the decision (stroll target uniform over the 21 x 21 offsets, speed, yaw, duration; a player at 40 blocks or
+  a spectator: no stroll; nobody within 2 chunks: dormant; newborn and arrived mobs: wait), the walking share by distance over 150 s, dormancy and wake (lane rows and rows outside lanes; a wait drawn from the
+  waking tick), **lazy lanes against the tick-by-tick run in vanilla mode (positions and dormancy identical to 1e-9)**, and the old model still reachable.
+* **Not "equal" on purpose**: everything in 10.1.  `tests/sql/940` and `1010` pin the lane machinery against the old model (`set dbcraft.entity_ai = 'wander'` at their top, with a comment): they test lanes, not rates
+  (940 A compares `mc.entity_goal` with the old AI draw).  The other entity tests (510, 530, 541, 550, 551) pass unchanged with the new default.
+* **Mutation checks** (`tests/bench/mobs2/mutants.sh`, `docs/why-mobs-mutants.txt`): seven mutants, each applied to a scratch database and run against the test: no dormancy, no 32-block test, spectators counted, a
+  wrong geometric rate, a wrong evaluation parity, no wake-up, a verdict that lasts 5 ticks too long: **all killed**.  Checked by hand while writing the tests: removing the block-event invalidation (killed by
+  1012 B) and ignoring the goal in the verdict (killed by 1012 C).  The floor-summary hook that also voids verdicts is redundant with the block-event trigger (a mutant without it survives, as it should); it
+  stays as a second path for changes that do not go through `mc.block_event`.
+
+* **Whole suite** on the final tree (`tests/sql/prun.sh`, JOBS=3, 12 minutes): 83 files, **3,225 checks, all passing**, and `tools/check_overrides.py` (60, all listed), `tools/check_inlining.sh` and
+  `tools/check_fresh_migration.sh` green.
+
+### 10.5 What was not done, and the floors now
+
+* **Lane state in per-chunk-cell array rows**: not built.  With the vanilla rates the events are 12-15 a tick in view and 0 outside; what remains is statement fixed cost (set-up, scans of the lane table), which an
+  array row would reduce only together with a restructuring of the lane statements (a due-queue instead of three scans, one statement for events and steps).  Estimated floor for 2,000 cows in view: ~2.5 ms (from 5.6).
+* **The tracker statement is still planned on every call** (1.9 ms; a generic plan was slower for the in-view cell, section 9.2): splitting it so that the few ids of a quiet tick take a cheap statement is the way.
+* **Zombies** keep the chase AI and its lanes of sql/541; **despawn** (600 ticks without a viewer) is unchanged (vanilla's cows never despawn: the prototype rule is kept).
+* **Floors now**: in view ~2.5 ms at 2,000 near cows with the fixed cost removed (5.6 today), outside the view 0.4 us per mob (reached), no lane ~25 ms at 2,000 scattered blocks with lanes that end at obstacles
+  (48 today), empty tick 0.04-0.07 ms (reached).

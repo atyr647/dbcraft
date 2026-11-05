@@ -15,6 +15,7 @@ from rcon import Rcon
 ap = argparse.ArgumentParser()
 ap.add_argument("--dir", default="/dev/shm/why/van2"); ap.add_argument("--port", type=int, default=25981); ap.add_argument("--rcon", type=int, default=25982)
 ap.add_argument("--n", type=int, default=40); ap.add_argument("--seconds", type=int, default=120); ap.add_argument("--wait", type=float, default=30.0)
+ap.add_argument("--series", default="", help="append the per-second displacement series (blocks) of every cow to this file, one JSON line per cow")
 ap.add_argument("--jar", default=os.path.expanduser("~/.cache/dbcraft/server-26.3.jar")); ap.add_argument("--out", default="")
 a = ap.parse_args()
 rconmod.PORT = a.rcon; rconmod.PW = "why"
@@ -68,19 +69,25 @@ try:
         txt = r.cmd(f"execute as @e[tag={tag}] run data get entity @s Pos")
         return [tuple(float(x) for x in re.findall(r"(-?\d+\.\d+)d", line)) for line in txt.split("Cow has the following entity data:")[1:]]
     prev = {t: sample(t) for t in ("near", "mid", "far")}
-    moved = {t: 0 for t in prev}; total = {t: 0 for t in prev}
+    moved = {t: 0 for t in prev}; total = {t: 0 for t in prev}; series = {t: [[] for _ in prev[t]] for t in prev}
     t0 = time.time()
     for s in range(a.seconds):
         time.sleep(max(0, t0 + s + 1 - time.time()))
         for t in prev:
             cur = sample(t)
             if len(cur) == len(prev[t]):
-                for p, c in zip(prev[t], cur):
+                for i, (p, c) in enumerate(zip(prev[t], cur)):
                     total[t] += 1
-                    if len(p) == 3 and len(c) == 3 and math.hypot(c[0] - p[0], c[2] - p[2]) > 0.5: moved[t] += 1
+                    dd = math.hypot(c[0] - p[0], c[2] - p[2]) if len(p) == 3 and len(c) == 3 else 0.0
+                    series[t][i].append(round(dd, 3))
+                    if dd > 0.5: moved[t] += 1
             prev[t] = cur
     res = {t: dict(cow_seconds=total[t], walking=moved[t], share=round(moved[t] / max(total[t], 1), 3)) for t in prev}
     print(json.dumps(res), flush=True)
+    if a.series:
+        with open(a.series, "a") as f:
+            for t in series:
+                for i, sr in enumerate(series[t]): f.write(json.dumps(dict(tag=t, cow=i, d=sr)) + "\n")
     if a.out: open(a.out, "a").write(json.dumps(dict(n=a.n, seconds=a.seconds, wait=a.wait, res=res)) + "\n")
 finally:
     probe.terminate()

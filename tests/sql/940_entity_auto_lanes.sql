@@ -8,6 +8,9 @@
 --   G  a standing mob sends its last position once and nothing after it
 \! python3 tools/load_world_ref.py >/dev/null
 select mc.block_class_refresh();
+-- This file pins the lane machinery against the 'wander' goal model (60 % walks of 20-79 ticks, 40 % stands of 40-139, wherever the mob is: mc.entity_goal, dbcraft.entity_walk_prob); the vanilla-like goals
+-- (sql/942, the default since docs/WHY-MOBS-COST.md section 10) are tested in tests/sql/1011.
+select set_config('dbcraft.entity_ai', 'wander', false);
 
 ------------------------------------------------------------------------------------------------ A
 select t.eq('A: mc.entity_cell_exit equals brute force (the first k >= 1 whose position x + g * k is outside the cell) on 3,000 random walks',

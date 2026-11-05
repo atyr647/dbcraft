@@ -147,3 +147,25 @@ begin
     y := least((packed >> 18) & 32767, 32766) * 2.0 / 32766.0 - 1.0; y := y * scale;
     z := least((packed >> 33) & 32767, 32766) * 2.0 / 32766.0 - 1.0; z := z * scale;
 end $$;
+
+-- DIRTY-DRIVEN viewer refresh (docs/WHY-MOBS-COST.md section 10): the interest sets (mc.entity_viewer_cell, mc.entity_cell_viewer) only change when a player joins, leaves or enters another
+-- chunk, or when the view distance changes.  Row triggers on mc.player note those events here (a row per connection); mc.entity_viewers_refresh (sql/541) takes the notes and looks at THOSE players only,
+-- instead of reading every player and every interest row on every tick.  (Unlogged, like the interest sets: after a crash both are empty and the view-distance check below refills them.)
+create unlogged table if not exists mc.entity_view_dirty (conn_id int primary key);
+create or replace function mc.entity_view_dirty_mark() returns trigger language plpgsql as $$
+begin
+    if tg_op = 'DELETE' then
+        if old.conn_id is not null then insert into mc.entity_view_dirty values (old.conn_id) on conflict do nothing; end if;
+        return old;
+    end if;
+    if new.conn_id is not null then insert into mc.entity_view_dirty values (new.conn_id) on conflict do nothing; end if;
+    if tg_op = 'UPDATE' and old.conn_id is not null and old.conn_id is distinct from new.conn_id then insert into mc.entity_view_dirty values (old.conn_id) on conflict do nothing; end if;
+    return new;
+end $$;
+drop trigger if exists entity_view_dirty_ins on mc.player;
+drop trigger if exists entity_view_dirty_upd on mc.player;
+drop trigger if exists entity_view_dirty_del on mc.player;
+create trigger entity_view_dirty_ins after insert on mc.player for each row execute function mc.entity_view_dirty_mark();
+create trigger entity_view_dirty_upd after update of conn_id, chunk_x, chunk_z on mc.player for each row
+    when (old.conn_id is distinct from new.conn_id or old.chunk_x is distinct from new.chunk_x or old.chunk_z is distinct from new.chunk_z) execute function mc.entity_view_dirty_mark();
+create trigger entity_view_dirty_del after delete on mc.player for each row execute function mc.entity_view_dirty_mark();

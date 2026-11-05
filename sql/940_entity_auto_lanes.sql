@@ -18,6 +18,7 @@
 -- as for items: docs/ENTITY.md).
 
 create unlogged table if not exists mc.entity_clock (id boolean primary key default true check (id), last_tick bigint) with (fillfactor = 50);
+alter table mc.entity_clock add column if not exists vr int;          -- the view distance the interest sets were built for (a change makes every player dirty: mc.entity_viewers_refresh)
 insert into mc.entity_clock (id, last_tick) values (true, null) on conflict do nothing;
 
 alter table mc.entity_lane add column if not exists auto boolean not null default false;     -- autonomous lane (this file); false: the lanes of sql/541
@@ -41,6 +42,12 @@ alter table mc.entity_lane add column if not exists lazy boolean not null defaul
 alter table mc.entity_lane add column if not exists ucx int;                                    -- the cell whose 3x3 chunk neighbourhood was found uniform (uok) or not at the level of the lane's feet; null: unknown
 alter table mc.entity_lane add column if not exists ucz int;
 alter table mc.entity_lane add column if not exists uok boolean;
+-- negative cache of lane attempts (docs/WHY-MOBS-COST.md section 10): a walking mob whose walk is not on a uniform floor stays in the exact sweep; the verdict "no lane for this goal" is kept here
+-- (lane_nogo = the goal end it is about, lane_retry = not before this tick) instead of being tested again by every statement of every tick.  A new goal (another goal_until) or a block
+-- change within 2 chunks (mc.entity_wake_on_block_event, mc.entity_wake_apply, mc.entity_auto_floor_change) makes the mob a candidate again; dbcraft.entity_lane_retry = 1 retries every tick (the old behaviour).
+alter table mc.entity add column if not exists lane_nogo bigint not null default 0;
+alter table mc.entity add column if not exists lane_retry bigint not null default 0;
+alter table mc.entity_lane add column if not exists dormant boolean not null default false;   -- vanilla-like AI (sql/942): standing, nobody within 2 chunks: no events until mc.entity_viewers_refresh wakes it (gend = 2^62)
 alter table mc.entity_lane add column if not exists phead bytea;                              -- move_entity_pos packet of this mob without the three deltas (everything that does not change between steps)
 
 
@@ -180,6 +187,7 @@ returns table (id int, dimension text, fy int, lend bigint, cx0 int, cx1 int, cz
                     cross join lateral (select e0.* from mc.entity e0 where e0.id = u.id offset 0) e         -- offset 0: one primary-key probe per id
                     join mc.entity_type_param p on p.type = e.type
                    where p.kind = 'mob' and not p.can_chase and e.on_ground and not e.deep_sleep and e.lane_until = 0 and e.vy = 0 and e.y = floor(e.y) and e.goal_until > 0
+                     and not (e.lane_nogo = e.goal_until and e.lane_retry > p_tick)
                      and e.last_sent_tick > 0 and e.sent_cx = e.cx and e.sent_cz = e.cz and e.pitch = e.sent_pitch and e.cx = floor(e.x / 16)::int and e.cz = floor(e.z / 16)::int
                      and (((e.gx = 0 and e.gz = 0) or (sqrt(e.gx * e.gx + e.gz * e.gz) * p.update_interval * 4096 between 40 and 30000))
                           and abs(e.gx) * p.update_interval * 4096 < 30000 and abs(e.gz) * p.update_interval * 4096 < 30000)) q
@@ -188,7 +196,7 @@ $$;
 
 create or replace function mc.entity_auto_try(p_tick bigint, p_ids int[]) returns int language plpgsql volatile
 set enable_hashjoin = off set enable_mergejoin = off set plan_cache_mode = force_generic_plan as $$
-declare n int := 0; ids int[]; lends bigint[];
+declare n int := 0; ids int[]; lends bigint[]; fails int[]; rt int := coalesce(nullif(current_setting('dbcraft.entity_lane_retry', true), '')::int, 8);
 begin
     if p_ids is null or cardinality(p_ids) = 0 or not mc.entity_lanes_enabled() or not mc.entity_auto_enabled() then return 0; end if;
     perform mc.entity_floor_build(m.dimension, m.cx, m.cz)
@@ -197,24 +205,26 @@ begin
               where c.walking and c.cx1 - c.cx0 <= 2 and c.cz1 - c.cz0 <= 2 and c.cx0 + d.i <= c.cx1 and c.cz0 + d2.i <= c.cz1
                 and not exists (select 1 from mc.entity_floor f where f.dimension = c.dimension and f.cx = c.cx0 + d.i and f.cz = c.cz0 + d2.i and f.tops is not null)
               order by 1, 2, 3 limit 8) m;       -- at most 8 floor builds (about 1.7 ms each) per call: the others wait a tick
-    select array_agg(c.id), array_agg(c.lend) into ids, lends from mc.entity_auto_cand(p_tick, p_ids) c where not c.walking or mc.entity_floor_ok(c.dimension, c.fy, c.x0, c.x1, c.z0, c.z1);
+    select array_agg(c.id) filter (where c.ok), array_agg(c.lend) filter (where c.ok), array_agg(c.id) filter (where not c.ok) into ids, lends, fails
+      from (select c0.id, c0.lend, (not c0.walking or mc.entity_floor_ok(c0.dimension, c0.fy, c0.x0, c0.x1, c0.z0, c0.z1)) as ok from mc.entity_auto_cand(p_tick, p_ids) c0) c;
+    if fails is not null and rt > 1 then update mc.entity e set lane_nogo = e.goal_until, lane_retry = p_tick + rt where e.id = any(fails); end if;      -- the verdict is kept: no retry for rt ticks or until the goal changes
     if ids is null then return 0; end if;
     with ent as materialized (
         select e.id, e.dimension, e.x, e.y, e.z, e.gx, e.gz, e.yaw, e.pitch, e.phys_tick, e.goal_until, e.cx, e.cz, e.born_tick, e.sent_qx, e.sent_qy, e.sent_qz, e.sent_yaw, e.last_sent_tick,
-               p.update_interval as every, ((e.born_tick % p.update_interval) + p.update_interval)::int % p.update_interval as slot, p.tracking_chunks as trk, p.width / 2 as hw, p.walk_speed as wsp,
+               p.update_interval as every, ((e.born_tick % p.update_interval) + p.update_interval)::int % p.update_interval as slot, p.tracking_chunks as trk, p.width / 2 as hw, case when mc.entity_ai_vanilla() then coalesce(p.stroll_speed, p.walk_speed) else p.walk_speed end as wsp,
                u.lend
           from unnest(ids, lends) u(id, lend) cross join lateral (select e0.* from mc.entity e0 where e0.id = u.id offset 0) e join mc.entity_type_param p on p.type = e.type
     ), ins as (
-        insert into mc.entity_lane (id, goal_until, every, slot, chase, sqx, sqy, sqz, syaw, last_tick, auto, t0, x0, z0, y, gx, gz, gend, yaw, pitch, cx, cz, trk, born, hw, wsp, dim, phead, lazy)
+        insert into mc.entity_lane (id, goal_until, every, slot, chase, sqx, sqy, sqz, syaw, last_tick, auto, t0, x0, z0, y, gx, gz, gend, yaw, pitch, cx, cz, trk, born, hw, wsp, dim, phead, lazy, dormant)
         select ent.id, ent.lend, ent.every, ent.slot, false, ent.sent_qx, ent.sent_qy, ent.sent_qz, ent.sent_yaw, ent.last_sent_tick, true, ent.phys_tick, ent.x, ent.z, ent.y, ent.gx, ent.gz,
                ent.goal_until, ent.yaw, ent.pitch, ent.cx, ent.cz, ent.trk, ent.born_tick, ent.hw, ent.wsp, ent.dimension,
                (select substring(h from 1 for octet_length(h) - 6) from (select mc.epkt_mob_move(ent.id, 0, 0, 0, ent.every, true, false, 0::real, 0::real) as h) hh),
-               not mc.entity_watched(ent.cx, ent.cz, ent.trk)
+               not mc.entity_watched(ent.cx, ent.cz, ent.trk) or ent.goal_until = 4611686018427387904, ent.goal_until = 4611686018427387904
           from ent
         on conflict (id) do update set goal_until = excluded.goal_until, every = excluded.every, slot = excluded.slot, chase = false, sqx = excluded.sqx, sqy = excluded.sqy, sqz = excluded.sqz,
                syaw = excluded.syaw, last_tick = excluded.last_tick, auto = true, t0 = excluded.t0, x0 = excluded.x0, z0 = excluded.z0, y = excluded.y, gx = excluded.gx, gz = excluded.gz,
                gend = excluded.gend, yaw = excluded.yaw, pitch = excluded.pitch, cx = excluded.cx, cz = excluded.cz, trk = excluded.trk, born = excluded.born, hw = excluded.hw, wsp = excluded.wsp, dim = excluded.dim,
-               phead = excluded.phead, lazy = excluded.lazy
+               phead = excluded.phead, lazy = excluded.lazy, dormant = excluded.dormant
         returning id
     )
     -- the entity row stays as it is (its state is the anchor of the lane); it is marked as in a lane for good and out of the goal scan of the AI
@@ -271,7 +281,7 @@ create or replace function mc.entity_auto_run(p_tick bigint, p_steps boolean, p_
 set enable_hashjoin = off set enable_mergejoin = off set plan_cache_mode = force_generic_plan as $$
 declare wp float8 := coalesce(nullif(current_setting('dbcraft.entity_walk_prob', true), '')::float8, 0.6);
         ex int[]; cr int[]; nmain int; bcx int[]; bcz int[]; btrk int[]; bblob bytea[];
-        lz_off boolean := coalesce(current_setting('dbcraft.entity_lazy', true), 'on') = 'off'; hv boolean; bx0 int; bx1 int; bz0 int; bz1 int; e_due boolean := true; e_step boolean := true; l_due boolean := true;
+        lz_off boolean := coalesce(current_setting('dbcraft.entity_lazy', true), 'on') = 'off'; vm boolean := mc.entity_ai_vanilla(); nr int := mc.entity_dormant_radius(); hv boolean; bx0 int; bx1 int; bz0 int; bz1 int; e_due boolean := true; e_step boolean := true; l_due boolean := true;
 begin
     more := 0;
     -- the cells some viewer sees (a box around all of them: a superset); a lane outside it sends nothing, whatever its kind of lane
@@ -280,7 +290,7 @@ begin
     if p_ids is null then
         select coalesce(bool_or(l.goal_until <= p_tick), false), coalesce(bool_or(l.cx between bx0 and bx1 and l.cz between bz0 and bz1), false) into e_due, e_step      -- (a lane that is due now steps in its new segment)
           from mc.entity_lane l where l.auto and not l.lazy;
-        select exists (select 1 from mc.entity_lane l where l.auto and l.lazy and l.id % 32 = (p_tick % 32)::int and l.goal_until <= p_tick) into l_due;
+        select exists (select 1 from mc.entity_lane l where l.auto and l.lazy and not l.dormant and l.id % 32 = (p_tick % 32)::int and l.goal_until <= p_tick) into l_due;
     end if;
     if p_ids is null and not e_due and not l_due then
         ex := null;
@@ -288,18 +298,21 @@ begin
     with s as materialized (
         select l.*, l.goal_until as tt from mc.entity_lane l where p_ids is null and l.auto and not l.lazy and l.goal_until <= p_tick
         union all
-        select l.*, l.goal_until as tt from mc.entity_lane l where p_ids is null and l.auto and l.lazy and l.id % 32 = (p_tick % 32)::int and l.goal_until <= p_tick
+        select l.*, l.goal_until as tt from mc.entity_lane l where p_ids is null and l.auto and l.lazy and not l.dormant and l.id % 32 = (p_tick % 32)::int and l.goal_until <= p_tick
         union all
         select l.*, l.goal_until as tt from mc.entity_lane l where p_ids is not null and l.auto and l.id = any(p_ids) and l.goal_until <= p_tick
     ), g as materialized (
         -- the segment is over: the goal (new if it ran out) and the state at the end of tick tt - 1 (anchor of the next segment, delta base of the viewers)
         select s.id, s.tt, s.every, s.slot, s.y, s.pitch, s.cx as ocx, s.cz as ocz, s.lazy as olazy, s.trk, s.born, s.hw, s.wsp, s.dim, s.phead, s.ucx, s.ucz, s.uok,
-               case when s.gend <= s.tt then ng.gx else s.gx end as ngx, case when s.gend <= s.tt then ng.gz else s.gz end as ngz,
-               case when s.gend <= s.tt then s.tt + ng.dur else s.gend end as ngend, case when s.gend <= s.tt then ng.yaw else s.yaw end as nyaw,
+               case when s.gend <= s.tt then coalesce(nv.gx, ng.gx) else s.gx end as ngx, case when s.gend <= s.tt then coalesce(nv.gz, ng.gz) else s.gz end as ngz,
+               case when s.gend <= s.tt then (case when nv.dormant then 4611686018427387904 else s.tt + coalesce(nv.dur, ng.dur::bigint) end) else s.gend end as ngend,
+               case when s.gend <= s.tt then coalesce(nv.yaw, ng.yaw) else s.yaw end as nyaw, coalesce(nv.dormant, false) as ndorm,
                s.x0 + s.gx * greatest(s.tt - 1 - s.t0, 0) as ax, s.z0 + s.gz * greatest(s.tt - 1 - s.t0, 0) as az,
                b.bx, b."by", b.bz, b.byaw, b.blast
           from s
-          left join lateral mc.entity_goal(s.id, s.tt, s.yaw, s.wsp, wp) ng on s.gend <= s.tt
+          left join lateral (select * from mc.entity_goal(s.id, s.tt, s.yaw, s.wsp, wp) where s.gend <= s.tt and not vm) ng on true
+          left join lateral (select * from mc.entity_goal_v(s.id, s.tt, s.yaw, s.wsp, s.born, (s.gx <> 0 or s.gz <> 0), s.x0 + s.gx * greatest(s.tt - 1 - s.t0, 0), s.y, s.z0 + s.gz * greatest(s.tt - 1 - s.t0, 0), s.cx, s.cz, nr)
+                              where s.gend <= s.tt and vm) nv on true
           cross join lateral mc.entity_auto_base(s.t0, s.every, s.slot, s.x0, s.z0, s.y, s.gx, s.gz, s.yaw, s.goal_until, s.born, s.sqx, s.sqy, s.sqz, s.syaw, s.last_tick, s.tt - 1) b
     ), w as materialized (
         -- the cell of the position at tick tt, whether somebody may look at it, and whether the floor around it is uniform (a verdict kept for the cell)
@@ -326,7 +339,7 @@ begin
         -- every lane whose segment ended gets its anchor and goal moved (a lane that must end carries the new goal into its entity row)
         update mc.entity_lane l set goal_until = case when v.ok then v.nlend else v.tt end, t0 = v.tt - 1, x0 = v.ax, z0 = v.az, gx = v.ngx, gz = v.ngz, gend = v.ngend, yaw = v.nyaw,
                sqx = v.bx, sqy = v."by", sqz = v.bz, syaw = v.byaw, last_tick = v.blast, cx = case when v.ok then v.ncx else l.cx end, cz = case when v.ok then v.ncz else l.cz end,
-               lazy = case when v.ok then not v.wat else l.lazy end,
+               lazy = case when v.ok then (not v.wat) or v.ndorm else l.lazy end, dormant = case when v.ok then v.ndorm else l.dormant end,
                ucx = case when v.uo is not null then v.ncx else l.ucx end, ucz = case when v.uo is not null then v.ncz else l.ucz end, uok = coalesce(v.uo, l.uok)
           from v where l.id = v.id returning l.id
     )
@@ -426,7 +439,8 @@ begin
     select c.last_tick into lt from mc.entity_clock c;
     if lt is null then return; end if;
     perform mc.entity_auto_catchup(lt, array(select l.id from mc.entity_lane l where l.auto and l.goal_until <= lt and l.dim = p_dim and abs(l.cx - p_cx) <= 4 and abs(l.cz - p_cz) <= 4));       -- (the lanes within 3 chunks end at a block event, and the cell of a lazy lane may be one behind)
-    update mc.entity_lane l set ucx = null, ucz = null, uok = null where l.auto and l.ucx is not null and l.dim = p_dim and abs(l.ucx - p_cx) <= 1 and abs(l.ucz - p_cz) <= 1;      -- the uniform-floor verdicts that include this chunk
+    update mc.entity_lane l set ucx = null, ucz = null, uok = null where l.auto and l.ucx is not null and l.dim = p_dim and abs(l.ucx - p_cx) <= 1 and abs(l.ucz - p_cz) <= 1;
+    update mc.entity e set lane_retry = 0 where e.lane_retry > 0 and e.dimension = p_dim and e.cx between p_cx - 2 and p_cx + 2 and e.cz between p_cz - 2 and p_cz + 2;       -- the lane verdicts near the change are void      -- the uniform-floor verdicts that include this chunk
 end $$;
 
 ------------------------------------------------------------------------------------------------ exact current positions (an autonomous lane's position comes from its row)
@@ -444,9 +458,12 @@ create index if not exists entity_lane_legacy_idx on mc.entity_lane (id) where n
 -- The keys never change while a lane lives (a lane row is rewritten at every segment, and with an index on goal_until every rewrite would leave a dead index entry behind that bitmap scans
 -- re-check on every tick until the next vacuum): the updates stay HOT.
 drop index if exists mc.entity_lane_eager_idx;
+drop index if exists mc.entity_lane_dormant_idx;
 drop index if exists mc.entity_lane_lazy_idx;
 create index if not exists entity_lane_eager_idx on mc.entity_lane (id) where auto and not lazy;
-create index if not exists entity_lane_lazy_idx on mc.entity_lane ((id % 32)) where auto and lazy;
+create index if not exists entity_lane_lazy_idx on mc.entity_lane ((id % 32)) where auto and lazy and not dormant;      -- (dormant lanes have no events: never visited)
+-- dormant lanes by cell: mc.entity_viewers_refresh wakes the ones within 2 chunks of a viewer's new cell (the update of dormant / lazy is not HOT: it happens when a mob goes dormant or wakes, not per tick)
+create index if not exists entity_lane_dormant_idx on mc.entity_lane (cx, cz) where dormant;
 -- dropped items by cell: the pickup scan of every player reads the items of its 3x3 cells, not every mob standing there
 create index if not exists entity_item_cell_idx on mc.entity (cx, cz) where type = 'minecraft:item';
 
