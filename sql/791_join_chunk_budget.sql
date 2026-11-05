@@ -46,11 +46,17 @@ begin
         if el >= 0 and el < 2000 then gcap := greatest(1, ceil(gcap * greatest(0.4, least(1, (tb - el) / tb)))::int); end if;
     end if;
     -- the connections that have wanted rows (a loose index scan: the rows are many during a storm, the connections are few; a cursor's marker row counts), and which of them still play
-    select coalesce(array_agg(q.c), '{}') into conns from (
-        select c from (
-            with recursive cs(c) as (select min(conn_id) from mc.chunk_wanted union all select (select min(w.conn_id) from mc.chunk_wanted w where w.conn_id > cs.c) from cs where cs.c is not null)
-            select c from cs where c is not null) z
-        union select cu.conn_id from mc.chunk_cursor cu) q;                                     -- (a cursor whose marker row was truncated away is still a cursor)
+    -- (docs/PERF-VIS2.md) a loose scan costs a probe per connection, 4 us each: 2.1 ms a tick with 500 walkers (about 100 connections have rows, the rows are a few hundred); a plain scan of
+    -- a short queue is 0.4 ms.  The same connections, in the same order, either way.
+    if (select count(*) from (select 1 from mc.chunk_wanted limit 3000) s) < 3000 then
+        select coalesce(array_agg(q.c order by q.c), '{}') into conns from (select distinct conn_id as c from mc.chunk_wanted union select cu.conn_id from mc.chunk_cursor cu) q;      -- (a cursor whose marker row was truncated away is still a cursor)
+    else
+        select coalesce(array_agg(q.c), '{}') into conns from (
+            select c from (
+                with recursive cs(c) as (select min(conn_id) from mc.chunk_wanted union all select (select min(w.conn_id) from mc.chunk_wanted w where w.conn_id > cs.c) from cs where cs.c is not null)
+                select c from cs where c is not null) z
+            union select cu.conn_id from mc.chunk_cursor cu) q;                                 -- (a cursor whose marker row was truncated away is still a cursor)
+    end if;
     select coalesce(array_agg(u.c) filter (where lv.conn_id is null), '{}'), coalesce(array_agg(u.c) filter (where lv.conn_id is not null), '{}') into dead, live
       from unnest(conns) u(c) left join net.conn lv on lv.conn_id = u.c and lv.state = 'play' and not lv.closing and lv.view_cx is not null;
     if cardinality(dead) > 0 then

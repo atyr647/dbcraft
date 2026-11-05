@@ -1,0 +1,86 @@
+window: 40 s, 391 ticks (tick 2748 .. 3139)
+tick avg ms 81.4 process 9.0 game 39.6 blocks 0.1 chunks 28.2 drain 4.5 frames_in 742 frames_out 1700
+game phases: moves 10.7 misc 0.9 chat 0.4 visibility 17.0 keepalive+dyn+vis+surv 9.0 survival 1.4
+wal bytes per tick: 421466, records per tick: 1430, full page images 0.0
+--- statements: exec ms/tick | plan ms/tick | calls/tick | ms per call | rows/tick | text
+82.619 | 0.000 | 1.01 | 82.1989 | 1.0 | select mc.server_tick()
+28.486 | 0.000 | 1.01 | 28.3407 | 1.0 | SELECT net.stream_chunks()
+18.528 | 0.000 | 1.01 | 18.4342 | 1.0 | SELECT mc.deliver_ready_chunks()
+17.034 | 0.000 | 1.01 | 16.9475 | 1.0 | select * from mc.refresh_visibility()
+16.970 | 0.000 | 1.01 | 16.8835 | 1.0 | select * from mc.refresh_visibility_vis()
+16.954 | 0.000 | 1.01 | 16.8682 | 1.0 | select * from mc.refresh_visibility_vis_nb()
+10.584 | 0.000 | 1.01 | 10.5298 | 1.0 | select * from mc.apply_player_moves(cur)
+7.047 | 0.000 | 1.01 | 7.0109 | 1.0 | SELECT mc.vis_step(cur)
+6.536 | 0.000 | 1.01 | 6.5030 | 1.0 | SELECT mc.vis_move(p_cur)
+6.230 | 0.000 | 1.04 | 6.0001 | 518.9 | select conn_id, data, close from net.drain_outbox()
+6.034 | 0.000 | 1.01 | 6.0033 | 1.0 | with dpc as materialized ( -- the dirty players: for each of them below one probe of the partial index for the targets in its own square, one for the 
+5.353 | 0.000 | 1.01 | 5.3257 | 502.6 | update mc.player p set x = n.nx, y = n.ny, z = n.nz, yaw = n.nyaw, pitch = n.npitch, on_ground = n.nog, chunk_x = n.ncx, chunk_z = n.ncz, vis_dirty = 
+5.075 | 0.000 | 1.01 | 5.0493 | 1.0 | with w as (select * from unnest(av, at_, ac) as w(viewer_eid, target_eid, viewer_conn)), ins as ( insert into mc.visible (viewer_eid, target_eid, view
+4.463 | 0.000 | 1.01 | 4.4287 | 17.6 | with mv as (select c.conn_id, c.view_cx as vx, c.view_cz as vz, coalesce(c.view_r, r) as vr from net.conn c left join mc.chunk_wanted_view v on v.conn
+4.268 | 0.000 | 1.01 | 4.2354 | 1.0 | select array_agg(x.conn_id), array_agg(x.dimension), array_agg(x.cx), array_agg(x.cz), array_agg(x.dist) from (select q.*, row_number() over (order by
+4.120 | 0.000 | 1.01 | 4.0993 | 407.0 | insert into mc.chunk_wanted (conn_id, dimension, cx, cz, dist) select u.c, dim, u.x, u.z, u.d from unnest(wc_c, wc_x, wc_z, wc_d) as u(c, x, z, d) on 
+3.746 | 0.000 | 1.04 | 3.6073 | 1.0 | with o as (delete from mc.play_out returning seq, conn_id, data), j as (select o.seq, o.conn_id, o.data, c.compression as comp from o join net.conn c 
+3.274 | 0.000 | 1.01 | 3.2578 | 1.0 | with a as materialized ( select p.entity_id as eid, p.x, p.y, p.z, p.yaw, p.pitch, l1.tc, v.base_x, v.base_y, v.base_z, v.sent_yb, v.sent_pb, v.sent_h
+3.245 | 0.000 | 1.01 | 3.2284 | 1.0 | select coalesce(array_agg(q.c), '{}') from ( with recursive cs(c) as (select min(conn_id) from mc.chunk_wanted union all select (select min(w.conn_id)
+3.167 | 0.000 | 0.02 | 154.7739 | 0.0 | vacuum (analyze, skip_locked) net.conn, mc.player, mc.visible, mc.chunk_wanted, mc.chunk_request, mc.kick, mc.block_event, mc.game_state, mc.server_ti
+2.985 | 0.000 | 1.01 | 2.9699 | 501.9 | insert into mc.play_out (conn_id, data) select v.viewer_conn, string_agg(t.data, '\x'::bytea order by t.eid) from mc.visible v join unnest(e, d) as t(
+2.982 | 0.000 | 1.04 | 2.8717 | 518.9 | with out as (delete from net.outbox returning net.outbox.conn_id, net.outbox.seq, net.outbox.data), agg as (select o.conn_id, string_agg(o.data, ''::b
+2.510 | 0.000 | 1.01 | 2.4971 | 1.0 | with t as (delete from net.inbox returning conn_id, seq, payload), c as (select t.conn_id, t.seq, t.payload, net.pid(t.payload) as pid, (n.state = 'pl
+2.412 | 0.000 | 1.01 | 2.3939 | 241.8 | insert into mc.play_out (conn_id, data) select d.conn_id, coalesce(k.packet, mc.chunk_packet(d.dimension, d.cx, d.cz)) from unnest(rc, rd, rx, rz, rdi
+2.251 | 0.000 | 1.00 | 2.2506 | 205.4 | with b as materialized ( select x.conn_id, x.pid, x.seq, x.body, (x.pid = i_ka and length(x.body) >= 8) or (x.pid = i_tp and length(x.body) >= 1 and g
+1.944 | 0.000 | 1.01 | 1.9342 | 1.0 | with w as (select * from unnest(wv, wt) as w(viewer_eid, target_eid)), del as ( delete from mc.visible v where (v.viewer_eid = any (d) or v.target_eid
+1.786 | 0.000 | 1.01 | 1.7772 | 1.0 | select coalesce(array_agg(row(r.conn_id, r.x, r.y, r.z, r.has_pos, r.yaw, r.pitch, r.has_rot, r.on_ground, r.bad)::mc.move_fin), '{}') from ( with d a
+1.536 | 0.000 | 1.01 | 1.5278 | 407.0 | insert into mc.play_out (conn_id, data) select s.conn_id, case when i_fg < 128 then '\x09'::bytea || set_byte('\x00'::bytea, 0, i_fg) || proto.i32(s.o
+1.361 | 0.000 | 1.01 | 1.3507 | 241.8 | delete from mc.chunk_wanted w where w.ctid = any (array(select x.tid from unnest(rc, rd, rx, rz) as d(conn_id, dimension, cx, cz) cross join lateral (
+1.256 | 0.000 | 1.01 | 1.2497 | 0.0 | insert into mc.chunk_request (dimension, cx, cz, prio) select dim, u.x, u.z, min(u.d) from unnest(wc_c, wc_x, wc_z, wc_d) as u(c, x, z, d) where not e
+1.082 | 0.000 | 1.01 | 1.0767 | 745.9 | copy net.inbox (conn_id, payload) from stdin (format binary)
+0.964 | 0.000 | 1.01 | 0.9589 | 1.0 | select array_agg(q.conn_id), array_agg(q.x), array_agg(q.z), array_agg(q.d) from (select s.conn_id, s.ncx + dx as x, s.ncz + dz as z, dx * dx + dz * d
+0.946 | 0.000 | 1.01 | 0.9413 | 1.0 | fin := array(select f from unnest(fin) f join mc.player p on p.conn_id = f.conn_id where p.awaiting_teleport is null)
+0.935 | 0.000 | 1.01 | 0.9299 | 1.0 | select array_agg(c.conn_id::int), array_agg(p.chunk_x), array_agg(p.chunk_z), array_agg(c.view_cx), array_agg(c.view_cz), array_agg(case when vison th
+0.872 | 0.000 | 0.89 | 0.9799 | 0.9 | SELECT mc.apply_misc_input(cur)
+0.823 | 0.000 | 2.01 | 0.4092 | 2.0 | select count(*)::int from mc.player where conn_id is not null
+0.807 | 0.000 | 1.01 | 0.8030 | 1.0 | select coalesce(array_agg(u.c) filter (where lv.conn_id is null), '{}'), coalesce(array_agg(u.c) filter (where lv.conn_id is not null), '{}') from unn
+0.788 | 0.000 | 1.01 | 0.7835 | 1.0 | select count(*)::int, array_agg(x.eid) filter (where x.dirty), count(*) filter (where x.mv)::int, array_agg(x.eid) filter (where x.ed), coalesce(bool_
+0.742 | 0.000 | 1.01 | 0.7379 | 1.0 | with bad as ( select p.conn_id, p.x, p.y, p.z, p.yaw, p.pitch, p.teleport_id + 1 as tid from unnest(fin) f join mc.player p on p.conn_id = f.conn_id w
+0.676 | 0.000 | 1.01 | 0.6723 | 1.0 | SELECT mc.survival_entities(cur)
+--- functions: self ms/tick | total ms/tick | calls/tick
+17.624 | 18.324 | 0.99 | mc.deliver_ready_chunks
+12.320 | 16.847 | 0.99 | mc.refresh_visibility_vis_nb
+10.418 | 10.442 | 0.99 | mc.apply_player_moves
+9.725 | 28.187 | 0.99 | net.stream_chunks
+8.009 | 8.412 | 0.99 | net.process_fast
+5.940 | 6.455 | 0.99 | mc.vis_move
+5.347 | 81.710 | 0.99 | mc.server_tick
+3.704 | 4.298 | 1.03 | net.drain_outbox
+1.464 | 1.474 | 0.99 | mc.vis_find
+1.085 | 39.392 | 0.99 | mc.tick_core
+0.943 | 0.943 | 1694.07 | proto.varint
+0.856 | 0.856 | 0.87 | mc.apply_misc_input
+0.745 | 1.385 | 17.58 | nbt.encode_node
+0.687 | 0.687 | 14.42 | mc.equip_now
+0.650 | 0.668 | 0.99 | mc.survival_entities
+0.630 | 0.652 | 0.99 | mc.keepalive_due
+0.585 | 2.250 | 14.42 | mc.pairing_bundle
+0.578 | 1.022 | 818.79 | proto.frame
+0.513 | 0.513 | 4.10 | net.trim_queue
+0.465 | 0.465 | 0.99 | mc.survival_pre
+0.413 | 0.866 | 25.08 | nbt.str
+0.331 | 0.404 | 0.99 | mc.container_step
+0.331 | 0.356 | 0.99 | net.join_gate
+0.330 | 0.330 | 20.37 | mc.vis_on
+0.274 | 0.274 | 17.86 | mc.prop_int
+0.269 | 0.269 | 0.99 | mc.tick_quiet
+0.268 | 0.434 | 14.09 | mc.pkt_remove_entities
+0.262 | 0.262 | 2.98 | mc.rule_bool
+0.250 | 0.250 | 14.42 | mc.ed_entries
+0.250 | 0.250 | 0.25 | mc.dyn_rt_build
+0.233 | 0.233 | 0.99 | mc.survival_moves
+0.224 | 0.224 | 14.57 | proto.cat
+0.167 | 0.232 | 0.03 | mc.chat_broadcast
+0.151 | 0.593 | 0.99 | mc.dyn_step
+0.132 | 0.132 | 14.42 | mc.attr_memo
+0.122 | 0.122 | 50.15 | nbt.mutf8
+0.118 | 0.368 | 0.99 | mc.dyn_rt_maintain
+0.110 | 0.272 | 1.98 | mc.vis_wp_pass
+0.106 | 0.106 | 5.09 | mc.prop
+0.100 | 0.127 | 0.99 | mc.vis_chat_spam

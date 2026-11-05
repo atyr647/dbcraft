@@ -171,6 +171,9 @@ last byte came, whether it was in play and how much was queued to it, so the nex
 * **500 crowded: 778-890 ms against vanilla's 135.**  Everybody sees 175 others: a tick with all 500 dirty is 175,000 pair tests, 5,000 chunk rows and 44,000 packet rows.
 * **50 walkers' chat p50: 41-43 ms against vanilla's 51** is now a win on the same machine for the first time, but the margin is the dynamics track's, not this one's; at 100 walkers the locator bar makes the tick 48-58 ms.
 
+* **Update, docs/PERF-VIS2.md (2026-11-05):** the visibility refresh of the crowded cell tests only the pairs near the edge of the circle (183 -> 35 ms of the phase, live; same pairs and packets, proved on random walks) and the
+  500 sparse cell was profiled again on this tree: tick 58-62 ms, tick CPU 63-65 ms (the 100 ms target is met there; the table above is from before), chunk streaming 19 ms the largest part.
+
 ## Reproduce
 
 ```

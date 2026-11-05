@@ -12,6 +12,16 @@ $P -f tests/bench/game/bench.sql -f tests/bench/game/walk.sql > /dev/null 2>&1
 $P -c "truncate bench.step" -c "select bench.setup($N, $SIDE)" > /dev/null
 $P -c "select count(*) from mc.refresh_visibility()" > /dev/null
 SCRIPT=$(mktemp); trap 'rm -f "$SCRIPT"' EXIT
-for i in $(seq 1 "$T"); do printf 'select bench.gen_walk(%s, %s);\nselect mc.tick();\nselect bench.drain();\n' "$SP" "$SIDE"; done > "$SCRIPT"
+CPU='split_part(pg_read_file($$/proc/$$ || pg_backend_pid() || $$/schedstat$$), $$ $$, 1)::bigint'      # on-CPU ns of this backend (superuser)
+{ echo "create temp table c0 as select $CPU as ns;"
+  for i in $(seq 1 "$T"); do printf 'select bench.gen_walk(%s, %s);\nselect mc.tick();\nselect bench.drain();\n' "$SP" "$SIDE"; done
+  echo "create table if not exists bench.cpu (ms float8); truncate bench.cpu; insert into bench.cpu select ($CPU - ns) / 1e6 / $T from c0;"; } > "$SCRIPT"
+# PROF=1: statements and functions per tick (needs pg_stat_statements preloaded and track_functions = all in the cluster), PROF_TOP lines
+[ -n "${PROF:-}" ] && $P -c "create extension if not exists pg_stat_statements" -c "select pg_stat_statements_reset() is null" > /dev/null 2>&1
 $P -o /dev/null -f "$SCRIPT"
+if [ -n "${PROF:-}" ]; then
+  echo "--- statements: exec ms/tick | calls/tick | rows/tick | text"
+  $P -F ' | ' -c "select round(total_exec_time::numeric / $T, 3), round(calls::numeric / $T, 2), round(rows::numeric / $T, 1), left(regexp_replace(query, '\s+', ' ', 'g'), 120) from pg_stat_statements where dbid = (select oid from pg_database where datname = current_database()) and query not like '%pg_stat_%' and query not like '%bench.%' order by total_exec_time desc limit ${PROF_TOP:-14}"
+fi
 $P -c "select line from bench.summary('$L speed=$SP/tick')"
+$P -c "select '  backend CPU per tick, all statements of the script (generating the packets, the tick, the drain): ' || round(ms::numeric, 1) || ' ms' from bench.cpu"
