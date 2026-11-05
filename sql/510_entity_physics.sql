@@ -87,7 +87,9 @@ create trigger entity_mask_invalidate after insert or update or delete on mc.chu
 -- One tick for all awake entities.  Step 1 is ONE read-only statement (sweep, solid cells, move, drag) that returns arrays; step 2 updates through unnest, which
 -- gives primary-key probes whatever the row estimates are (a join against the whole table was 25 ms of sequential scanning at 10,000 entities).
 -- An entity that sweeps a section whose mask is not built yet waits this tick; the masks of the missing sections are built after the update.
-create or replace function mc.entity_physics_ids(p_tick bigint) returns int[] language plpgsql volatile as $$
+-- (plan_cache_mode = force_generic_plan: the big statement below was planned on EVERY call, 1.9-2.1 ms, as soon as one mob was outside a lane; its only parameter is the tick, so the generic plan
+-- is the plan.  A/B in docs/WHY-MOBS-COST.md section 9.2: 20 awake mobs outside lanes 20 -> 15.6 ms.  The tracker statement is NOT given this: its plan depends on the id array and the in-view cell got slower.)
+create or replace function mc.entity_physics_ids(p_tick bigint) returns int[] language plpgsql volatile set plan_cache_mode = force_generic_plan as $$
 declare ids int[]; nxs float8[]; nys float8[]; nzs float8[]; vxs float8[]; vys float8[]; vzs float8[]; ogs boolean[]; deeps boolean[]; ncxs int[]; nczs int[];
         m_dim text[]; m_cx int[]; m_cz int[]; m_sy int[]; n int := 0;
 begin

@@ -45,7 +45,7 @@
 \set profile 0
 \endif
 select case when :profile = 1 then 'all' else 'none' end as trk \gset
-select set_config('track_functions', :'trk', false), set_config('pg_stat_statements.track', :'trk', false);
+select set_config('track_functions', :'trk', false), set_config('pg_stat_statements.track', :'trk', false), set_config('pg_stat_statements.track_planning', case when :profile = 1 then 'on' else 'off' end, false);
 select set_config('dbcraft.entity_spawner', 'off', false);
 select set_config('dbcraft.entity_walk_prob', :'walk', false);
 update mc.server_property set value = '5' where key = 'view-distance';
@@ -134,7 +134,7 @@ select funcname, round(calls::numeric / :ticks, 2) as calls_tick, round((total_t
        round((total_time / nullif(calls, 0) * 1000)::numeric, 1) as us_call
   from pg_stat_user_functions where schemaname in ('mc', 'proto', 'net') and funcname <> 'entity_tick' order by total_time desc limit 22;
 select 'STATEMENTS (nested ones included, per tick)' as section;
-select round((total_exec_time / :ticks)::numeric, 3) as ms_tick, round(calls::numeric / :ticks, 2) as calls_tick, round((mean_exec_time * 1000)::numeric, 1) as us_call,
+select round((total_exec_time / :ticks)::numeric, 3) as ms_tick, round((total_plan_time / :ticks)::numeric, 3) as plan_ms_tick, round(calls::numeric / :ticks, 2) as calls_tick, round((mean_exec_time * 1000)::numeric, 1) as us_call,
        round(rows::numeric / :ticks, 1) as rows_tick, round(wal_bytes::numeric / :ticks) as wal_b_tick, round((shared_blks_hit + shared_blks_read)::numeric / :ticks, 1) as blks_tick,
        regexp_replace(left(query, 120), '\s+', ' ', 'g') as query
   from pg_stat_statements

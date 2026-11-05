@@ -402,3 +402,254 @@ DONE empty
 === series (cpu only, 2026-11-05 15:42:43 UTC, load 2.84), 100 ticks after 150 warm-up ticks + VACUUM ANALYZE, two interleaved repetitions
 --- repetition 1
 S-view-0 mobs=0 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 0.00 p50 0.00 p99 0.00 | wall avg 0.28 p99 0.55 | ai  phys  trk  pick  | awake  lanes 0 | out rows 0 KB 0 | wal KB 0 | load 2.84
+S-view-500 mobs=500 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 2.08 p50 2.05 p99 5.24 | wall avg 4.08 p99 6.23 | ai 3.59 phys 0.02 trk 0.04 pick 0.08 | awake 79 lanes 500 | out rows 1 KB 1 | wal KB 3 | load 2.77
+S-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 5.08 p50 5.08 p99 8.94 | wall avg 7.07 p99 10.50 | ai 6.58 phys 0.03 trk 0.04 pick 0.08 | awake 312 lanes 2000 | out rows 1 KB 4 | wal KB 12 | load 2.65
+S-view-5000 mobs=5000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 11.00 p50 10.37 p99 22.40 | wall avg 13.02 p99 23.77 | ai 11.91 phys 0.17 trk 0.47 pick 0.09 | awake 779 lanes 5000 | out rows 1 KB 10 | wal KB 30 | load 3.09
+S-ring-500 mobs=500 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 1.27 p50 0.82 p99 10.19 | wall avg 2.97 p99 12.64 | ai 2.22 phys 0.06 trk 0.26 pick 0.08 | awake 0 lanes 500 | out rows 0 KB 0 | wal KB 2 | load 3.08
+S-ring-2000 mobs=2000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 3.19 p50 2.29 p99 14.32 | wall avg 5.31 p99 16.78 | ai 3.82 phys 0.31 trk 0.77 pick 0.08 | awake 1 lanes 2000 | out rows 0 KB 0 | wal KB 10 | load 3.07
+S-ring-5000 mobs=5000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 7.75 p50 6.40 p99 22.16 | wall avg 10.15 p99 23.23 | ai 8.09 phys 0.46 trk 1.09 pick 0.10 | awake 2 lanes 5000 | out rows 1 KB 0 | wal KB 25 | load 2.91
+S-scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 20.14 p50 18.80 p99 48.45 | wall avg 22.40 p99 50.64 | ai 9.04 phys 4.05 trk 8.77 pick 0.11 | awake 324 lanes 1980 | out rows 2 KB 4 | wal KB 22 | load 2.77
+S-scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 50.06 p50 49.96 p99 57.32 | wall avg 52.39 p99 63.90 | ai 10.63 phys 11.13 trk 30.03 pick 0.12 | awake 447 lanes 1794 | out rows 2 KB 4 | wal KB 86 | load 2.75
+S-scatter2000-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 145.51 p50 139.22 p99 193.22 | wall avg 148.73 p99 194.51 | ai 12.32 phys 32.85 trk 102.90 pick 0.15 | awake 844 lanes 1219 | out rows 2 KB 4 | wal KB 271 | load 3.38
+--- repetition 2
+S-view-0 mobs=0 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 0.00 p50 0.00 p99 0.21 | wall avg 0.27 p99 0.48 | ai  phys  trk  pick  | awake  lanes 0 | out rows 0 KB 0 | wal KB 0 | load 3.35
+S-view-500 mobs=500 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 1.85 p50 1.69 p99 4.09 | wall avg 4.02 p99 5.70 | ai 3.56 phys 0.02 trk 0.03 pick 0.08 | awake 87 lanes 500 | out rows 1 KB 1 | wal KB 3 | load 3.40
+S-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 5.06 p50 5.11 p99 8.67 | wall avg 6.96 p99 8.99 | ai 6.49 phys 0.02 trk 0.04 pick 0.08 | awake 317 lanes 2000 | out rows 1 KB 4 | wal KB 12 | load 3.37
+S-view-5000 mobs=5000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 11.47 p50 10.60 p99 20.99 | wall avg 14.05 p99 29.50 | ai 12.91 phys 0.17 trk 0.49 pick 0.10 | awake 778 lanes 5000 | out rows 1 KB 10 | wal KB 30 | load 3.39
+S-ring-500 mobs=500 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 0.92 p50 0.78 p99 2.82 | wall avg 2.80 p99 5.35 | ai 2.26 phys 0.02 trk 0.04 pick 0.09 | awake 0 lanes 500 | out rows 0 KB 0 | wal KB 2 | load 3.44
+S-ring-2000 mobs=2000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 3.88 p50 3.39 p99 15.96 | wall avg 6.10 p99 21.60 | ai 4.97 phys 0.13 trk 0.52 pick 0.08 | awake 1 lanes 2000 | out rows 1 KB 0 | wal KB 10 | load 3.49
+S-ring-5000 mobs=5000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 7.50 p50 6.41 p99 16.38 | wall avg 9.50 p99 18.76 | ai 7.06 phys 0.64 trk 1.39 pick 0.08 | awake 3 lanes 5000 | out rows 1 KB 0 | wal KB 25 | load 3.48
+S-scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 19.62 p50 18.39 p99 29.47 | wall avg 22.13 p99 31.11 | ai 8.58 phys 4.01 trk 9.02 pick 0.10 | awake 324 lanes 1974 | out rows 2 KB 4 | wal KB 23 | load 3.60
+S-scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 48.44 p50 47.63 p99 69.03 | wall avg 50.89 p99 70.81 | ai 10.28 phys 10.63 trk 29.41 pick 0.12 | awake 457 lanes 1778 | out rows 2 KB 4 | wal KB 86 | load 3.61
+S-scatter2000-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 141.15 p50 136.98 p99 193.52 | wall avg 145.26 p99 194.18 | ai 11.86 phys 34.18 trk 98.54 pick 0.16 | awake 859 lanes 1238 | out rows 2 KB 4 | wal KB 257 | load 3.39
+DONE series
+=== 3b-scatter20-view-2000  (2026-11-05 15:46:46 UTC, load 3.33)
+--- cpu run (no instrumentation)
+3b-scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 19.41 p50 18.08 p99 36.22 | wall avg 21.63 p99 39.66 | ai 8.60 phys 3.82 trk 8.68 pick 0.11 | awake 331 lanes 1979 | out rows 2 KB 4 | wal KB 21 | load 3.43
+--- profile run (pg_stat_statements track=all, track_functions=all: about +30 % CPU)
+------------+------------+------------
+ all        | all        | on
+ setseed 
+ 
+                                                                                                                      result                                                                                                                      
+ 3b-scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 19.95 p50 19.13 p99 33.74 | wall avg 22.36 p99 37.17 | ai 9.06 phys 4.02 trk 8.73 pick 0.11 | awake 320 lanes 1976 | out rows 2 KB 4 | wal KB 21 | load 3.36
+                                  section                                  
+ FUNCTIONS (per tick; total = with the functions it calls, self = without)
+        funcname        | calls_tick | total_ms | self_ms | us_call 
+------------------------+------------+----------+---------+---------
+ entity_lane_step       |       1.00 |    7.773 |   0.039 |  7773.0
+ entity_auto_tick       |       1.00 |    7.721 |   0.023 |  7720.5
+ entity_auto_run        |       1.00 |    7.698 |   4.554 |  7697.7
+ entity_auto_try        |       2.00 |    5.275 |   4.084 |  2637.5
+ entity_physics_ids     |       1.00 |    4.013 |   3.543 |  4013.0
+ entity_tracker         |       1.00 |    3.438 |   3.143 |  3438.1
+ entity_floor_ok        |      48.18 |    2.195 |   2.195 |    45.6
+ entity_lane_try        |       2.00 |    0.702 |   0.702 |   351.1
+ entity_fan_cells       |       1.00 |    0.670 |   0.644 |   670.0
+ entity_move            |      25.97 |    0.470 |   0.470 |    18.1
+ entity_watched         |      35.93 |    0.401 |   0.401 |    11.2
+ entity_view_same       |       5.15 |    0.370 |   0.370 |    71.8
+ entity_floor3          |      10.40 |    0.335 |   0.335 |    32.2
+ epkt_mob_move          |      37.52 |    0.238 |   0.238 |     6.3
+ entity_ai_ids          |       1.00 |    0.185 |   0.185 |   184.8
+ pid                    |      10.22 |    0.185 |   0.185 |    18.1
+ entity_auto_end        |       2.00 |    0.179 |   0.179 |    89.3
+ entity_viewers_refresh |       1.00 |    0.115 |   0.096 |   114.7
+ entity_pickup_dispatch |       1.00 |    0.102 |   0.010 |   102.3
+ entity_pickup          |       1.00 |    0.070 |   0.070 |    69.7
+ entity_despawn         |       1.00 |    0.067 |   0.067 |    67.5
+ prop_int               |       3.00 |    0.057 |   0.057 |    19.1
+                   section                   
+ STATEMENTS (nested ones included, per tick)
+ ms_tick | plan_ms_tick | calls_tick |  us_call  | rows_tick | wal_b_tick | blks_tick |                                                          query                                                           
+---------+--------------+------------+-----------+-----------+------------+-----------+--------------------------------------------------------------------------------------------------------------------------
+  23.404 |        0.000 |       0.02 | 1404241.7 |       0.0 |      22855 |    3358.2 | call pg_temp.run(150 + 1, 150 + 60, true)
+   7.704 |        0.000 |       1.00 |    7703.7 |       1.0 |      11566 |    1592.7 | select * from mc.entity_auto_run(p_tick, true, null)
+   4.722 |        0.000 |       1.00 |    4722.0 |       1.0 |        432 |     800.9 | SELECT mc.entity_auto_try(t, ids || lids)
+   3.908 |        0.076 |       1.00 |    3907.7 |       1.0 |       7499 |    1138.3 | with s as materialized ( select l.*, l.goal_until as tt from mc.entity_lane l where p_ids is null and l.auto and
+   1.969 |        0.114 |       1.25 |    1574.8 |       0.0 |          3 |     204.7 | SELECT mc.entity_floor_build(m.dimension, m.cx, m.cz) from (select distinct c.dimension, c.cx0 + d.i as cx, c.cz0
+   1.684 |        0.043 |       1.25 |    1347.0 |       1.3 |          0 |     582.6 | select array_agg(c.id), array_agg(c.lend) from mc.entity_auto_cand(p_tick, p_ids) c where not c.walking 
+   1.310 |        0.028 |       1.00 |    1310.3 |       1.0 |        352 |     129.3 | with cand as ( select l.id, l.cx, l.cz, l.trk, l.every, l.t0, l.x0, l.z0, l.y, l.gx, l.gz, l.yaw, l.pitch, l
+   1.259 |        1.906 |       1.00 |    1258.8 |       1.0 |       1205 |     141.0 | with a as materialized ( select a.*, w.x0, w.x1, w.y0, w.y1, w.z0, w.z1 from mc.entity_active(p_tick) a 
+   0.855 |        0.370 |      48.18 |      17.7 |      48.2 |          0 |    1153.2 | select (z1 >> $7) - (z0 >> $8) <= $9 and (x1 >> $10) - (x0 >> $11) <= $12 and (not exists (select $13 from (values 
+   0.680 |        0.000 |       1.00 |     680.0 |       1.0 |          0 |      93.2 | SELECT mc.entity_fan_cells(bcx, bcz, btrk, bblob)
+   0.655 |        1.910 |       1.00 |     654.9 |       1.0 |       3488 |     302.2 | with mv as materialized ( select e.id, e.uuid, e.type, e.type_id, e.cx, e.cz, e.sent_cx, e.sent_cz, e.x, e.y
+   0.571 |        0.000 |       1.00 |     570.7 |       1.0 |        155 |      12.4 | SELECT mc.entity_auto_try(t, fl || ai)
+   0.544 |        0.000 |       1.00 |     544.3 |       1.0 |          0 |     159.4 | SELECT mc.entity_lane_try(t, ids || lids)
+   0.528 |        0.002 |       1.00 |     528.0 |       1.0 |       1361 |     129.4 | select coalesce(bool_or(l.goal_until <= p_tick), $22), coalesce(bool_or(l.cx between bx0 and bx1 and l.cz between bz0 an
+   0.240 |        0.002 |       1.00 |     239.7 |      26.2 |       3926 |     170.9 | update mc.entity e set x = u.nx, y = u.ny, z = u.nz, vx = u.vx, vy = u.vy, vz = u.vz, on_ground = u.og, phys_tick = p_ti
+   0.204 |        0.202 |       1.00 |     204.2 |       1.0 |          0 |      82.2 | insert into mc.play_out (conn_id, data) select q.conn_id, string_agg(q.blob, $7::bytea) from (select v2.conn_i
+   0.176 |        0.000 |       1.00 |     175.6 |       1.0 |          0 |       2.2 | SELECT mc.entity_lane_try(t, fl || ai)
+   0.175 |        0.000 |       1.00 |     175.2 |       1.0 |        373 |      13.4 | SELECT mc.entity_auto_end(ex, null, null)
+   0.172 |        0.006 |       0.55 |     313.5 |       0.6 |        583 |      26.0 | with ent as materialized ( select e.id, e.dimension, e.x, e.y, e.z, e.gx, e.gz, e.yaw, e.pitch, e.phys_tick, e.g
+   0.129 |        0.000 |      10.22 |      12.6 |      10.2 |          0 |      14.4 | select protocol_id from ref.packet where state = 'play' and direction = 'clientbound' and name = 'minecraft:' || 
+   0.121 |        0.002 |       0.98 |     122.8 |       5.2 |       1981 |      86.0 | update mc.entity e set cx = l.cx, cz = l.cz, sent_cx = l.cx, sent_cz = l.cz from mc.entity_lane l where l.id = e.id and 
+   0.120 |        0.000 |       1.00 |     120.4 |       1.0 |          0 |      12.0 | SELECT mc.entity_viewers_refresh(t)
+         section          
+ TABLES (tuples per tick)
+      relname       | ins | upd  | hot  | del | seqscan | seq_rows | idxscan | idx_rows 
+--------------------+-----+------+------+-----+---------+----------+---------+----------
+ entity_lane        | 0.6 | 35.3 | 35.3 | 0.6 |    3.00 |   5922.5 |   46.25 |     41.6
+ entity_cell_viewer | 0.0 |  0.0 |  0.0 | 0.0 |   15.22 |   1841.2 |   35.42 |     35.4
+ entity_floor       | 0.0 |  0.0 |  0.0 | 0.0 |    0.00 |      0.0 |  455.33 |    455.3
+ entity             | 0.0 | 41.8 | 26.1 | 0.0 |    1.05 |    101.0 |  180.57 |    202.7
+ entity_tick_log    | 1.0 |  0.0 |  0.0 | 0.0 |    1.00 |    180.5 |    1.00 |      0.0
+ server_property    | 0.0 |  0.0 |  0.0 | 0.0 |    2.00 |    162.0 |    3.00 |      3.0
+ entity_viewer_cell | 0.0 |  0.0 |  0.0 | 0.0 |   37.93 |     37.9 |   12.15 |     12.2
+ solid_mask         | 0.0 |  0.0 |  0.0 | 0.0 |    0.00 |      0.0 |   33.42 |     33.4
+ entity_type_param  | 0.0 |  0.0 |  0.0 | 0.0 |    6.05 |     18.2 |   12.02 |     12.0
+ player             | 0.0 |  0.0 |  0.0 | 0.0 |    3.00 |      3.0 |    0.00 |      0.0
+ entity_clock       | 0.0 |  1.0 |  1.0 | 0.0 |    2.00 |      2.0 |    0.00 |      0.0
+=== 3a-scatter200-view-2000  (2026-11-05 15:47:04 UTC, load 3.36)
+--- cpu run (no instrumentation)
+3a-scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 48.96 p50 48.81 p99 67.02 | wall avg 51.36 p99 70.96 | ai 11.27 phys 10.46 trk 28.99 pick 0.17 | awake 433 lanes 1804 | out rows 2 KB 4 | wal KB 80 | load 3.28
+--- profile run (pg_stat_statements track=all, track_functions=all: about +30 % CPU)
+------------+------------+------------
+ all        | all        | on
+ setseed 
+ 
+                                                                                                                        result                                                                                                                        
+ 3a-scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 58.29 p50 54.86 p99 80.82 | wall avg 60.40 p99 83.28 | ai 12.12 phys 12.49 trk 35.12 pick 0.15 | awake 462 lanes 1769 | out rows 2 KB 4 | wal KB 90 | load 3.29
+                                  section                                  
+ FUNCTIONS (per tick; total = with the functions it calls, self = without)
+        funcname        | calls_tick | total_ms | self_ms | us_call 
+------------------------+------------+----------+---------+---------
+ entity_auto_try        |       2.00 |   28.751 |  21.667 | 14375.5
+ entity_physics_ids     |       1.00 |   12.479 |   9.237 | 12478.7
+ entity_lane_step       |       1.00 |    8.548 |   0.045 |  8547.7
+ entity_auto_tick       |       1.00 |    8.481 |   0.028 |  8480.5
+ entity_auto_run        |       1.00 |    8.452 |   4.888 |  8452.3
+ entity_floor_ok        |     241.92 |    7.933 |   7.933 |    32.8
+ entity_tracker         |       1.00 |    7.032 |   6.329 |  7031.7
+ entity_move            |     222.10 |    3.241 |   3.241 |    14.6
+ entity_lane_try        |       2.00 |    2.026 |   2.026 |  1013.1
+ entity_fan_cells       |       1.00 |    0.740 |   0.711 |   740.1
+ entity_watched         |      38.28 |    0.582 |   0.582 |    15.2
+ epkt_mob_move          |     110.07 |    0.557 |   0.557 |     5.1
+ entity_auto_end        |       2.00 |    0.436 |   0.436 |   218.0
+ entity_ai_ids          |       1.00 |    0.402 |   0.402 |   401.9
+ entity_view_same       |       3.88 |    0.368 |   0.368 |    94.8
+ entity_floor3          |      12.40 |    0.331 |   0.331 |    26.7
+ pid                    |      10.67 |    0.212 |   0.212 |    19.9
+ entity_pickup_dispatch |       1.00 |    0.141 |   0.015 |   141.3
+ pkt_remove_entities    |       1.05 |    0.141 |   0.110 |   134.5
+ entity_viewers_refresh |       1.00 |    0.118 |   0.094 |   117.6
+ entity_pickup          |       1.00 |    0.092 |   0.092 |    91.7
+ entity_despawn         |       1.00 |    0.079 |   0.079 |    78.5
+                   section                   
+ STATEMENTS (nested ones included, per tick)
+ ms_tick | plan_ms_tick | calls_tick |  us_call  | rows_tick | wal_b_tick | blks_tick |                                                          query                                                           
+---------+--------------+------------+-----------+-----------+------------+-----------+--------------------------------------------------------------------------------------------------------------------------
+  61.609 |        0.000 |       0.02 | 3696527.1 |       0.0 |      91518 |   15565.0 | call pg_temp.run(150 + 1, 150 + 60, true)
+  26.495 |        0.000 |       1.00 |   26495.4 |       1.0 |       4246 |    7183.7 | SELECT mc.entity_auto_try(t, ids || lids)
+  14.584 |        0.118 |       1.93 |    7543.6 |       0.0 |         57 |    1555.1 | SELECT mc.entity_floor_build(m.dimension, m.cx, m.cz) from (select distinct c.dimension, c.cx0 + d.i as cx, c.cz0
+  10.896 |        0.044 |       1.93 |    5635.6 |       1.9 |          0 |    5525.4 | select array_agg(c.id), array_agg(c.lend) from mc.entity_auto_cand(p_tick, p_ids) c where not c.walking 
+   8.459 |        0.000 |       1.00 |    8459.3 |       1.0 |      13154 |    1871.5 | select * from mc.entity_auto_run(p_tick, true, null)
+   8.107 |        2.096 |       1.00 |    8107.2 |       1.0 |       5806 |     898.1 | with a as materialized ( select a.*, w.x0, w.x1, w.y0, w.y1, w.z0, w.z1 from mc.entity_active(p_tick) a 
+   4.136 |        0.080 |       1.00 |    4135.9 |       1.0 |       6999 |    1284.8 | with s as materialized ( select l.*, l.goal_until as tt from mc.entity_lane l where p_ids is null and l.auto and
+   3.909 |        0.524 |     241.92 |      16.2 |     241.9 |          0 |    5677.7 | select (z1 >> $7) - (z0 >> $8) <= $9 and (x1 >> $10) - (x0 >> $11) <= $12 and (not exists (select $13 from (values 
+   3.895 |        2.117 |       1.00 |    3895.0 |       1.0 |      30156 |    2451.9 | with mv as materialized ( select e.id, e.uuid, e.type, e.type_id, e.cx, e.cz, e.sent_cx, e.sent_cz, e.x, e.y
+   2.282 |        0.000 |       1.00 |    2282.2 |       1.0 |        966 |     109.8 | SELECT mc.entity_auto_try(t, fl || ai)
+   1.555 |        0.000 |       1.00 |    1554.7 |       1.0 |          0 |    1343.0 | SELECT mc.entity_lane_try(t, ids || lids)
+   1.530 |        0.002 |       1.00 |    1529.6 |     223.5 |      33163 |    1453.9 | update mc.entity e set x = u.nx, y = u.ny, z = u.nz, vx = u.vx, vy = u.vy, vz = u.vz, on_ground = u.og, phys_tick = p_ti
+   1.259 |        0.027 |       1.00 |    1258.9 |       1.0 |        519 |     146.4 | with cand as ( select l.id, l.cx, l.cz, l.trk, l.every, l.t0, l.x0, l.z0, l.y, l.gx, l.gz, l.yaw, l.pitch, l
+   0.810 |        0.007 |       1.62 |     500.8 |       5.7 |       5155 |     213.0 | with ent as materialized ( select e.id, e.dimension, e.x, e.y, e.z, e.gx, e.gz, e.yaw, e.pitch, e.phys_tick, e.g
+   0.752 |        0.000 |       1.00 |     752.4 |       1.0 |          0 |      92.9 | SELECT mc.entity_fan_cells(bcx, bcz, btrk, bblob)
+   0.658 |        0.002 |       1.00 |     658.0 |       1.0 |         84 |     146.5 | select coalesce(bool_or(l.goal_until <= p_tick), $22), coalesce(bool_or(l.cx between bx0 and bx1 and l.cz between bz0 an
+   0.613 |        0.029 |       1.93 |     317.3 |       0.0 |          1 |     680.5 | SELECT mc.entity_floor_build(m.dimension, m.cx, m.cz) from (select distinct c.dimension, c.cx0 + d.i as cx, c.cz0
+   0.527 |        0.028 |       1.93 |     272.6 |       1.9 |          0 |     680.5 | select array_agg(q.id), array_agg(q.lend), array_agg(q.every), array_agg(q.slot) from (sel
+   0.500 |        0.000 |       1.00 |     499.9 |       1.0 |          1 |      18.0 | SELECT mc.entity_lane_try(t, fl || ai)
+   0.432 |        0.000 |       1.00 |     431.9 |       1.0 |       3910 |     133.1 | SELECT mc.entity_auto_end(ex, null, null)
+   0.239 |        0.207 |       1.00 |     239.0 |       1.0 |          0 |      81.9 | insert into mc.play_out (conn_id, data) select q.conn_id, string_agg(q.blob, $7::bytea) from (select v2.conn_i
+   0.207 |        0.021 |       1.00 |     207.2 |       5.9 |       3910 |     133.1 | with u as ( update mc.entity e set x = l.x0 + l.gx * greatest(coalesce(p_pos, l.t0) - l.t0, $4), z = l.z0 + l.gz
+         section          
+ TABLES (tuples per tick)
+      relname       | ins |  upd  |  hot  | del | seqscan | seq_rows | idxscan | idx_rows 
+--------------------+-----+-------+-------+-----+---------+----------+---------+----------
+ entity_lane        | 5.7 |  32.6 |  32.6 | 5.9 |    3.00 |   5338.3 |   57.93 |     48.3
+ entity_floor       | 0.0 |   0.0 |   0.0 | 0.0 |    0.00 |      0.0 | 2201.22 |   2201.2
+ entity             | 0.0 | 316.8 | 223.5 | 0.0 |    1.05 |    101.0 | 1461.53 |   1683.4
+ solid_mask         | 0.0 |   0.0 |   0.0 | 0.0 |    0.00 |      0.0 |  247.75 |    247.8
+ entity_tick_log    | 1.0 |   0.0 |   0.0 | 0.0 |    1.00 |    180.5 |    1.00 |      0.0
+ server_property    | 0.0 |   0.0 |   0.0 | 0.0 |    2.00 |    162.0 |    3.00 |      3.0
+ entity_viewer_cell | 0.0 |   0.0 |   0.0 | 0.0 |   40.28 |     40.3 |   85.10 |     85.1
+ entity_cell_viewer | 0.0 |   0.0 |   0.0 | 0.0 |    0.00 |      0.0 |  119.45 |    119.5
+ entity_type_param  | 0.0 |   0.0 |   0.0 | 0.0 |    8.78 |     26.4 |   91.95 |     92.0
+ player             | 0.0 |   0.0 |   0.0 | 0.0 |    3.00 |      3.0 |    0.00 |      0.0
+ entity_clock       | 0.0 |   1.0 |   1.0 | 0.0 |    2.00 |      2.0 |    0.00 |      0.0
+DONE 3b 3a
+=== A/B generic plans for physics and tracker (cpu only, 2026-11-05 15:48:06 UTC, load 2.93), 100 ticks after 150 warm-up
+A/scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 18.15 p50 17.84 p99 22.34 | wall avg 20.21 p99 25.25 | ai 7.97 phys 3.60 trk 8.15 pick 0.10 | awake 336 lanes 1972 | out rows 2 KB 4 | wal KB 22 | load 2.94
+B/scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 16.13 p50 15.81 p99 21.41 | wall avg 18.12 p99 22.56 | ai 7.79 phys 1.67 trk 8.18 pick 0.09 | awake 340 lanes 1961 | out rows 2 KB 4 | wal KB 22 | load 2.95
+A/scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 53.71 p50 50.13 p99 88.01 | wall avg 56.55 p99 91.52 | ai 11.35 phys 10.97 trk 33.65 pick 0.13 | awake 453 lanes 1800 | out rows 2 KB 4 | wal KB 85 | load 3.09
+B/scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 50.11 p50 48.54 p99 80.90 | wall avg 52.62 p99 82.16 | ai 11.11 phys 9.12 trk 31.81 pick 0.12 | awake 464 lanes 1785 | out rows 2 KB 4 | wal KB 89 | load 3.13
+A/scatter2000-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 138.85 p50 139.66 p99 181.70 | wall avg 145.19 p99 185.88 | ai 11.87 phys 32.45 trk 100.25 pick 0.14 | awake 850 lanes 1247 | out rows 2 KB 4 | wal KB 255 | load 3.60
+B/scatter2000-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 141.95 p50 141.49 p99 187.26 | wall avg 149.63 p99 196.57 | ai 12.29 phys 33.22 trk 103.48 pick 0.15 | awake 862 lanes 1157 | out rows 2 KB 4 | wal KB 260 | load 4.02
+A/flat-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 3.96 p50 3.78 p99 7.10 | wall avg 6.18 p99 8.21 | ai 5.77 phys 0.02 trk 0.03 pick 0.07 | awake 320 lanes 2000 | out rows 1 KB 4 | wal KB 12 | load 4.02
+B/flat-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 5.33 p50 5.39 p99 10.13 | wall avg 7.23 p99 11.21 | ai 6.75 phys 0.03 trk 0.03 pick 0.08 | awake 331 lanes 2000 | out rows 1 KB 4 | wal KB 12 | load 4.02
+A/flat-ring-2000 mobs=2000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 2.88 p50 2.19 p99 13.13 | wall avg 4.76 p99 13.78 | ai 3.69 phys 0.19 trk 0.50 pick 0.07 | awake 1 lanes 2000 | out rows 1 KB 0 | wal KB 10 | load 4.01
+B/flat-ring-2000 mobs=2000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 2.74 p50 2.14 p99 12.59 | wall avg 4.78 p99 14.65 | ai 3.72 phys 0.10 trk 0.56 pick 0.07 | awake 1 lanes 2000 | out rows 1 KB 0 | wal KB 10 | load 4.01
+A/scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 21.41 p50 19.23 p99 67.73 | wall avg 23.99 p99 73.07 | ai 9.04 phys 4.38 trk 9.93 pick 0.11 | awake 334 lanes 1966 | out rows 2 KB 4 | wal KB 24 | load 4.01
+B/scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 17.35 p50 16.56 p99 28.91 | wall avg 19.55 p99 30.94 | ai 8.62 phys 1.74 trk 8.64 pick 0.11 | awake 334 lanes 1979 | out rows 2 KB 4 | wal KB 20 | load 4.01
+A/scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 49.36 p50 47.60 p99 76.48 | wall avg 52.96 p99 80.18 | ai 11.34 phys 10.82 trk 30.14 pick 0.13 | awake 444 lanes 1809 | out rows 2 KB 4 | wal KB 81 | load 4.01
+B/scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 47.24 p50 47.39 p99 71.67 | wall avg 49.99 p99 75.06 | ai 11.33 phys 8.52 trk 29.56 pick 0.13 | awake 445 lanes 1806 | out rows 2 KB 4 | wal KB 82 | load 4.00
+A/scatter2000-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 135.61 p50 134.12 p99 174.10 | wall avg 139.42 p99 179.67 | ai 11.67 phys 30.86 trk 96.26 pick 0.14 | awake 840 lanes 1203 | out rows 2 KB 4 | wal KB 250 | load 3.90
+B/scatter2000-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 132.11 p50 133.06 p99 174.18 | wall avg 135.80 p99 179.86 | ai 11.80 phys 30.60 trk 92.75 pick 0.14 | awake 834 lanes 1236 | out rows 2 KB 4 | wal KB 251 | load 3.88
+A/flat-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 4.82 p50 4.76 p99 8.03 | wall avg 6.87 p99 12.53 | ai 6.40 phys 0.02 trk 0.04 pick 0.07 | awake 310 lanes 2000 | out rows 1 KB 4 | wal KB 12 | load 3.89
+B/flat-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 5.82 p50 5.79 p99 10.62 | wall avg 7.83 p99 11.18 | ai 7.31 phys 0.03 trk 0.04 pick 0.08 | awake 317 lanes 2000 | out rows 1 KB 4 | wal KB 12 | load 3.83
+A/flat-ring-2000 mobs=2000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 3.84 p50 2.89 p99 16.57 | wall avg 6.06 p99 21.74 | ai 4.64 phys 0.28 trk 0.66 pick 0.08 | awake 2 lanes 2000 | out rows 1 KB 0 | wal KB 10 | load 3.76
+B/flat-ring-2000 mobs=2000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 2.78 p50 2.33 p99 16.69 | wall avg 4.85 p99 18.23 | ai 4.01 phys 0.06 trk 0.35 pick 0.08 | awake 1 lanes 2000 | out rows 1 KB 0 | wal KB 10 | load 3.70
+DONE ab
+=== A/B generic plans for physics and tracker (cpu only, 2026-11-05 15:53:45 UTC, load 3.44), 100 ticks after 150 warm-up
+A/scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 20.85 p50 20.28 p99 30.82 | wall avg 22.87 p99 31.82 | ai 8.63 phys 4.20 trk 9.53 pick 0.10 | awake 345 lanes 1960 | out rows 2 KB 4 | wal KB 25 | load 3.45
+C/scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 15.90 p50 14.84 p99 30.09 | wall avg 18.04 p99 32.26 | ai 8.19 phys 1.54 trk 7.80 pick 0.10 | awake 331 lanes 1975 | out rows 2 KB 4 | wal KB 20 | load 3.46
+A/scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 52.41 p50 50.06 p99 79.82 | wall avg 54.76 p99 79.63 | ai 11.43 phys 11.23 trk 31.49 pick 0.13 | awake 463 lanes 1807 | out rows 2 KB 4 | wal KB 87 | load 3.45
+C/scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 47.09 p50 45.23 p99 77.22 | wall avg 49.73 p99 82.17 | ai 11.09 phys 8.42 trk 29.58 pick 0.13 | awake 457 lanes 1806 | out rows 2 KB 4 | wal KB 85 | load 3.43
+A/scatter2000-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 136.69 p50 137.77 p99 173.03 | wall avg 142.64 p99 193.54 | ai 12.25 phys 31.97 trk 97.70 pick 0.15 | awake 839 lanes 1228 | out rows 2 KB 4 | wal KB 251 | load 3.54
+C/scatter2000-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 138.61 p50 135.64 p99 206.17 | wall avg 142.07 p99 212.55 | ai 11.74 phys 31.15 trk 98.53 pick 0.15 | awake 853 lanes 1241 | out rows 2 KB 4 | wal KB 256 | load 3.15
+A/flat-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 3.82 p50 3.89 p99 5.88 | wall avg 5.77 p99 8.60 | ai 5.40 phys 0.02 trk 0.03 pick 0.06 | awake 314 lanes 2000 | out rows 1 KB 4 | wal KB 12 | load 3.36
+C/flat-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 3.79 p50 3.66 p99 7.71 | wall avg 5.93 p99 9.97 | ai 5.53 phys 0.02 trk 0.03 pick 0.07 | awake 313 lanes 2000 | out rows 1 KB 4 | wal KB 12 | load 3.49
+A/flat-ring-2000 mobs=2000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 3.63 p50 2.84 p99 13.56 | wall avg 5.73 p99 17.20 | ai 4.49 phys 0.23 trk 0.61 pick 0.07 | awake 1 lanes 2000 | out rows 1 KB 0 | wal KB 10 | load 3.45
+C/flat-ring-2000 mobs=2000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 2.57 p50 1.91 p99 8.95 | wall avg 4.73 p99 12.48 | ai 3.68 phys 0.09 trk 0.57 pick 0.07 | awake 1 lanes 2000 | out rows 1 KB 0 | wal KB 10 | load 3.42
+A/scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 19.60 p50 18.97 p99 28.58 | wall avg 21.83 p99 30.81 | ai 8.53 phys 3.99 trk 8.76 pick 0.11 | awake 333 lanes 1977 | out rows 2 KB 4 | wal KB 23 | load 3.27
+C/scatter20-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 15.34 p50 14.90 p99 20.19 | wall avg 17.48 p99 22.80 | ai 8.01 phys 1.41 trk 7.52 pick 0.12 | awake 328 lanes 1977 | out rows 2 KB 4 | wal KB 19 | load 3.08
+A/scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 54.59 p50 53.44 p99 82.88 | wall avg 57.19 p99 88.26 | ai 11.52 phys 11.90 trk 33.13 pick 0.13 | awake 470 lanes 1794 | out rows 2 KB 4 | wal KB 90 | load 2.99
+C/scatter200-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 54.11 p50 52.83 p99 95.62 | wall avg 56.99 p99 98.23 | ai 11.55 phys 9.98 trk 34.82 pick 0.13 | awake 472 lanes 1779 | out rows 2 KB 4 | wal KB 92 | load 3.07
+A/scatter2000-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 144.20 p50 137.94 p99 216.93 | wall avg 147.00 p99 218.99 | ai 11.98 phys 34.39 trk 99.95 pick 0.15 | awake 852 lanes 1231 | out rows 2 KB 4 | wal KB 256 | load 3.33
+C/scatter2000-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 141.97 p50 137.24 p99 190.66 | wall avg 146.51 p99 192.29 | ai 11.77 phys 32.84 trk 101.21 pick 0.15 | awake 848 lanes 1208 | out rows 2 KB 4 | wal KB 255 | load 3.24
+A/flat-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 5.44 p50 5.25 p99 14.53 | wall avg 7.52 p99 30.65 | ai 7.01 phys 0.02 trk 0.04 pick 0.08 | awake 315 lanes 2000 | out rows 1 KB 4 | wal KB 12 | load 3.22
+C/flat-view-2000 mobs=2000 items=0 where=view walk=0.6 viewers=1 | cpu ms avg 4.96 p50 4.90 p99 8.00 | wall avg 6.95 p99 11.32 | ai 6.47 phys 0.03 trk 0.03 pick 0.08 | awake 315 lanes 2000 | out rows 1 KB 4 | wal KB 12 | load 3.19
+A/flat-ring-2000 mobs=2000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 3.08 p50 2.50 p99 13.78 | wall avg 5.08 p99 14.62 | ai 3.97 phys 0.20 trk 0.51 pick 0.07 | awake 1 lanes 2000 | out rows 1 KB 0 | wal KB 10 | load 3.17
+C/flat-ring-2000 mobs=2000 items=0 where=ring walk=0.6 viewers=1 | cpu ms avg 4.79 p50 3.42 p99 16.23 | wall avg 7.01 p99 16.76 | ai 5.59 phys 0.12 trk 0.76 pick 0.11 | awake 1 lanes 2000 | out rows 1 KB 0 | wal KB 10 | load 3.16
+DONE ab A C
+=== 4b-empty-tick-after-the-fix  (2026-11-05 15:59:25 UTC, load 2.90), 1000 ticks per cell, 2 rounds, spawner off
+round 1: off players=0 | hook cpu us avg 0 p50 0 min 0 (wall avg 8 p50 8) | entity connection cpu us avg 0 p50 0 | wal B/tick 0
+round 1: inline (full tick) players=0 | hook cpu us avg 79 p50 0 min 0 (wall avg 296 p50 287) | entity connection cpu us avg 4 p50 0 | wal B/tick 0
+round 1: inline players=0 | hook cpu us avg 54 p50 0 min 0 (wall avg 50 p50 49) | entity connection cpu us avg 8 p50 0 | wal B/tick 0
+round 1: split players=0 | hook cpu us avg 0 p50 0 min 0 (wall avg 27 p50 24) | entity connection cpu us avg 3 p50 0 | wal B/tick 0
+round 1: off players=50 | hook cpu us avg 0 p50 0 min 0 (wall avg 8 p50 8) | entity connection cpu us avg 0 p50 0 | wal B/tick 0
+round 1: inline (full tick) players=50 | hook cpu us avg 116 p50 0 min 0 (wall avg 521 p50 483) | entity connection cpu us avg 2 p50 0 | wal B/tick 0
+round 1: inline players=50 | hook cpu us avg 1 p50 0 min 0 (wall avg 39 p50 36) | entity connection cpu us avg 0 p50 0 | wal B/tick 0
+round 1: split players=50 | hook cpu us avg 0 p50 0 min 0 (wall avg 26 p50 24) | entity connection cpu us avg 2 p50 0 | wal B/tick 0
+round 1: off players=200 | hook cpu us avg 21 p50 0 min 0 (wall avg 23 p50 17) | entity connection cpu us avg 22 p50 0 | wal B/tick 0
+round 1: inline (full tick) players=200 | hook cpu us avg 245 p50 0 min 0 (wall avg 745 p50 723) | entity connection cpu us avg 6 p50 0 | wal B/tick 0
+round 1: inline players=200 | hook cpu us avg 1 p50 0 min 0 (wall avg 35 p50 31) | entity connection cpu us avg 0 p50 0 | wal B/tick 0
+round 1: split players=200 | hook cpu us avg 20 p50 0 min 0 (wall avg 29 p50 28) | entity connection cpu us avg 55 p50 0 | wal B/tick 0
+round 2: off players=0 | hook cpu us avg 30 p50 0 min 0 (wall avg 14 p50 14) | entity connection cpu us avg 1 p50 0 | wal B/tick 0
+round 2: inline (full tick) players=0 | hook cpu us avg 497 p50 0 min 0 (wall avg 535 p50 482) | entity connection cpu us avg 8 p50 0 | wal B/tick 0
+round 2: inline players=0 | hook cpu us avg 82 p50 0 min 0 (wall avg 73 p50 70) | entity connection cpu us avg 20 p50 0 | wal B/tick 0
+round 2: split players=0 | hook cpu us avg 45 p50 0 min 0 (wall avg 36 p50 34) | entity connection cpu us avg 43 p50 0 | wal B/tick 0
+round 2: off players=50 | hook cpu us avg 16 p50 0 min 0 (wall avg 17 p50 14) | entity connection cpu us avg 8 p50 0 | wal B/tick 0
+round 2: inline (full tick) players=50 | hook cpu us avg 333 p50 0 min 0 (wall avg 700 p50 652) | entity connection cpu us avg 1 p50 0 | wal B/tick 0
+round 2: inline players=50 | hook cpu us avg 2 p50 0 min 0 (wall avg 51 p50 39) | entity connection cpu us avg 0 p50 0 | wal B/tick 0
+round 2: split players=50 | hook cpu us avg 68 p50 0 min 0 (wall avg 49 p50 45) | entity connection cpu us avg 60 p50 0 | wal B/tick 0
+round 2: off players=200 | hook cpu us avg 16 p50 0 min 0 (wall avg 17 p50 14) | entity connection cpu us avg 12 p50 0 | wal B/tick 0
+round 2: inline (full tick) players=200 | hook cpu us avg 919 p50 0 min 0 (wall avg 1003 p50 949) | entity connection cpu us avg 21 p50 0 | wal B/tick 681
+round 2: inline players=200 | hook cpu us avg 2 p50 0 min 0 (wall avg 55 p50 40) | entity connection cpu us avg 1 p50 0 | wal B/tick 0
+round 2: split players=200 | hook cpu us avg 5 p50 0 min 0 (wall avg 36 p50 25) | entity connection cpu us avg 4 p50 0 | wal B/tick 0
+DONE empty2
+=== walking share (cpu only, 2026-11-05 15:59:48 UTC, load 2.78), 100 ticks after 150 warm-up
+W-ring-2000-walk0.0 mobs=2000 items=0 where=ring walk=0.0 viewers=1 | cpu ms avg 0.75 p50 0.31 p99 3.57 | wall avg 2.53 p99 9.35 | ai 2.04 phys 0.03 trk 0.03 pick 0.08 | awake 0 lanes 2000 | out rows 0 KB 0 | wal KB 6 | load 2.79
+W-view-2000-walk0.0 mobs=2000 items=0 where=view walk=0.0 viewers=1 | cpu ms avg 1.56 p50 1.67 p99 3.58 | wall avg 3.45 p99 4.78 | ai 3.01 phys 0.02 trk 0.03 pick 0.07 | awake 22 lanes 2000 | out rows 0 KB 0 | wal KB 5 | load 2.83
+W-ring-2000-walk0.38 mobs=2000 items=0 where=ring walk=0.38 viewers=1 | cpu ms avg 2.68 p50 2.20 p99 21.32 | wall avg 4.74 p99 24.11 | ai 3.71 phys 0.11 trk 0.49 pick 0.08 | awake 1 lanes 2000 | out rows 0 KB 0 | wal KB 9 | load 2.92
+W-view-2000-walk0.38 mobs=2000 items=0 where=view walk=0.38 viewers=1 | cpu ms avg 3.94 p50 3.86 p99 6.10 | wall avg 5.98 p99 7.89 | ai 5.52 phys 0.03 trk 0.03 pick 0.08 | awake 185 lanes 2000 | out rows 1 KB 2 | wal KB 9 | load 2.93
