@@ -92,43 +92,54 @@ alter table mc.wp enable always trigger wp_cnt_ins, enable always trigger wp_cnt
 truncate mc.wp_cnt;
 insert into mc.wp_cnt select rcv, count(*)::int from mc.wp group by rcv;
 
+-- "more than 332 blocks apart" (WaypointTransmitter.isReallyFar: distanceTo > 332.0f).  The exact test is sqrt(dx^2 + dy^2 + dz^2)::real > 332::real; the power operator costs 300 ns a call
+-- (a hundred players: 5 ms a tick), so a distance that is not within 0.05 % of the limit is decided from the sum of squares, and only the rest goes through the exact expression.
+create or replace function mc.wp_far(rx float8, ry float8, rz float8, sx float8, sy float8, sz float8) returns boolean language sql immutable parallel safe as $$
+  select case when (rx - sx) * (rx - sx) + (ry - sy) * (ry - sy) + (rz - sz) * (rz - sz) > 110300::float8 then true
+              when (rx - sx) * (rx - sx) + (ry - sy) * (ry - sy) + (rz - sz) * (rz - sz) < 110150::float8 then false
+              else sqrt((rx - sx) ^ 2 + (ry - sy) ^ 2 + (rz - sz) ^ 2)::real > 332::real end $$;
+
 -- The connections of a movement pass that can have an event (see mc.vis_wp_pass).  Functions, not a part of its statement, so that the planner is told how many rows to expect (it multiplies the
 -- estimates of eleven index probes into millions of rows and then scans and hashes the whole table), and so that the plan of each probe is made once.
+drop function if exists mc.wp_cand(int[], int[], int[], int[], int[], int[], boolean, int[]);
 create or replace function mc.wp_cand(p_bset int[], p_lset int[], p_cset int[], p_vcset int[], p_pset int[], p_vset int[], p_all3 boolean, p_fset int[])
-  returns table(rcv int, src int, ok smallint, oang real) language plpgsql stable rows 1000 set plan_cache_mode = force_generic_plan as $$
+  returns table(rcv int, src int, ok smallint, oang real, tid tid) language plpgsql stable rows 1000 set plan_cache_mode = force_generic_plan as $$
 begin
   -- block connections of a source that changed block; chunk connections of a source that changed chunk, or of a receiver whose chunk or view changed
-  return query select w.rcv, w.src, w.kind, null::real from mc.wp w where w.kind = 1 and w.src = any(coalesce(p_bset, '{}'));
-  return query select x.rcv, x.src, x.kind, null::real from (
-      select w.rcv, w.src, w.kind from mc.wp w where w.kind = 2 and w.src = any(coalesce(p_cset, '{}'))
-      union select w.rcv, w.src, w.kind from mc.wp w where w.kind = 2 and w.rcv = any(coalesce(p_vcset, '{}'))) x;
+  return query select w.rcv, w.src, w.kind, null::real, w.ctid from mc.wp w where w.kind = 1 and w.src = any(coalesce(p_bset, '{}'));
+  return query select x.rcv, x.src, x.kind, null::real, x.tid from (
+      select w.rcv, w.src, w.kind, w.ctid as tid from mc.wp w where w.kind = 2 and w.src = any(coalesce(p_cset, '{}'))
+      union select w.rcv, w.src, w.kind, w.ctid from mc.wp w where w.kind = 2 and w.rcv = any(coalesce(p_vcset, '{}'))) x;
   -- azimuth connections of an end that moved.  When most players moved, or with a view of 14+ chunks (a far connection can then be inside the view and is remade on every pass), all of them
   -- are looked at, by the statement of mc.vis_wp_pass itself (its CTE azc: one scan of the kind, nothing passes through this function)
   if not p_all3 then
-    return query select x.rcv, x.src, x.kind, x.ang from (
-        select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.kind = 3 and w.src = any(coalesce(p_pset, '{}'))
-        union select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.kind = 3 and w.rcv = any(coalesce(p_pset, '{}') || coalesce(p_vset, '{}'))) x;
+    return query select x.rcv, x.src, x.kind, x.ang, x.tid from (
+        select w.rcv, w.src, w.kind, w.ang, w.ctid as tid from mc.wp w where w.kind = 3 and w.src = any(coalesce(p_pset, '{}'))
+        union select w.rcv, w.src, w.kind, w.ang, w.ctid from mc.wp w where w.kind = 3 and w.rcv = any(coalesce(p_pset, '{}') || coalesce(p_vset, '{}'))) x;
   end if;
   -- everything of a player the pass has never seen (the kinds above are in the rows already; a union drops them)
   if p_fset is not null then
-    return query select x.rcv, x.src, x.kind, case when x.kind = 3 then x.ang end from (
-        select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.rcv = any(p_fset) union select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.src = any(p_fset)) x
+    return query select x.rcv, x.src, x.kind, case when x.kind = 3 then x.ang end, x.tid from (
+        select w.rcv, w.src, w.kind, w.ang, w.ctid as tid from mc.wp w where w.rcv = any(p_fset) union select w.rcv, w.src, w.kind, w.ang, w.ctid from mc.wp w where w.src = any(p_fset)) x
       where not (x.kind = 1 and x.src = any(coalesce(p_bset, '{}') || coalesce(p_lset, '{}'))) and not (x.kind = 3 and (p_all3 or x.src = any(coalesce(p_pset, '{}')) or x.rcv = any(coalesce(p_pset, '{}') || coalesce(p_vset, '{}'))))
         and not (x.kind = 2 and (x.src = any(coalesce(p_cset, '{}')) or x.rcv = any(coalesce(p_vcset, '{}'))));
   end if;
 end $$;
 -- the wanted pairs a mover is missing: the connections it does not have to a source that transmits
-create or replace function mc.wp_cand_missing(p_dset int[]) returns table(rcv int, src int, ok smallint, oang real) language sql stable rows 20 as $$
-  select r.entity_id, s.entity_id, null::smallint, null::real
+drop function if exists mc.wp_cand_missing(int[]);
+create or replace function mc.wp_cand_missing(p_dset int[]) returns table(rcv int, src int, ok smallint, oang real, tid tid) language sql stable rows 20 as $$
+  select r.entity_id, s.entity_id, null::smallint, null::real, null::tid
     from mc.player r join mc.player s on s.entity_id <> r.entity_id and s.conn_id is not null and s.wp_state is not null and (s.wp_state & 1) = 1
    where r.entity_id = any(coalesce(p_dset, '{}')) and not exists (select 1 from mc.wp x where x.rcv = r.entity_id and x.src = s.entity_id) $$;
 -- entity phase: every pair of a player whose transmit state changed, with the connection it has
-create or replace function mc.wp_cand_state(p_sset int[]) returns table(rcv int, src int, ok smallint, oang real) language sql stable rows 200 as $$
-  select r.entity_id, s.entity_id, w.kind, case when w.kind = 3 then w.ang end
+drop function if exists mc.wp_cand_state(int[]);
+create or replace function mc.wp_cand_state(p_sset int[]) returns table(rcv int, src int, ok smallint, oang real, tid tid) language sql stable rows 200 as $$
+  select r.entity_id, s.entity_id, w.kind, case when w.kind = 3 then w.ang end, w.ctid
     from mc.player r join mc.player s on s.entity_id <> r.entity_id and s.conn_id is not null left join mc.wp w on w.rcv = r.entity_id and w.src = s.entity_id
    where r.conn_id is not null and (r.entity_id = any(coalesce(p_sset, '{}')) or s.entity_id = any(coalesce(p_sset, '{}'))) $$;
 
 -- one pass.  p_phase 1: movement (positions as applied this tick, the transmit state as of the last entity phase); p_phase 2: the entity phase (the state now, remembered).
+-- (join_collapse_limit = 1: the joins are planned in the order written; left to itself the planner crosses the player set with itself, N x N rows, to join them with the connections.)
 --
 -- DIRTY-DRIVEN (docs/PERF-LOCATOR.md): the pass above (mc.vis_wp_pass_pairs, the reference) looked at every pair of players on every call: N x N rows, half of a walking tick at 50-120 players.  This one
 -- looks at the pairs that can have something to say.  After every pass each connection agrees with the positions of that pass (what the pass did to it is exactly what a second pass over the same
@@ -143,7 +154,7 @@ create or replace function mc.wp_cand_state(p_sset int[]) returns table(rcv int,
 -- plus, in the entity phase, the pairs of every player whose transmit state changed (as before).  The packets are built once per SOURCE (the bytes of a block or chunk UPDATE do not depend on the
 -- receiver: 8 us a packet before, 3,900 packets a tick at 200 walkers), and an azimuth packet is that prefix and the angle.  Same events, same bytes, same order (tests/sql/1000_wp_dirty.sql runs
 -- both on random walks, joins, leaves, crouching, spectators, hidden heads and view distance changes and compares packets, rows and remembered state).
-create or replace function mc.vis_wp_pass(p_cur bigint, p_phase int, p_n int default null) returns void language plpgsql set plan_cache_mode = force_generic_plan as $$
+create or replace function mc.vis_wp_pass(p_cur bigint, p_phase int, p_n int default null) returns void language plpgsql set plan_cache_mode = force_generic_plan set join_collapse_limit = 1 as $$
 declare enabled boolean := mc.rule_bool('locator_bar', true); n int; cap int := coalesce(mc.prop_int('dbcraft.locator-bar-max-players'), 100000);
         slice int := coalesce(mc.prop_int('dbcraft.locator-bar-untrack-slice'), 2000000000); vdsrv int := mc.prop_int('view-distance');      -- (once, not once per player row: 20 us each)
 begin
@@ -186,11 +197,11 @@ begin
   pr as (
     select r.eid as rcv, r.conn_id as rconn, s.eid as src, s.uuid as suuid, s.bx, s.by, s.bz, s.cx as scx, s.cz as scz, r.x as rx, r.z as rz, s.x as sx, s.z as sz,
            (s.st is not null and (s.st & 1) = 1 and not ((coalesce(r.st, 0) & 2) = 0 and (s.st & 2) = 2)) as want,
-           (sqrt((r.x - s.x) ^ 2 + (r.y - s.y) ^ 2 + (r.z - s.z) ^ 2)::real > 332::real) as far,
+           mc.wp_far(r.x, r.y, r.z, s.x, s.y, s.z) as far,
            (abs(s.cx - r.cx) <= r.vr and abs(s.cz - r.cz) <= r.vr) as vis,
            s.manh, s.cheb,
            ((p_phase = 1 and r.last_move_tick = p_cur) or (p_phase = 2 and (s.old_st is null or ((s.st & 1) = 1 and (s.old_st & 1) = 0)))) as may_create,      -- a missing connection is made when the receiver moves (updatePlayer) or when the source starts to transmit (trackWaypoint)
-           c.ok, c.oang
+           c.ok, c.oang, c.tid
       from cand c join pl r on r.eid = c.rcv join pl s on s.eid = c.src),
   dc as (
     select pr.*, case when far then 3 when not vis then 2 else 1 end as nk,
@@ -202,21 +213,21 @@ begin
       from pr),
   -- the azimuth connections of a crowd that moves, all looked at in one scan (what wp_cand leaves to this): only the ones with an event come out
   azc as (
-    select r.eid as rcv, r.conn_id as rconn, s.eid as src, s.uuid as suuid, s.bx, s.by, s.bz, s.cx as scx, s.cz as scz, 3::smallint as ok,
+    select r.eid as rcv, r.conn_id as rconn, s.eid as src, s.uuid as suuid, s.bx, s.by, s.bz, s.cx as scx, s.cz as scz, 3::smallint as ok, w.ctid as tid,
            case when not f.want then 'untrack' when f.vis or not f.far then 'remake' else 'update' end as what,
            case when f.far then 3 when not f.vis then 2 else 1 end as nk, mc.wp_angle(r.x, r.z, s.x, s.z) as ang
       from mc.wp w join pl r on r.eid = w.rcv join pl s on s.eid = w.src,
            lateral (select (s.st is not null and (s.st & 1) = 1 and not ((coalesce(r.st, 0) & 2) = 0 and (s.st & 2) = 2)) as want,
                            (abs(s.cx - r.cx) <= r.vr and abs(s.cz - r.cz) <= r.vr) as vis,
-                           (sqrt((r.x - s.x) ^ 2 + (r.y - s.y) ^ 2 + (r.z - s.z) ^ 2)::real > 332::real) as far) f
+                           mc.wp_far(r.x, r.y, r.z, s.x, s.y, s.z) as far) f
      where p_phase = 1 and w.kind = 3 and (select all3 from sets)
        and (not f.want or f.vis or not f.far or abs(mc.wp_angle(r.x, r.z, s.x, s.z) - w.ang) > 0.008726646::real)),
   ev as materialized (
     select dc.rcv, dc.rconn, dc.src,
-           case when dc.ok is null then 'track' else dc.act end as what, dc.nk, dc.ok, dc.suuid, dc.bx, dc.by, dc.bz, dc.scx, dc.scz,
+           case when dc.ok is null then 'track' else dc.act end as what, dc.nk, dc.ok, dc.suuid, dc.bx, dc.by, dc.bz, dc.scx, dc.scz, dc.tid,
            case when dc.ok is null or dc.act = 'remake' or dc.ok = 3 then mc.wp_angle(dc.rx, dc.rz, dc.sx, dc.sz) end as ang       -- (the angle is stored with every connection made; an update of a block or chunk one does not look at it)
       from dc where (dc.ok is null and dc.want and dc.may_create) or dc.act is not null
-    union all select azc.rcv, azc.rconn, azc.src, azc.what, azc.nk, azc.ok, azc.suuid, azc.bx, azc.by, azc.bz, azc.scx, azc.scz, azc.ang from azc),
+    union all select azc.rcv, azc.rconn, azc.src, azc.what, azc.nk, azc.ok, azc.suuid, azc.bx, azc.by, azc.bz, azc.scx, azc.scz, azc.tid, azc.ang from azc),
   -- the bulk of a walking crowd's packets: a block connection of a source that moved one block is a plain UPDATE of the source's block position (no remake, no state to look at: the source
   -- transmits and every receiver wants it), so it skips the evaluation above and goes straight to the packets
   lp as (select l.eid, mc.pkt_waypoint(2, l.uuid, 1, l.bx, l.by, l.bz, 0) as u1 from pl l where p_phase = 1 and l.eid = any(coalesce((select lset from sets), '{}'::int[]))),
@@ -227,11 +238,11 @@ begin
     insert into mc.wp (rcv, src, kind, ang) select ev.rcv, ev.src, ev.nk, ev.ang from ev where ev.what = 'track'
     on conflict (rcv, src) do update set kind = excluded.kind, ang = excluded.ang returning 1),
   rem as (
-    update mc.wp w set kind = ev.nk, ang = ev.ang from ev where ev.what = 'remake' and w.rcv = ev.rcv and w.src = ev.src returning 1),
+    update mc.wp w set kind = ev.nk, ang = ev.ang from ev where ev.what = 'remake' and w.ctid = ev.tid returning 1),
   upd as (
-    update mc.wp w set ang = ev.ang from ev where ev.what = 'update' and ev.ok = 3 and w.rcv = ev.rcv and w.src = ev.src returning 1),
+    update mc.wp w set ang = ev.ang from ev where ev.what = 'update' and ev.ok = 3 and w.ctid = ev.tid returning 1),
   del as (
-    delete from mc.wp w using ev where ev.what = 'untrack' and w.rcv = ev.rcv and w.src = ev.src returning 1),
+    delete from mc.wp w using ev where ev.what = 'untrack' and w.ctid = ev.tid returning 1),
   -- the packets of a source: built once for all its receivers, only the variants that are needed
   sp as (
     select g.src,

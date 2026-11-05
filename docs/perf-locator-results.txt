@@ -1,3 +1,6 @@
+# docs/perf-locator-results.txt -- raw output of the locator bar measurements (docs/PERF-LOCATOR.md)
+# Machine: 4 vCPUs shared with other agents (load average 1.5-6 while these ran); walkers of tests/bench/game/walk.sh, 0.215 blocks/tick, 30 x 30 chunks, view distance 10, tracker on.
+# 'CPU ms/tick' = on-CPU time of the backend around mc.tick() (/proc/self/schedstat), warm-up 20 ticks.  BASE = the tree before this work (quieter machine for the first block).
 BASE on players=120 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 30.90 p50 30.61 p95 37.54 max 48.81 | tick wall ms avg 30.0 | wp packets/tick  (track  upd  untrack ) bytes/tick  | out rows/tick 191 KB/tick 80.3
 wp rows 14280 (block 4712 chunk 5590 azimuth 3978)
 load 0.84
@@ -64,42 +67,3 @@ BASE-count on players=100 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tic
 wp rows 9900 (block 3247 chunk 3859 azimuth 2794)
 BASE-count on players=200 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 105.10 p50 102.82 p95 128.71 max 143.38 | tick wall ms avg 103.3 | wp packets/tick 3900 (track 188 upd 3712 untrack 0) bytes/tick 176701 | out rows/tick 323 KB/tick 222.5
 wp rows 39800 (block 12850 chunk 15352 azimuth 11598)
-
-# FINAL TREE: loc_ab = reference pass on even ticks, dirty-driven on odd ticks of the same run (same machine noise); date 2026-11-05T16:20:10Z
-N=50 side=30: tick CPU reference 38.51 dirty 34.87 | pass wall ms: reference median 7.93 mean 8.15, dirty median 4.31 mean 5.20
-load 2.00
-N=100 side=30: tick CPU reference 46.92 dirty 42.38 | pass wall ms: reference median 11.14 mean 11.56, dirty median 9.56 mean 9.58
-load 2.00
-N=120 side=30: tick CPU reference 58.04 dirty 49.33 | pass wall ms: reference median 16.50 mean 17.49, dirty median 11.71 mean 11.66
-load 1.92
-N=121 side=30: tick CPU reference 61.06 dirty 54.82 | pass wall ms: reference median 17.44 mean 17.98, dirty median 12.36 mean 12.82
-load 1.94
-N=200 side=30: tick CPU reference 107.50 dirty 83.62 | pass wall ms: reference median 47.62 mean 50.02, dirty median 32.51 mean 33.75
-load 1.86
-N=400 side=30: tick CPU reference 375.24 dirty 201.57 | pass wall ms: reference median 272.61 mean 277.57, dirty median 125.39 mean 128.64
-load 1.98
-N=100 side=60: tick CPU reference 63.86 dirty 60.40 | pass wall ms: reference median 19.85 mean 19.99, dirty median 18.23 mean 18.60
-N=200 side=60: tick CPU reference 98.46 dirty 91.07 | pass wall ms: reference median 46.79 mean 48.27, dirty median 44.32 mean 46.25
-# bar on against bar off, dirty-driven pass, loc_game, alternating on/off, side 30
-FINAL-50 rep1 off players=50 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 30.02 p10 26.87 p50 30.39 p95 34.01 max 36.17 | tick wall ms avg 30.5 | wp packets/tick  (track  upd  untrack ) byte
-FINAL-50 rep1 on players=50 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 37.22 p10 31.33 p50 37.31 p95 41.75 max 47.27 | tick wall ms avg 39.1 | wp packets/tick  (track  upd  untrack ) 
-FINAL-50 rep2 off players=50 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 30.29 p10 26.62 p50 30.50 p95 34.69 max 36.26 | tick wall ms avg 30.4 | wp packets/tick  (track  upd  untrack ) byte
-FINAL-50 rep2 on players=50 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 36.27 p10 31.56 p50 34.27 p95 45.24 max 54.61 | tick wall ms avg 35.4 | wp packets/tick  (track  upd  untrack ) 
-load 3.64
-FINAL-100 rep1 off players=100 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 36.86 p10 32.93 p50 36.12 p95 43.02 max 45.94 | tick wall ms avg 34.4 | wp packets/tick  (track  upd  untrack ) by
-FINAL-100 rep1 on players=100 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 48.27 p10 43.83 p50 48.50 p95 54.43 max 57.39 | tick wall ms avg 45.7 | wp packets/tick  (track  upd  untrack 
-FINAL-100 rep2 off players=100 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 36.68 p10 32.49 p50 36.22 p95 41.64 max 50.61 | tick wall ms avg 33.9 | wp packets/tick  (track  upd  untrack ) by
-FINAL-100 rep2 on players=100 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 49.09 p10 43.15 p50 48.25 p95 56.23 max 68.36 | tick wall ms avg 53.5 | wp packets/tick  (track  upd  untrack 
-load 3.83
-FINAL-120 rep1 off players=120 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 36.68 p10 32.70 p50 35.24 p95 44.85 max 50.58 | tick wall ms avg 33.7 | wp packets/tick  (track  upd  untrack ) by
-FINAL-120 rep1 on players=120 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 55.57 p10 48.74 p50 54.32 p95 68.89 max 76.07 | tick wall ms avg 52.6 | wp packets/tick  (track  upd  untrack 
-FINAL-120 rep2 off players=120 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 45.13 p10 40.03 p50 42.39 p95 56.43 max 60.29 | tick wall ms avg 54.3 | wp packets/tick  (track  upd  untrack ) by
-FINAL-120 rep2 on players=120 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 59.13 p10 49.11 p50 57.19 p95 76.98 max 108.58 | tick wall ms avg 58.4 | wp packets/tick  (track  upd  untrack
-load 4.06
-FINAL-121 rep1 off players=121 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 47.74 p10 39.28 p50 45.95 p95 60.66 max 68.81 | tick wall ms avg 51.9 | wp packets/tick  (track  upd  untrack ) by
-FINAL-121 rep1 on players=121 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 62.64 p10 55.26 p50 61.86 p95 75.28 max 88.57 | tick wall ms avg 59.0 | wp packets/tick  (track  upd  untrack 
-FINAL-121 rep2 off players=121 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 45.55 p10 39.47 p50 44.97 p95 55.33 max 59.48 | tick wall ms avg 44.0 | wp packets/tick  (track  upd  untrack ) by
-FINAL-121 rep2 on players=121 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 61.58 p10 52.76 p50 60.73 p95 74.57 max 82.10 | tick wall ms avg 58.3 | wp packets/tick  (track  upd  untrack 
-load 4.44
-FINAL-200 rep1 off players=200 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 54.62 p10 44.49 p50 54.50 p95 67.76 max 68.96 | tick wall ms avg 51.6 | wp packets/tick  (track  upd  untrack ) by
-FINAL-200 rep1 on players=200 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 87.71 p10 76.46 p50 86.85 p95 106.98 max 108.83 | tick wall ms avg 83.9 | wp packets/tick  (track  upd  untrac
