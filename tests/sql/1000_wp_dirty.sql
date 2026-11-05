@@ -155,7 +155,7 @@ select t.is_true('...and UNTRACKs', (select coalesce(sum(n), 0) from t.wpd_cov w
 -- mutation check: the function with one way into the candidate set removed (or a rule changed) must be noticed by the scenarios
 create or replace function t.wpd_detects(p_find text, p_repl text) returns boolean language plpgsql as $$
 declare def text; m text; s int; fn text; names text[] := array['mc.wp_cand_missing(', 'mc.wp_cand_state(', 'mc.wp_cand(', 'mc.vis_wp_pass('];
-        procs text[] := array['mc.wp_cand_missing(int[])', 'mc.wp_cand_state(int[])', 'mc.wp_cand(int[], int[], int[], int[], int[], int[], boolean, int[], int)', 'mc.vis_wp_pass(bigint, int, int)'];
+        procs text[] := array['mc.wp_cand_missing(int[])', 'mc.wp_cand_state(int[])', 'mc.wp_cand(int[], int[], int[], int[], int[], int[], boolean, int[])', 'mc.vis_wp_pass(bigint, int, int)'];
         i int; hit boolean := false; mutant text; defs text[] := '{}';
 begin
   -- the mutant is the whole family of functions under other names; the one mutation is applied to the text of whichever contains it
@@ -176,6 +176,8 @@ end $$;
 select t.is_true('mutation: kind-1 rows of a source that changed block are not looked at -> noticed', t.wpd_detects('w.kind = 1 and w.src = any(', 'w.kind = 1 and false and w.src = any('));
 select t.is_true('mutation: the one-block UPDATEs of the lean path (a block connection of a source that moved one block) are not sent -> noticed', t.wpd_detects('p_phase = 1 and w.kind = 1 and w.src = any(coalesce((select lset', 'p_phase = 1 and false and w.kind = 1 and w.src = any(coalesce((select lset'));
 select t.is_true('mutation: the lean path also takes a spectator source (it is not wanted by everybody) -> noticed', t.wpd_detects('and (st & 2) = 0) as lset', ') as lset'));
+select t.is_true('mutation: a crowd that moves: the azimuth connections that must be remade (inside the view, or no longer far) are not looked at -> noticed', t.wpd_detects('(not f.want or f.vis or not f.far or abs(', '(not f.want or abs('));
+select t.is_true('mutation: a crowd that moves: the azimuth connections of a source that is not wanted any more are not ended -> noticed', t.wpd_detects('(not f.want or f.vis or not f.far or abs(', '(f.vis or not f.far or abs('));
 select t.is_true('mutation: kind-2 rows of a source that changed chunk are not looked at -> noticed', t.wpd_detects('w.kind = 2 and w.src = any(', 'w.kind = 2 and false and w.src = any('));
 select t.is_true('mutation: kind-2 rows of a receiver that changed chunk or view are not looked at -> noticed', t.wpd_detects('w.kind = 2 and w.rcv = any(', 'w.kind = 2 and false and w.rcv = any('));
 select t.is_true('mutation: azimuth rows of a source that moved are not looked at -> noticed', t.wpd_detects('w.kind = 3 and w.src = any(', 'w.kind = 3 and false and w.src = any('));
@@ -189,9 +191,9 @@ select t.is_true('mutation: the angle threshold is a degree, not half a degree -
 select t.is_true('mutation: a view distance change does not look at the chunk connections of the receiver -> noticed',
                  t.wpd_detects('array_agg(eid) filter (where cheb > 0 or ovr is distinct from vr) as vcset', 'array_agg(eid) filter (where cheb > 0) as vcset'));
 select set_config('t.wpd_bigvr', 'on', false);
-select t.is_true('mutation: the view of 14+ chunks does not make every azimuth connection a candidate -> noticed', t.wpd_detects('coalesce(max(vr) >= 14, false) as slow', 'false as slow'));
+select t.is_true('mutation: the view of 14+ chunks does not make every azimuth connection a candidate -> noticed', t.wpd_detects('(coalesce(max(vr) >= 14, false) or', '(false or'));
 select set_config('t.wpd_bigvr', 'off', false);
-drop function if exists mc.vis_wp_pass_mut(bigint, int, int), mc.wp_cand_mut(int[], int[], int[], int[], int[], int[], boolean, int[], int), mc.wp_cand_missing_mut(int[]), mc.wp_cand_state_mut(int[]);
+drop function if exists mc.vis_wp_pass_mut(bigint, int, int), mc.wp_cand_mut(int[], int[], int[], int[], int[], int[], boolean, int[]), mc.wp_cand_missing_mut(int[]), mc.wp_cand_state_mut(int[]);
 
 -- restore the settings the scenarios changed
 update mc.server_property set value = '10' where key = 'view-distance';

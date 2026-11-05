@@ -94,20 +94,17 @@ insert into mc.wp_cnt select rcv, count(*)::int from mc.wp group by rcv;
 
 -- The connections of a movement pass that can have an event (see mc.vis_wp_pass).  Functions, not a part of its statement, so that the planner is told how many rows to expect (it multiplies the
 -- estimates of eleven index probes into millions of rows and then scans and hashes the whole table), and so that the plan of each probe is made once.
-create or replace function mc.wp_cand(p_bset int[], p_lset int[], p_cset int[], p_vcset int[], p_pset int[], p_vset int[], p_slow boolean, p_fset int[], p_n int)
+create or replace function mc.wp_cand(p_bset int[], p_lset int[], p_cset int[], p_vcset int[], p_pset int[], p_vset int[], p_all3 boolean, p_fset int[])
   returns table(rcv int, src int, ok smallint, oang real) language plpgsql stable rows 1000 set plan_cache_mode = force_generic_plan as $$
-declare all3 boolean := p_slow or coalesce(cardinality(p_pset), 0) * 2 >= p_n;
 begin
   -- block connections of a source that changed block; chunk connections of a source that changed chunk, or of a receiver whose chunk or view changed
   return query select w.rcv, w.src, w.kind, null::real from mc.wp w where w.kind = 1 and w.src = any(coalesce(p_bset, '{}'));
   return query select x.rcv, x.src, x.kind, null::real from (
       select w.rcv, w.src, w.kind from mc.wp w where w.kind = 2 and w.src = any(coalesce(p_cset, '{}'))
       union select w.rcv, w.src, w.kind from mc.wp w where w.kind = 2 and w.rcv = any(coalesce(p_vcset, '{}'))) x;
-  -- azimuth connections of an end that moved (or all of them: when most players moved the probes would return everything twice, and with a view of 14+ chunks a far connection can be
-  -- inside the view, which is remade on every pass)
-  if all3 then
-    return query select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.kind = 3;
-  else
+  -- azimuth connections of an end that moved.  When most players moved, or with a view of 14+ chunks (a far connection can then be inside the view and is remade on every pass), all of them
+  -- are looked at, by the statement of mc.vis_wp_pass itself (its CTE azc: one scan of the kind, nothing passes through this function)
+  if not p_all3 then
     return query select x.rcv, x.src, x.kind, x.ang from (
         select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.kind = 3 and w.src = any(coalesce(p_pset, '{}'))
         union select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.kind = 3 and w.rcv = any(coalesce(p_pset, '{}') || coalesce(p_vset, '{}'))) x;
@@ -116,7 +113,7 @@ begin
   if p_fset is not null then
     return query select x.rcv, x.src, x.kind, case when x.kind = 3 then x.ang end from (
         select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.rcv = any(p_fset) union select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.src = any(p_fset)) x
-      where not (x.kind = 1 and x.src = any(coalesce(p_bset, '{}') || coalesce(p_lset, '{}'))) and not (x.kind = 3 and (all3 or x.src = any(coalesce(p_pset, '{}')) or x.rcv = any(coalesce(p_pset, '{}') || coalesce(p_vset, '{}'))))
+      where not (x.kind = 1 and x.src = any(coalesce(p_bset, '{}') || coalesce(p_lset, '{}'))) and not (x.kind = 3 and (p_all3 or x.src = any(coalesce(p_pset, '{}')) or x.rcv = any(coalesce(p_pset, '{}') || coalesce(p_vset, '{}'))))
         and not (x.kind = 2 and (x.src = any(coalesce(p_cset, '{}')) or x.rcv = any(coalesce(p_vcset, '{}'))));
   end if;
 end $$;
@@ -179,11 +176,11 @@ begin
            array_agg(eid) filter (where manh > 0 or cheb > 0 or moved or vd) as pset, array_agg(eid) filter (where cheb > 0 or ovr is distinct from vr) as vcset,
            array_agg(eid) filter (where ovr is distinct from vr) as vset, array_agg(eid) filter (where old_st is null) as fset,
            array_agg(eid) filter (where st is distinct from old_st) as sset,
-           coalesce(max(vr) >= 14, false) as slow,       -- a far connection (332+ blocks) can be inside the view only when the view is 14+ chunks: then it is remade on every pass and cannot be skipped
+           (coalesce(max(vr) >= 14, false) or count(*) filter (where manh > 0 or cheb > 0 or moved or vd) * 2 >= count(*)) as all3,       -- (a far connection (332+ blocks) can be inside the view only when the view is 14+ chunks: then it is remade on every pass and cannot be skipped)
            array_agg(pl.eid) filter (where pl.moved and coalesce(pl.cnt, 0) < (case when coalesce(pl.st, 0) & 2 = 0 then tot.nn else tot.na end) - (case when pl.st is not null and (pl.st & 1) = 1 then 1 else 0 end)) as dset
       from pl, tot),
   cand as (
-    select c.* from sets, lateral mc.wp_cand(sets.bset, sets.lset, sets.cset, sets.vcset, sets.pset, sets.vset, sets.slow, sets.fset, n) c where p_phase = 1
+    select c.* from sets, lateral mc.wp_cand(sets.bset, sets.lset, sets.cset, sets.vcset, sets.pset, sets.vset, sets.all3, sets.fset) c where p_phase = 1
     union all select c.* from sets, lateral mc.wp_cand_missing(sets.dset) c where p_phase = 1
     union all select c.* from sets, lateral mc.wp_cand_state(sets.sset) c where p_phase = 2),
   pr as (
@@ -203,11 +200,23 @@ begin
                 when ok = 1 and manh > 0 then 'update' when ok = 2 and cheb > 0 then 'update'
                 when ok = 3 and abs(mc.wp_angle(rx, rz, sx, sz) - oang) > 0.008726646::real then 'update' end as act
       from pr),
+  -- the azimuth connections of a crowd that moves, all looked at in one scan (what wp_cand leaves to this): only the ones with an event come out
+  azc as (
+    select r.eid as rcv, r.conn_id as rconn, s.eid as src, s.uuid as suuid, s.bx, s.by, s.bz, s.cx as scx, s.cz as scz, 3::smallint as ok,
+           case when not f.want then 'untrack' when f.vis or not f.far then 'remake' else 'update' end as what,
+           case when f.far then 3 when not f.vis then 2 else 1 end as nk, mc.wp_angle(r.x, r.z, s.x, s.z) as ang
+      from mc.wp w join pl r on r.eid = w.rcv join pl s on s.eid = w.src,
+           lateral (select (s.st is not null and (s.st & 1) = 1 and not ((coalesce(r.st, 0) & 2) = 0 and (s.st & 2) = 2)) as want,
+                           (abs(s.cx - r.cx) <= r.vr and abs(s.cz - r.cz) <= r.vr) as vis,
+                           (sqrt((r.x - s.x) ^ 2 + (r.y - s.y) ^ 2 + (r.z - s.z) ^ 2)::real > 332::real) as far) f
+     where p_phase = 1 and w.kind = 3 and (select all3 from sets)
+       and (not f.want or f.vis or not f.far or abs(mc.wp_angle(r.x, r.z, s.x, s.z) - w.ang) > 0.008726646::real)),
   ev as materialized (
     select dc.rcv, dc.rconn, dc.src,
            case when dc.ok is null then 'track' else dc.act end as what, dc.nk, dc.ok, dc.suuid, dc.bx, dc.by, dc.bz, dc.scx, dc.scz,
            case when dc.ok is null or dc.act = 'remake' or dc.ok = 3 then mc.wp_angle(dc.rx, dc.rz, dc.sx, dc.sz) end as ang       -- (the angle is stored with every connection made; an update of a block or chunk one does not look at it)
-      from dc where (dc.ok is null and dc.want and dc.may_create) or dc.act is not null),
+      from dc where (dc.ok is null and dc.want and dc.may_create) or dc.act is not null
+    union all select azc.rcv, azc.rconn, azc.src, azc.what, azc.nk, azc.ok, azc.suuid, azc.bx, azc.by, azc.bz, azc.scx, azc.scz, azc.ang from azc),
   -- the bulk of a walking crowd's packets: a block connection of a source that moved one block is a plain UPDATE of the source's block position (no remake, no state to look at: the source
   -- transmits and every receiver wants it), so it skips the evaluation above and goes straight to the packets
   lp as (select l.eid, mc.pkt_waypoint(2, l.uuid, 1, l.bx, l.by, l.bz, 0) as u1 from pl l where p_phase = 1 and l.eid = any(coalesce((select lset from sets), '{}'::int[]))),
