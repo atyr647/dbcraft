@@ -486,6 +486,9 @@ OLD = `dbcraft.entity_ai = wander` and `dbcraft.entity_lane_retry = 1`; RETRY = 
   1012 B) and ignoring the goal in the verdict (killed by 1012 C).  The floor-summary hook that also voids verdicts is redundant with the block-event trigger (a mutant without it survives, as it should); it
   stays as a second path for changes that do not go through `mc.block_event`.
 
+* **Whole suite** on the final tree (`tests/sql/prun.sh`, JOBS=3, 12 minutes): 83 files, **3,225 checks, all passing**, and `tools/check_overrides.py` (60, all listed), `tools/check_inlining.sh` and
+  `tools/check_fresh_migration.sh` green.
+
 ### 10.5 What was not done, and the floors now
 
 * **Lane state in per-chunk-cell array rows**: not built.  With the vanilla rates the events are 12-15 a tick in view and 0 outside; what remains is statement fixed cost (set-up, scans of the lane table), which an
