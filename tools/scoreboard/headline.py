@@ -36,10 +36,15 @@ PICK = [  # (scenario label, metric prefix, shown name)
     ("terrain generation", "CPU per chunk, whole process tree, steady", "CPU per chunk (ms), not like for like"),
     ("10-minute soak", "CPU", "CPU (cores)"), ("10-minute soak", "clients dropped", "clients dropped"), ("10-minute soak", "chat p50", "chat p50 (ms)"), ("10-minute soak", "tick mean", "tick mean (ms)"),
     ("10-minute soak", "tick p99", "tick p99 (ms)"),
-    ("crowded spawn", "tick mean", "tick mean (ms)"), ("crowded spawn", "tick p99", "tick p99 (ms)"), ("crowded spawn", "clients dropped", "clients dropped (of 500)"),
-    ("crowded spawn", "clients in play", "clients in play when measured (of 500)"), ("crowded spawn", "chat p50", "chat p50 (ms)"), ("crowded spawn", "CPU", "CPU (cores)"),
+    ("crowded spawn: 500 players in 30 x 30 chunks, all moving", "tick mean", "tick mean (ms)"), ("crowded spawn: 500 players in 30 x 30 chunks, all moving", "tick p99", "tick p99 (ms)"),
+    ("crowded spawn: 500 players in 30 x 30 chunks, all moving", "clients dropped", "clients dropped (of 500)"), ("crowded spawn: 500 players in 30 x 30 chunks, all moving", "clients in play", "clients in play when measured (of 500)"),
+    ("crowded spawn: 500 players in 30 x 30 chunks, all moving", "chat p50", "chat p50 (ms)"), ("crowded spawn: 500 players in 30 x 30 chunks, all moving", "CPU", "server CPU (cores)"),
+    ("crowded spawn: 500 players in 30 x 30 chunks, all moving", "load generator", "load generator CPU (cores)"),
+    ("crowded spawn: 500 players in 30 x 30 chunks, 20%", "tick mean", "tick mean (ms)"), ("crowded spawn: 500 players in 30 x 30 chunks, 20%", "tick p99", "tick p99 (ms)"),
+    ("crowded spawn: 500 players in 30 x 30 chunks, 20%", "clients dropped", "clients dropped (of 500)"), ("crowded spawn: 500 players in 30 x 30 chunks, 20%", "chat p50", "chat p50 (ms)"),
     ("500 players over 100 x 100 chunks, all moving", "tick mean", "tick mean (ms)"), ("500 players over 100 x 100 chunks, all moving", "tick p99", "tick p99 (ms)"),
     ("500 players over 100 x 100 chunks, all moving", "clients dropped", "clients dropped (of 500)"), ("500 players over 100 x 100 chunks, all moving", "chat p50", "chat p50 (ms)"),
+    ("500 players over 100 x 100 chunks, all moving", "CPU", "server CPU (cores)"), ("500 players over 100 x 100 chunks, all moving", "load generator", "load generator CPU (cores)"),
     ("500 players over 100 x 100 chunks, 20%", "tick mean", "tick mean (ms)"), ("500 players over 100 x 100 chunks, 20%", "tick p99", "tick p99 (ms)"),
     ("500 players over 100 x 100 chunks, 20%", "clients dropped", "clients dropped (of 500)"), ("500 players over 100 x 100 chunks, 20%", "chat p50", "chat p50 (ms)"),
 ]
@@ -65,4 +70,5 @@ def main():
     print("\n".join(out))
 
 
-main()
+if __name__ == "__main__":
+    main()
