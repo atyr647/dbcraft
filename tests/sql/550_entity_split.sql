@@ -156,6 +156,7 @@ delete from mc.entity_tick_log;
 select mc.entity_step(9001);
 select t.is_true('E: mode off: mc.entity_step does nothing (no entity tick happened)', not exists (select 1 from mc.entity_tick_log where tick = 9001));
 update mc.server_property set value = 'inline' where key = 'dbcraft.entity-mode';
+select mc.entity_spawn('minecraft:item', 0.5, -59.0, 0.5, p_tick => 9006);          -- (with no entity row at all the tick is empty and returns early: sql/550, tests/sql/1010)
 select mc.entity_step(9007);
 select t.is_true('E: inline mode: mc.entity_step runs the entity tick', exists (select 1 from mc.entity_tick_log where tick = 9007));
 update mc.server_property set value = 'bogus' where key = 'dbcraft.entity-mode';

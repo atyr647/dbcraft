@@ -97,7 +97,7 @@ insert into gate_cases (name, stmt, clean) values
   ('a frame in the connection layer''s batch', 'insert into net.batch (conn_id, seq, payload) values (1, 1, ''\x00'')', 'truncate net.batch'),
   ('a frame in the outbox', 'insert into net.outbox (conn_id, data) values (1, ''\x00'')', 'truncate net.outbox'),
   ('a chunk request', 'insert into mc.chunk_request (dimension, cx, cz, prio) values (''minecraft:overworld'', 0, 0, 0)', 'truncate mc.chunk_request'),
-  ('entities switched on', 'update mc.server_property set value = ''inline'' where key = ''dbcraft.entity-mode''', 'update mc.server_property set value = ''off'' where key = ''dbcraft.entity-mode'''),
+  ('entities switched on (split)', 'update mc.server_property set value = ''split'' where key = ''dbcraft.entity-mode''', 'update mc.server_property set value = ''off'' where key = ''dbcraft.entity-mode'''),
   ('the switch', 'select set_config(''dbcraft.quiet_tick'', ''off'', false)', 'select set_config(''dbcraft.quiet_tick'', ''on'', false)');
 select t.tick();
 select t.tick();

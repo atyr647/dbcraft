@@ -223,3 +223,179 @@
  player             |  0.0 |    0.0 |   0.0 |  0.0 |    3.00 |      3.0 |    0.00 |      0.0
  entity_clock       |  0.0 |    1.0 |   1.0 |  0.0 |    2.00 |      2.0 |    0.00 |      0.0
 DONE 1 2 3
+=== 4-empty-tick  (2026-11-05 15:25:24 UTC, load 0.86), 1000 ticks per cell, round 1 then round 2 (A/B repeat)
+round 1: off players=0 | hook cpu us avg 19 p50 0 min 0 (wall avg 14 p50 12) | entity connection cpu us avg 8 p50 0 | wal B/tick 40
+round 1: inline players=0 | hook cpu us avg 364 p50 0 min 0 (wall avg 374 p50 330) | entity connection cpu us avg 8 p50 0 | wal B/tick 49
+round 1: split players=0 | hook cpu us avg 75 p50 0 min 0 (wall avg 50 p50 44) | entity connection cpu us avg 396 p50 0 | wal B/tick 41
+round 1: off players=50 | hook cpu us avg 23 p50 0 min 0 (wall avg 17 p50 14) | entity connection cpu us avg 8 p50 0 | wal B/tick 33
+round 1: inline players=50 | hook cpu us avg 477 p50 0 min 0 (wall avg 487 p50 438) | entity connection cpu us avg 16 p50 0 | wal B/tick 49
+round 1: split players=50 | hook cpu us avg 48 p50 0 min 0 (wall avg 43 p50 40) | entity connection cpu us avg 424 p50 0 | wal B/tick 41
+round 1: off players=200 | hook cpu us avg 4 p50 0 min 0 (wall avg 10 p50 11) | entity connection cpu us avg 0 p50 0 | wal B/tick 33
+round 1: inline players=200 | hook cpu us avg 660 p50 0 min 0 (wall avg 659 p50 615) | entity connection cpu us avg 12 p50 0 | wal B/tick 49
+round 1: split players=200 | hook cpu us avg 67 p50 0 min 0 (wall avg 59 p50 49) | entity connection cpu us avg 773 p50 0 | wal B/tick 41
+round 2: off players=0 | hook cpu us avg 12 p50 0 min 0 (wall avg 12 p50 13) | entity connection cpu us avg 4 p50 0 | wal B/tick 25
+round 2: inline players=0 | hook cpu us avg 446 p50 0 min 0 (wall avg 433 p50 349) | entity connection cpu us avg 12 p50 0 | wal B/tick 49
+round 2: split players=0 | hook cpu us avg 70 p50 0 min 0 (wall avg 44 p50 41) | entity connection cpu us avg 381 p50 0 | wal B/tick 41
+round 2: off players=50 | hook cpu us avg 24 p50 0 min 0 (wall avg 14 p50 14) | entity connection cpu us avg 8 p50 0 | wal B/tick 33
+round 2: inline players=50 | hook cpu us avg 665 p50 0 min 0 (wall avg 690 p50 673) | entity connection cpu us avg 12 p50 0 | wal B/tick 49
+round 2: split players=50 | hook cpu us avg 75 p50 0 min 0 (wall avg 59 p50 45) | entity connection cpu us avg 630 p50 0 | wal B/tick 147
+round 2: off players=200 | hook cpu us avg 15 p50 0 min 0 (wall avg 12 p50 13) | entity connection cpu us avg 4 p50 0 | wal B/tick 41
+round 2: inline players=200 | hook cpu us avg 648 p50 0 min 0 (wall avg 636 p50 621) | entity connection cpu us avg 13 p50 0 | wal B/tick 49
+round 2: split players=200 | hook cpu us avg 45 p50 0 min 0 (wall avg 60 p50 52) | entity connection cpu us avg 867 p50 0 | wal B/tick 36
+--- profile inline players=0 (pg_stat_statements track=all, track_functions=all: inflates every statement by about 15-25 us)
+                                                              result                                                              
+ inline players=0 | hook cpu us avg 598 p50 0 min 0 (wall avg 556 p50 431) | entity connection cpu us avg 0 p50 0 | wal B/tick 55
+       section        
+ FUNCTIONS (per tick)
+        funcname         | calls_tick | total_us | self_us 
+-------------------------+------------+----------+---------
+ entity_step             |       1.13 |    686.2 |    14.2
+ entity_tick             |       1.13 |    660.7 |   155.6
+ entity_ai_ids           |       1.13 |    124.9 |   124.9
+ entity_lane_step        |       1.13 |     97.8 |    17.9
+ entity_pickup_dispatch  |       1.13 |     95.2 |     3.6
+ entity_viewers_refresh  |       1.13 |     91.7 |    77.8
+ entity_pickup           |       1.13 |     77.8 |    77.8
+ entity_auto_tick        |       1.13 |     65.8 |    14.0
+ entity_mode             |       4.53 |     58.2 |    58.2
+ entity_auto_run         |       1.13 |     51.8 |    51.8
+ prop_int                |       2.27 |     27.9 |    27.9
+ entity_lane_flush       |       1.13 |     18.9 |    18.9
+ entity_auto_rebase      |       0.00 |     18.5 |    18.5
+ entity_physics_ids      |       1.13 |     13.7 |    13.7
+ entity_tracker          |       1.13 |      9.5 |     9.5
+ entity_despawn          |       1.13 |      8.5 |     8.5
+ entity_auto_try         |       2.27 |      7.2 |     7.2
+ entity_lane_try         |       2.27 |      5.7 |     5.7
+ server_property_sync    |       0.01 |      3.5 |     2.6
+ vis_on_leave            |       0.67 |      3.5 |     3.5
+ invalidate_config_begin |       0.01 |      1.0 |     1.0
+ varint                  |       0.00 |      0.0 |     0.0
+ pid                     |       0.00 |      0.0 |     0.0
+ chunk_packet_id         |       0.00 |      0.0 |     0.0
+                   section                   
+ STATEMENTS (nested ones included, per tick)
+ us_tick | calls_tick | us_call | rows_tick | wal_b_tick | blks_tick |                                                               query                                                                
+---------+------------+---------+-----------+------------+-----------+------------------------------------------------------------------------------------------------------------------------------------
+   531.8 |       1.00 |   531.8 |       1.0 |          0 |     178.4 | SELECT mc.entity_step(tk)
+   510.5 |       1.00 |   510.5 |       1.0 |          0 |     176.4 | SELECT mc.entity_tick(p_tick)
+    77.8 |       1.00 |    77.8 |       1.0 |          0 |      82.1 | SELECT mc.entity_viewers_refresh(t)
+    46.9 |       1.00 |    46.9 |       1.0 |          0 |       0.0 | select * from mc.entity_auto_run(p_tick, true, null)
+    31.2 |       4.00 |     7.8 |       4.0 |          0 |       8.0 | coalesce(nullif((select value from mc.server_property where key = 'dbcraft.entity-mode'), ''), 'off')
+    29.1 |       1.00 |    29.1 |       0.0 |          0 |      80.0 | select distinct on (e.id) e.id as eid, e.data, pl.uuid, pl.entity_id as peid, pl.conn_id from mc.player pl cro
+    27.6 |       1.00 |    27.6 |       1.0 |          0 |      80.0 | select array_agg(pl.conn_id), array_agg(pl.chunk_x), array_agg(pl.chunk_z), array_agg(vc.cx), array_agg(vc.cz) 
+    19.1 |       1.00 |    19.1 |       1.0 |          0 |       4.0 | insert into mc.entity_tick_log (tick, awake, moved, sent, packets, ms_physics, ms_ai, ms_tracker, ms_pickup, ms_total) values 
+    15.0 |       1.00 |    15.0 |       1.0 |          0 |       3.0 | update mc.entity_clock set last_tick = t
+    14.1 |       2.00 |     7.0 |       2.0 |          0 |       4.0 | (select value::int from mc.server_property where key = k)
+     7.3 |       1.00 |     7.3 |       1.0 |          0 |       0.0 | SELECT mc.entity_auto_try(t, fl || ai)
+     6.4 |       1.00 |     6.4 |       1.0 |          0 |       0.1 | SELECT mc.entity_despawn(t)
+     5.3 |       1.00 |     5.3 |       1.0 |          0 |       0.0 | SELECT mc.entity_lane_try(t, fl || ai)
+     3.8 |       1.00 |     3.8 |       1.0 |          0 |       0.0 | to_regclass($1) is not null and not exists (select $2 from mc.entity e where not e.deep_sleep and e.lane_until = $3)
+     3.5 |       1.00 |     3.5 |       1.0 |          0 |       0.0 | SELECT mc.entity_auto_try(t, ids || lids)
+     2.9 |       1.00 |     2.9 |       1.0 |          0 |       0.0 | SELECT mc.entity_lane_try(t, ids || lids)
+     2.4 |       1.00 |     2.4 |       1.0 |          0 |       1.0 | select c.last_tick from mc.entity_clock c
+     2.1 |       1.00 |     2.1 |       1.0 |          0 |       0.0 | with u as ( update mc.entity e set gx = g.gx, gz = g.gz, goal_until = p_tick + g.dur, yaw = g.yaw, deep_sleep = $6, 
+     1.8 |       1.00 |     1.8 |       1.0 |          0 |       0.0 | select count(*) > $1, min(v.cx - v.r), max(v.cx + v.r), min(v.cz - v.r), max(v.cz + v.r) from mc.entit
+     1.8 |       1.00 |     1.8 |       0.0 |          0 |       0.0 | with gone as (delete from mc.entity_viewer_cell vc where vc.conn_id not in (select pl.conn_id from mc.player pl where pl.conn_id i
+     1.5 |       1.00 |     1.5 |       1.0 |          0 |       0.0 | with u as ( update mc.entity e set gx = c.gx, gz = c.gz, goal_until = p_tick + $2, yaw = c.yaw, deep_sleep = $3, phys_tick
+     1.2 |       1.00 |     1.2 |       1.0 |          0 |       0.0 | select coalesce(array_agg(l.id), $2) from mc.entity_lane l where not l.auto and (l.goal_until <= p_tick or (l.chase 
+     1.2 |       1.00 |     1.2 |       1.0 |          0 |       0.0 | select coalesce(bool_or(l.goal_until <= p_tick), $22), coalesce(bool_or(l.cx between bx0 and bx1 and l.cz between bz0 and bz1), $2
+     1.1 |       1.00 |     1.1 |       1.0 |          0 |       0.0 | select coalesce(array_agg(l.id), $2) from mc.entity_lane l where not l.auto and l.slot = (p_tick % l.every)::int and l.go
+     0.7 |       1.00 |     0.7 |       1.0 |          0 |       0.0 | exists (select $1 from mc.entity e where e.last_sent_tick = $2)
+     0.7 |       1.00 |     0.7 |       1.0 |          0 |       0.0 | coalesce(p_tick, (select game_time from mc.game_state limit 1), 0)
+     0.7 |       1.00 |     0.7 |       1.0 |          0 |       0.0 | select exists (select $2 from mc.entity_lane l where l.auto and l.lazy and l.id % $3 = (p_tick % $4)::int and l.goal_until <= p_ti
+     0.2 |       0.00 |    53.2 |       0.0 |          0 |       0.0 | insert into net.setting (key, value) select m.net_key, new.value from net.setting_map m where m.mc_key = new.key on conflict (
+         section          
+ TABLES (tuples per tick)
+      relname       | ins | upd | del | seqscan | seq_rows | idxscan | idx_rows 
+--------------------+-----+-----+-----+---------+----------+---------+----------
+ server_property    | 0.0 | 0.0 | 0.0 |    6.81 |    551.3 |    0.00 |      0.0
+ entity_clock       | 0.0 | 1.1 | 0.0 |    2.27 |      2.3 |    0.00 |      0.0
+ player             | 0.0 | 0.0 | 0.7 |    2.27 |      0.7 |    0.00 |      0.0
+ vtrk               | 0.0 | 0.0 | 0.7 |    0.00 |      0.0 |    0.67 |      0.7
+ entity_tick_log    | 1.1 | 0.0 | 0.0 |    0.00 |      0.0 |    1.13 |      0.0
+ inventory_slot     | 0.0 | 0.0 | 0.0 |    0.00 |      0.0 |    0.67 |      0.0
+ entity_lane        | 0.0 | 0.0 | 0.0 |    4.54 |      0.0 |    0.01 |      0.0
+ entity_cell_viewer | 0.0 | 0.0 | 0.0 |    1.01 |      0.0 |    0.00 |      0.0
+ menu_slot          | 0.0 | 0.0 | 0.0 |    0.00 |      0.0 |    0.67 |      0.0
+ entity             | 0.0 | 0.0 | 0.0 |    4.59 |      0.0 |    0.09 |      0.0
+ menu_state         | 0.0 | 0.0 | 0.0 |    0.00 |      0.0 |    0.67 |      0.0
+ ender_slot         | 0.0 | 0.0 | 0.0 |    0.00 |      0.0 |    0.67 |      0.0
+--- profile inline players=200 (pg_stat_statements track=all, track_functions=all: inflates every statement by about 15-25 us)
+                                                               result                                                               
+ inline players=200 | hook cpu us avg 912 p50 0 min 0 (wall avg 869 p50 736) | entity connection cpu us avg 0 p50 0 | wal B/tick 27
+       section        
+ FUNCTIONS (per tick)
+        funcname        | calls_tick | total_us | self_us 
+------------------------+------------+----------+---------
+ entity_step            |       1.13 |   2086.6 |    12.5
+ entity_tick            |       1.13 |   2063.8 |   149.7
+ entity_viewers_refresh |       1.13 |   1404.5 |  1388.5
+ entity_pickup_dispatch |       1.13 |    151.3 |     4.0
+ entity_pickup          |       1.13 |    134.4 |   134.4
+ entity_ai_ids          |       1.13 |    131.8 |   131.8
+ entity_lane_step       |       1.13 |    129.6 |    20.6
+ entity_auto_tick       |       1.13 |     94.0 |    15.0
+ entity_auto_run        |       1.13 |     79.0 |    79.0
+ entity_mode            |       4.53 |     50.1 |    50.1
+ prop_int               |       2.27 |     27.6 |    27.6
+ entity_lane_flush      |       1.13 |     22.4 |    22.4
+ vis_on_join            |       0.67 |     19.0 |    13.4
+ entity_auto_rebase     |       0.00 |     18.1 |    18.1
+ entity_physics_ids     |       1.13 |     13.3 |    13.3
+ entity_despawn         |       1.13 |     10.5 |    10.5
+ entity_tracker         |       1.13 |      9.1 |     9.1
+ entity_auto_try        |       2.27 |      7.3 |     7.3
+ entity_lane_try        |       2.27 |      6.5 |     6.5
+ vis_on                 |       0.67 |      4.8 |     4.8
+ server_property_sync   |       0.01 |      2.3 |     1.7
+ pid                    |       0.01 |      1.5 |     1.5
+ varint                 |       0.00 |      0.9 |     0.9
+ angle_byte             |       0.05 |      0.8 |     0.8
+                   section                   
+ STATEMENTS (nested ones included, per tick)
+ us_tick | calls_tick | us_call | rows_tick | wal_b_tick | blks_tick |                                                               query                                                                
+---------+------------+---------+-----------+------------+-----------+------------------------------------------------------------------------------------------------------------------------------------
+   847.3 |       1.00 |   847.3 |       1.0 |          0 |     603.4 | SELECT mc.entity_step(tk)
+   827.4 |       1.00 |   827.4 |       1.0 |          0 |     601.4 | SELECT mc.entity_tick(p_tick)
+   318.3 |       1.00 |   318.3 |       1.0 |          0 |     505.2 | SELECT mc.entity_viewers_refresh(t)
+   183.5 |       1.00 |   183.5 |       1.0 |          0 |     480.0 | select array_agg(pl.conn_id), array_agg(pl.chunk_x), array_agg(pl.chunk_z), array_agg(vc.cx), array_agg(vc.cz) 
+    81.2 |       1.00 |    81.2 |       0.0 |          0 |      23.0 | with gone as (delete from mc.entity_viewer_cell vc where vc.conn_id not in (select pl.conn_id from mc.player pl where pl.conn_id i
+    75.4 |       1.00 |    75.4 |       0.0 |          0 |      80.0 | select distinct on (e.id) e.id as eid, e.data, pl.uuid, pl.entity_id as peid, pl.conn_id from mc.player pl cro
+    70.3 |       1.00 |    70.3 |       1.0 |          0 |       2.0 | select * from mc.entity_auto_run(p_tick, true, null)
+    25.4 |       4.00 |     6.4 |       4.0 |          0 |       8.0 | coalesce(nullif((select value from mc.server_property where key = 'dbcraft.entity-mode'), ''), 'off')
+    22.8 |       1.00 |    22.8 |       1.0 |          0 |       2.0 | select count(*) > $1, min(v.cx - v.r), max(v.cx + v.r), min(v.cz - v.r), max(v.cz + v.r) from mc.entit
+    18.8 |       1.00 |    18.8 |       1.0 |          0 |       4.0 | insert into mc.entity_tick_log (tick, awake, moved, sent, packets, ms_physics, ms_ai, ms_tracker, ms_pickup, ms_total) values 
+    15.4 |       1.00 |    15.4 |       1.0 |          0 |       3.0 | update mc.entity_clock set last_tick = t
+    13.8 |       2.00 |     6.9 |       2.0 |          0 |       4.0 | (select value::int from mc.server_property where key = k)
+     8.0 |       1.00 |     8.0 |       1.0 |          0 |       0.1 | SELECT mc.entity_despawn(t)
+     7.3 |       1.00 |     7.3 |       1.0 |          0 |       0.0 | SELECT mc.entity_auto_try(t, fl || ai)
+     6.2 |       1.00 |     6.2 |       1.0 |          0 |       0.0 | SELECT mc.entity_lane_try(t, fl || ai)
+     4.1 |       1.00 |     4.1 |       1.0 |          0 |       0.0 | SELECT mc.entity_auto_try(t, ids || lids)
+     3.8 |       1.00 |     3.8 |       1.0 |          0 |       0.0 | to_regclass($1) is not null and not exists (select $2 from mc.entity e where not e.deep_sleep and e.lane_until = $3)
+     2.9 |       1.00 |     2.9 |       1.0 |          0 |       0.0 | SELECT mc.entity_lane_try(t, ids || lids)
+     2.4 |       1.00 |     2.4 |       1.0 |          0 |       1.0 | select c.last_tick from mc.entity_clock c
+     2.0 |       1.00 |     2.0 |       1.0 |          0 |       0.0 | with u as ( update mc.entity e set gx = g.gx, gz = g.gz, goal_until = p_tick + g.dur, yaw = g.yaw, deep_sleep = $6, 
+     1.6 |       1.00 |     1.6 |       1.0 |          0 |       0.0 | select coalesce(array_agg(l.id), $2) from mc.entity_lane l where not l.auto and (l.goal_until <= p_tick or (l.chase 
+     1.5 |       1.00 |     1.5 |       1.0 |          0 |       0.0 | with u as ( update mc.entity e set gx = c.gx, gz = c.gz, goal_until = p_tick + $2, yaw = c.yaw, deep_sleep = $3, phys_tick
+     1.2 |       1.00 |     1.2 |       1.0 |          0 |       0.0 | select coalesce(bool_or(l.goal_until <= p_tick), $22), coalesce(bool_or(l.cx between bx0 and bx1 and l.cz between bz0 and bz1), $2
+     1.1 |       1.00 |     1.1 |       1.0 |          0 |       0.0 | select coalesce(array_agg(l.id), $2) from mc.entity_lane l where not l.auto and l.slot = (p_tick % l.every)::int and l.go
+     0.9 |       1.00 |     0.9 |       1.0 |          0 |       0.0 | select exists (select $2 from mc.entity_lane l where l.auto and l.lazy and l.id % $3 = (p_tick % $4)::int and l.goal_until <= p_ti
+     0.7 |       1.00 |     0.7 |       1.0 |          0 |       0.0 | exists (select $1 from mc.entity e where e.last_sent_tick = $2)
+     0.6 |       1.00 |     0.6 |       1.0 |          0 |       0.0 | coalesce(p_tick, (select game_time from mc.game_state limit 1), 0)
+     0.2 |       0.00 |    64.5 |       0.0 |          0 |       0.0 | insert into net.setting (key, value) select m.net_key, new.value from net.setting_map m where m.mc_key = new.key on conflict (
+         section          
+ TABLES (tuples per tick)
+      relname       |  ins  | upd | del | seqscan | seq_rows | idxscan | idx_rows 
+--------------------+-------+-----+-----+---------+----------+---------+----------
+ player             |   0.7 | 0.0 | 0.0 |    2.27 |    453.3 |    1.13 |    226.0
+ entity_viewer_cell |   0.7 | 0.0 | 0.0 |    2.27 |    452.7 |  227.33 |    226.0
+ server_property    |   0.0 | 0.0 | 0.0 |    7.47 |    605.3 |    0.00 |      0.0
+ entity_cell_viewer | 294.0 | 0.0 | 0.0 |    0.01 |      0.0 |  294.00 |      0.0
+ entity_clock       |   0.0 | 1.1 | 0.0 |    2.27 |      2.3 |    0.00 |      0.0
+ entity_tick_log    |   1.1 | 0.0 | 0.0 |    0.00 |      0.0 |    1.13 |      0.0
+ game_state         |   0.0 | 0.0 | 0.0 |    0.67 |      0.7 |    0.00 |      0.0
+ vtrk               |   0.7 | 0.0 | 0.0 |    0.00 |      0.0 |    0.67 |      0.0
+ entity_lane        |   0.0 | 0.0 | 0.0 |    4.55 |      0.0 |    0.01 |      0.0
+ entity             |   0.0 | 0.0 | 0.0 |   61.26 |      0.0 |    0.09 |      0.0
+DONE empty
