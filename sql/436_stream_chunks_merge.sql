@@ -57,7 +57,7 @@ begin
                     if ecn is not null then
                         insert into mc.chunk_cursor (conn_id, dimension, cx, cz, r, ocx, ocz, orr, next_o)
                         select s.conn_id, dim, s.ncx, s.ncz, s.nr, s.ocx, s.ocz, s.orr,
-                               coalesce((select min(sp.o) from mc.chunk_spiral sp where sp.r = s.nr and sp.d >= l.l * l.l), 1) - 1
+                               coalesce((select sp.o from mc.chunk_spiral sp where sp.r = s.nr and sp.d >= l.l * l.l order by sp.d, sp.o limit 1), 1) - 1
                           from unnest(sc, sncx, sncz, socx, socz, snr, sor) as s(conn_id, ncx, ncz, ocx, ocz, nr, orr),
                                lateral (select least(greatest(s.orr + 1 - abs(s.ncx - s.ocx), 0), greatest(s.orr + 1 - abs(s.ncz - s.ocz), 0)) as l) l
                          where s.conn_id = any (ecn);

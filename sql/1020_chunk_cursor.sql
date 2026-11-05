@@ -25,9 +25,11 @@ create table if not exists mc.chunk_spiral (
     dx int not null,
     dz int not null,
     d  int not null,
-    primary key (r, o)
+    primary key (r, o) include (dx, dz, d)          -- covering: a window of the spiral is an index-only scan
 );
-create index if not exists chunk_spiral_d on mc.chunk_spiral (r, d);
+-- (r, d, o): the first ordinal with a squared distance of at least d is the first entry of an index-only scan, not the minimum over a range
+drop index if exists mc.chunk_spiral_d;
+create index if not exists chunk_spiral_do on mc.chunk_spiral (r, d, o);
 insert into mc.chunk_spiral (r, o, dx, dz, d)
 select r.r, row_number() over (partition by r.r order by q.dx * q.dx + q.dz * q.dz, q.dx, q.dz), q.dx, q.dz, q.dx * q.dx + q.dz * q.dz
   from generate_series(1, 40) r(r) cross join lateral (select dx, dz from generate_series(-r.r, r.r) dx cross join generate_series(-r.r, r.r) dz) q
