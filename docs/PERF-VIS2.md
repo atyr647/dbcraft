@@ -62,13 +62,18 @@ Notation: `b(P)` = (vis_x, vis_z) of P, `pos(P)` = where P is now, `disp(P) = |p
    the session, a new session of the same row has a new one); whose radius (`vis_rng`) or spectator state (`vis_spec`) differs from the ones its pairs were evaluated with (a changed view distance, a changed game
    mode, a changed `view-distance` property: then step 2 does not hold for it); a teleported player whose client still waits for its chunks (its pairs were evaluated at positions that are not its
    `vis_x`; it is also the old rule's `stale`, kept exactly: adds suppressed, no deletes); a player that is 4 blocks from its baseline without being dirty (cannot happen through the movement step, but then
-   step 2 is false); and a dirty player more than 14 blocks from its baseline (a teleport, a jump: the circle of its bound would cover the world anyway).  The state is three columns of `mc.player`
-   written by the update that already clears `vis_dirty` (no extra write).  After a crash the evaluations are as old as the rows: a player whose session is gone has no valid `vis_eid`.
+   step 2 is false); **a dead player** (sql/836 deletes the pairs of a corpse 19 ticks after the death, behind this function's back, and the old function brings them back when somebody near it is dirty: a
+   quirk that has to be kept to have the same output); **a dirty player whose chunk before the move is unknown** (`vis_ocx` is null: sql/468's marker for a player made dirty by anything but the movement step: join,
+   respawn, view distance change, game mode re-check, teleport; the respawn in sql/836 deletes all pairs of the player, `tests/sql/830` found that when the first version did not know about it); and every dirty player
+   that jumped far has a disp that makes its ring cover everybody (a bound over 14 blocks is infinite).  The state is three columns of `mc.player` written by the update that already clears `vis_dirty` (no extra write).
+   A player without a bound that is **not** evaluated itself (a waiting client, a radius or game mode that changed without marking it, a dead player) has its pairs evaluated by the dirty players with what it
+   is now; so that it cannot look trustworthy again if what it is now changes back before it is evaluated (view distance 10, 8, 10), `vis_eid` is set to null at that point and it stays without a bound until
+   it is evaluated.  (Found by the test with game modes changed behind the trigger of sql/900; the same for a view distance property edited twice.)
 5. The chunk-square test of the old code is kept in the exact rule (it is implied by the circle for consistent chunk coordinates; the proof assumes `chunk_x = floor(x / 16)` as the server writes it).
 
-What is **not** covered: the radius or the game mode changing and changing back between two evaluations of the same player while another player evaluates the pair in between (a view distance
-changed and restored within a few ticks with nobody noticing); `dbcraft` never does it, the tests do not.  An administrator who deletes rows of `mc.visible` by hand gets the old function's behaviour
-(pairs come back when a player of them is dirty) only for pairs near the edge: `mc.refresh_visibility_vis_nb` is the one to run after such a repair, once, with all players marked dirty.
+What is **not** covered: a pair state changed by code that neither marks a player nor is one of the cases above.  Today that is nothing in the tree (the writers of `mc.visible` are the refresh functions,
+`mc.on_leave`, and sql/836 for deaths and respawns); an administrator who deletes rows of `mc.visible` by hand gets the old function's behaviour (pairs come back when a player of them is dirty) only for pairs
+near the edge: `mc.refresh_visibility_vis_nb` is the one to run after such a repair, once, with all players marked dirty.
 
 ### Proof by test: `tests/sql/990_vis_boundary.sql`
 
@@ -76,10 +81,11 @@ Random walks, every tick compared with `mc.refresh_visibility_vis_nb` (which `te
 then the new one for real; the pairs of `mc.visible`, the packets per connection in order (md5 over the bytes), the counts and the columns of the player rows that the refresh writes must be equal on
 **every** tick.  The world is moved the way the server moves it: walkers (dirty by the same rule as `mc.apply_player_moves`), idle players, jittering walkers, teleports (half of them a few blocks, half
 across the world) whose client keeps its old view for a while (stale viewers), view distance changes, game mode changes through the real trigger, leaves and joins (a new session of the same row, through the real
-join trigger).  790 ticks, 24,000 dirty-player evaluations, 91,000 pairs added, 48,000 removed, 34,000 packet rows; 210-300 players in the long cases (crowd of 210 in 10 x 10 chunks, 220 players with view
-distances 2 to 32 and everything at once, 200 players over 100 x 100 chunks, 100-110 ticks each), 8 more random worlds.  **Mutation check**: six mutations of the new function (no slack for the player
-that was not evaluated, a client that waited for its chunks keeps its evaluation, the radius rule dropped, the session rule dropped, the game mode rule dropped, the bound ignoring how far the players moved) are
-each shown to make the comparison fail; the first two needed scenarios made for them (jittering walkers; teleports of a few blocks), the first version of the test did not notice them.  About 3.5 minutes.
+join trigger), deaths whose corpses are removed behind the function's back and respawns as sql/836 does them, the `view-distance` property edited under the players, game modes changed without the trigger's mark.  910 ticks, 26,000 dirty-player evaluations, 95,000 pairs added, 48,000 removed, 38,000 packet rows; 210-300 players in the long cases (crowd of 210 in 10 x 10 chunks, 220 players with view
+distances 2 to 32 and everything at once, 200 players over 100 x 100 chunks, 100-110 ticks each), 8 more random worlds.  **Mutation check**: nine mutations of the new function (no slack for the player
+that was not evaluated, a client that waited for its chunks keeps its evaluation, the radius rule dropped, the session rule dropped, the game mode rule dropped, the bound ignoring how far the players moved, a dead
+player trusted, an unknown chunk before the move trusted, a player without a bound looking trustworthy again after its game mode changed back) are each shown to make the comparison fail; four of them needed
+scenarios made for them (jittering walkers; teleports of a few blocks; changes that bypass the marks), the first version of the test did not notice them.  About 5 minutes (3 minutes of it the comparisons).
 
 ### What else changed in the function
 

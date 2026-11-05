@@ -201,7 +201,7 @@ end $$;
 --   The pairs found are probed in mc.visible (the primary key) and only the changes are written: O(pairs near the edge), not O(dirty x online).  A pair to delete is deleted by the tuple id the probe found.
 create or replace function mc.refresh_visibility_vis() returns table(added int, removed int) language plpgsql as $$
 declare srv int := least(mc.prop_int('view-distance'), 32); trk float8 := ((coalesce(mc.prop_int('entity-broadcast-range-percentage'), 100) * 512) / 100)::float8;
-        d int[]; sv int[]; av int[]; at_ int[]; ac int[]; dtid tid[]; wk mc.vis_work; gt bigint := (select game_time from mc.game_state); wp_on boolean;
+        d int[]; sv int[]; wl int[]; av int[]; at_ int[]; ac int[]; dtid tid[]; wk mc.vis_work; gt bigint := (select game_time from mc.game_state); wp_on boolean;
 begin
   added := 0; removed := 0;
   wk := mc.vis_find(gt);                                                    -- one scan of the online players for the whole tick (sql/905)
@@ -217,10 +217,11 @@ begin
     with pc as materialized (        -- every online player, narrow, the columns of the pair loop first: k = half of the bound above (disp + 2), infinite for a player that has none or whose bound is wider than 14 blocks
       select p.entity_id as eid, p.x, p.z, l.rng, (p.entity_id = any (d)) as dirty,
              case when p.vis_eid is not distinct from p.entity_id and p.vis_rng is not distinct from l.rng and p.vis_spec is not distinct from (p.gamemode = 3) and p.vis_x is not null and p.vis_z is not null
-                       and not stl.s and (p.entity_id = any (d) or (p.x - p.vis_x) ^ 2 + (p.z - p.vis_z) ^ 2 < 16)
+                       and not stl.s and not coalesce(p.dead, false) and not (p.entity_id = any (d) and p.vis_ocx is null)
+                       and (p.entity_id = any (d) or (p.x - p.vis_x) ^ 2 + (p.z - p.vis_z) ^ 2 < 16)
                        and (p.x - p.vis_x) ^ 2 + (p.z - p.vis_z) ^ 2 < 196
                   then sqrt((p.x - p.vis_x) ^ 2 + (p.z - p.vis_z) ^ 2) + 2.005 else 'infinity'::float8 end as k,
-             p.conn_id as conn, p.chunk_x as cx, p.chunk_z as cz, (p.gamemode = 3) as spec, l.vd, stl.s as stale
+             p.conn_id as conn, p.chunk_x as cx, p.chunk_z as cz, (p.gamemode = 3) as spec, l.vd, stl.s as stale, p.vis_eid is not null as ve
         from mc.player p
         cross join lateral (select p.tp_ground_tick is not null and coalesce(exists (select 1 from net.conn c where c.conn_id = p.conn_id and (c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z)), false) as s) stl     -- a teleported client has not been sent the chunks of its new position yet (net.stream_chunks runs after this)
         cross join lateral (select greatest(2, least(coalesce(p.view_distance_req, 2), srv)) as vd, least(greatest(2, least(coalesce(p.view_distance_req, 2), srv)) * 16.0, trk) as rng) l
@@ -246,8 +247,9 @@ begin
               from dirs h where h.hit)
     select coalesce(array_agg(v) filter (where inr and not vstale and vt is null), '{}'), coalesce(array_agg(t) filter (where inr and not vstale and vt is null), '{}'),
            coalesce(array_agg(vconn) filter (where inr and not vstale and vt is null), '{}'), coalesce(array_agg(vt) filter (where not inr and vt is not null and not vstale), '{}'),
-           (select coalesce(array_agg(pc.eid), '{}') from pc where pc.stale)
-      into av, at_, ac, dtid, sv from chk;
+           (select coalesce(array_agg(pc.eid), '{}') from pc where pc.stale),
+           (select coalesce(array_agg(pc.eid), '{}') from pc where pc.k = 'infinity'::float8 and not pc.dirty and pc.ve)     -- (not evaluated, no bound, and tested against the dirty players above: see below)
+      into av, at_, ac, dtid, sv, wl from chk;
 
     -- a viewer that was teleported and whose client is still waiting for the chunks of its new position is shown nobody yet: after /tp vanilla sends the chunks, then the entities (recorded: walk)
     if cardinality(av) > 0 then
@@ -280,7 +282,9 @@ begin
     update mc.player p set vis_dirty = false, vis_ocx = null, vis_ocz = null, vis_x = x, vis_z = z, vis_eid = entity_id, vis_spec = (gamemode = 3),
            vis_rng = least(greatest(2, least(coalesce(view_distance_req, 2), srv)) * 16.0, trk)
      where p.entity_id = any (d) and p.vis_dirty and not (p.tp_ground_tick is not null and exists (select 1 from net.conn c where c.conn_id = p.conn_id and (c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z)));
-    update mc.player p set vis_eid = null where p.entity_id = any (sv) and p.vis_eid is not null;
+    -- A player that has no bound but is not evaluated itself (a client waiting for its chunks, a radius or game mode that changed without marking it, a dead player) had pairs evaluated by the dirty players
+    -- with what it is now.  It must stay without a bound until it is evaluated itself: if what it is now changed back before that, its baseline would look right for pairs that were evaluated otherwise.
+    update mc.player p set vis_eid = null where p.entity_id = any (sv || wl) and p.vis_eid is not null;
   end if;
   return next;
 end $$;
