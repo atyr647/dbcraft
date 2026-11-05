@@ -182,3 +182,9 @@ DBCRAFT_PGPORT=.. DBCRAFT_TESTDB=.. tests/bench/game/walk_prof.sh PLAYERS 60 LAB
 DBCRAFT_PGPORT=.. DBCRAFT_TESTDB=.. tests/bench/game/wp_micro.sh PLAYERS 40 [SIDE]
 tests/sql/prun.sh 1000_wp_dirty
 ```
+
+## 7. Full suite (final tree)
+
+`tests/sql/prun.sh` (JOBS=3, shared machine, 14 minutes): **85 files, 3,198 checks, all pass** (`tests/sql/1000_wp_dirty.sql` 39 checks, 220 s of them); `tools/check_overrides.py` (60 overrides, all listed),
+`tools/check_inlining.sh` and `tools/check_fresh_migration.sh` (run at the end of `prun.sh`) green.  `tests/e2e` was not run (no recordings were made; the packet bytes are the ones `tests/sql/900` and the
+differential test pin).
