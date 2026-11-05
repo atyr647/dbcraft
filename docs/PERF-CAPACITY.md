@@ -155,6 +155,10 @@ last byte came, whether it was in play and how much was queued to it, so the nex
   `chunk_wanted_view` clean-up at 500 walkers, but with the tick spending more than 24 ms the global cap of `dbcraft.chunk-budget-per-tick` shrinks to 240 chunks a tick and most wanted rows do wait: the
   rows are needed in exactly the regime this work is about.
 * **Done later (docs/PERF-LOCATOR.md): the locator bar's pass is dirty-driven and the cap of 120 is gone** (default 100,000, 45-70 % of the old pass cost, not the +3 ms target).  The paragraph that stood here ("not done") described the all-pairs pass.
+  **Update (docs/PERF-STORM.md, round 3):** the rows are now one row per connection, a cursor over the precomputed spiral of its square (`sql/930`), when every chunk of the strip exists: at 35 crossings a tick (a backlog) 5,810 -> 3,283 wanted rows and 73 -> 62-69 ms a tick in the in-database bench, under the budget
+  no gain beyond the removed inserts and deletes (12-20 against 18-23 ms a tick).
+* **Not done: the locator bar at more than 120 players, and its pass dirty-driven.**  Up to 120 players the bar is half of a walking tick (the pass is every pair, every tick); the cap of 120 makes the 121st
+  walker make the tick cheaper by 60 ms.  Skipping the pairs where neither side changed block or chunk is possible for block and chunk connections and not for azimuth ones; it needs its own differential test.
 * **Not done: a per-chunk fan-out for the tracker's movement packets** (the crowd).  `mc.vis_move` joins the movers' packets with `mc.visible` per pair: 44,000 rows a tick in a crowd of 500 (69 ms at one client tick
   per tick); viewers in the same chunk do not have the same targets under the exact circle rule.
 * **Not done: dynamics** (another track): `dbcraft.dynamics = off` takes 500 sparse walkers from 130.6 / 143.0 to 121.9 ms wall and 200 from 58 to 41.5 ms.

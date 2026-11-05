@@ -150,15 +150,69 @@ what it takes to finish 200 joins inside the 20 s wait; a tick over 100 ms is ne
 All joined before vanilla: met at both sizes.
 **Not done: deferring the tracker's pairing and first-sync work of a new joiner to later ticks in slices.**  With one join per tick the sum of entry and tracker work per tick does not change by moving the tracker's half one tick later; it only lowers the worst tick if joins are also admitted every second tick (10 per second: 200 joins in 20 s, the wait limit),
 and it moves the pairing and first-tick packets of every joiner by a tick, which `tests/sql/900` pins (tick placement of the pairing bundle, vanilla recordings).  It would take the worst tick to about 50-60 ms; it is the next step.
-The dynamics' own cost (`mc.dyn_step`, 7-17 ms in every tick of this run, 100 ms every 4th tick before) and the chunk packet read for a joiner's first 49 chunks (3-5 ms of the join) are the other large items; the 480 `mc.chunk_wanted` rows per joiner (1.5 ms) could be a cursor.
+The dynamics' own cost (`mc.dyn_step`, 7-17 ms in every tick of this run, 100 ms every 4th tick before) and the chunk packet read for a joiner's first 49 chunks (3-5 ms of the join) are the other large items; the 480 `mc.chunk_wanted` rows per joiner became a cursor in round 3.
 A first A/B of this round was discarded: a function-extraction slip of mine re-applied `sql/315` over the database (pre-`433` `mc.pid`/`mc.sid`, `proto.frame` and `proto.varint`: `mc.pid` per row 400 us), which made "before" look worse (10 s ticks) and polluted the profiles; the database was rebuilt and its function hashes compared with a fresh migration (identical except the development gateway) before the numbers above.
 
 **Round 2 verification.**  `tests/sql/920` has 43 checks now (the VarInt and waypoint-body equivalences, the entity-phase pass against the previous pass on random states, the slices of the bar's UNTRACKs against the previous pass).  Full suite (`tests/sql/prun.sh`, JOBS=2, shared machine): 74 files, 2,949 checks, all pass except `tests/sql/970_quiet_gate.sql` once ("the gate is armed after quiet ticks": a timing check of the idle track,
 not involved with these changes; it passes alone, 92 checks, and the suite run was at load 3-5); `tools/check_overrides.py`, `tools/check_inlining.sh`, `tools/check_fresh_migration.sh` green; gateway unit tests 3 + 58 pass.  `tests/e2e` was not run.
 
+## Round 3: the chunk path without a row per chunk (`sql/930_chunk_cursor.sql`)
+
+`docs/PERF-STORM-MEASURED.md` put two items of a join tick at the top of the database's own work: `net.hook_chunks` (8.6 ms of the 19 ms `net.play_begin`) and `mc.deliver_ready_chunks` (8.4 ms a tick); the crowd profile (`docs/perf-crowd-live-profile-2026-11-05.txt`) put
+`mc.chunk_wanted` rows of walkers that cross chunk borders (1,063 rows a tick, 7 ms of insert, the same rows found again one by one by the delivery) next to them.  Plans (`auto_explain`, nested) of what a join really spent:
+**correction to round 2**: "8 -> 1 ms" for `net.hook_chunks` did not hold.  The existence check was one cost; the other two were a join of the head of the square with `mc.chunk` that the planner ran as a sequential scan of the whole table (4 ms at 8,000 chunks, more as the world grows), and the **480 `mc.chunk_wanted` rows**
+of the tail (4.3 ms: heap and three indexes, ~10 buffers a row).  Both are gone now.
+
+**What changed (same bytes, same order, same budgets).**
+* **`mc.chunk_cursor`: one row per connection instead of one row per wanted chunk.**  Every chunk of a connection's tail exists and the order they are sent in (nearest first, ties by x then z) is the order of the *spiral* of the square, so "what the connection still wants" is
+  "the spiral positions of radius r around (cx, cz) after ordinal `next_o`, except those inside the old square".  `mc.chunk_spiral` (92,000 rows, radii 1-40) is the spiral, precomputed.  `net.hook_chunks` makes a cursor for the 480 chunks after the head, and `net.stream_chunks` (async generation, the crossing path)
+  makes one for the 23-47 chunks that entered a walker's square, whenever the connection wants nothing else and every chunk of it exists.  A one-row marker in `mc.chunk_wanted` (dimension `cursor`) keeps the quiet tick, the trim and the sweep of departed connections working without knowing about cursors.
+* **Cursors become rows the moment anything could differ**: a border crossing or view change first turns the cursor into the rows it stands for (`mc.chunk_cursor_flush`: same distances, same order); the delivery does the same when the client's view is not the one the cursor was made for, or when one of the chunks it is about to send does not exist (any more).
+* **The delivery takes the nearest m positions of every cursor exactly as it takes the nearest m rows** (the same per-connection cap, the same shared cap, the same round robin, the same `dbcraft.tick-budget-ms` scaling) and removes what it sent by moving `next_o`: no probe, no delete per chunk.
+* `net.hook_chunks` finds the head with one primary-key probe per chunk (a lateral join) instead of a plan that read all of `mc.chunk`.  The spiral has a covering primary key and an index on `(r, d, o)`: the first ordinal of a walker's cursor is the first entry of an index-only scan (2.6 -> 0.2 ms for 20 cursors in a tick).
+* `mc.chunk_cursor` is vacuumed by `tools/janitor.sh`; **not** by the gateway's built-in maintenance list (`gateway/src/config.rs`, Rust, not touched here): it holds one short-lived row per connection, so it stays small without; add it there if a long soak shows bloat.
+
+**Proof** (`tests/sql/930_chunk_cursor.sql`, 20 checks): the previous `net.hook_chunks`, `net.stream_chunks` and `mc.deliver_ready_chunks` are pasted into the test, and random scripts of joins at different places and view distances, walks over chunk borders (one chunk, diagonal), teleports (near and far),
+view-distance changes, leaving connections, chunk generation and **chunks that vanish** run twice from the same state, in async and in inline generation, under small budgets (5 chunks a connection and tick, 14 in all; one a tick; the defaults 64/600).  Per tick and connection the bytes sent (chunk batches, forgets, centres), the bytes of the inline head of every join, the whole wanted set
+(rows plus what the cursors stand for, with the distances) and the queue of chunk requests are the same.  It is not vacuous (cursors in at least 8 ticks of an async script, in two connections at a time; 20 ticks of an inline one) and five mutants of the new code are caught: the window in the wrong order, a flush that re-wants the last sent position, a delivery that does not probe the existence of its window,
+an end test that drops a cursor whose window was exactly full, a first ordinal that is too late.  (A sixth, "`net.stream_chunks` does not flush at the border", is *not* caught and cannot be: the delivery's own check for a changed view then does the same flush with the same result; that check is tried directly.)
+
+**Measured** (own cluster in `/dev/shm`, 4 cores shared with other agents: load 1.5-6.4, so every number is one alternating old/new pair or a median of three; raw lines in `docs/perf-storm-results.jsonl.txt` (`file` = `round3`, `round3-jbp`) and `docs/perf-storm-round3-micro.txt`).
+
+*Micro benchmark* (`tests/bench/chunkcursor`, in-database, explored world, view distance 10, wall time inside the statement, old = rows, new = cursors):
+
+| | before | after |
+|---|---|---|
+| `net.hook_chunks` for a joiner (head 49 chunks), ms | 5.4-7.8 (7.4 median of three) | **2.2-2.5** |
+| the delivery of the tails of 50 joiners (24,000 chunks over 40 ticks), ms per tick | 39-42 | **11-13** |
+| 500 walkers, 20 crossings a tick (460 chunks wanted, all delivered in the same tick): `net.stream_chunks` incl. delivery, ms per tick | 18.0-23.4 (median 18.4) | **12.4-20.3 (median 14.0)** |
+| 500 walkers, 35 crossings a tick (805 chunks against the budget of 600: a backlog): ms per tick / wanted rows kept at the end of a tick | 72.8-73.7 / 5,810 | **62.4-69.3 / 3,283** (and 69 cursors) |
+
+When a walker's whole entering strip is delivered in the tick that wants it, the cursor does not save much: the work that remains is reading and framing the packets (the floor); the cursor still replaces the 23 inserts, 23 probes and 23 deletes by one row each of insert and delete.  The gain is in the **backlog and join** regimes (the delivery of the 50 tails: 3.5 x cheaper) and in the DB time of a join.
+Observed once and not averaged in: after the 5,800-row backlog run the *old* code needed 807 ms a tick to deliver the 50 tails (32 s in all, a plan over the churned `mc.chunk_wanted`); the cursor delivery of the same step took 15 ms a tick.
+
+*Real clients* (`tools/scoreboard/run.py storm2`, Rust gateway, view distance 10, 20 online, joins in 1 s; one old/new pair per size and repetition, `track_functions = 'pl'` for the per-function times):
+
+| | old | new |
+|---|---|---|
+| **50 joins** (2 pairs): `net.hook_chunks` ms per join | 8.8, 8.6 | **3.6, 4.9** |
+| `mc.deliver_ready_chunks` total over the run, ms | 612 (a first run 2,163: an outlier) | **511, 565** |
+| worst tick / p99 / ticks over 50 ms | 82 / 82 / 56 and 80 / 80 / 13 | **77 / 68 / 7 and 73 / 63 / 10** |
+| **200 joins**, pair 1 (load 1.5): `net.hook_chunks` ms per join / delivery total, ms | 8.2 / 3,138 | **4.7 / 2,711** |
+| worst tick / p99 / ticks over 50 / over 100 / all joined with chunks, s | 102 / 80 / 122 / 1 / 19.1 | 179 / 73 / **42** / 2 / **17.8** |
+| **200 joins**, pair 2 (load 3.3-4.6): hook per join / delivery total | 10.5 / 4,535 | **6.9 / 3,786** |
+| worst tick / p99 / over 50 / over 100 / all joined, s | 153 / 131 / 190 / 30 / 24.9 | 193 / 145 / **139** / **17** / 24.7 |
+
+The chunk path of a 200-join run costs the database 23% less (hook plus delivery: 4.8 -> 3.7 s and 6.6 -> 5.2 s), ticks over 50 ms are 27-66% fewer.  **The worst tick did not improve** (102 -> 179 and 153 -> 193 are single events, one tick in a run, and pair 2 ran at load 3-5: they are inside the spread of this machine; they come from other items, the tracker's pairing and the dynamics, not from chunks).
+Per-run noise is the limit of what can be said from one pair; the in-database numbers (CPU or statement time) are the reliable ones.  *Paced in-database storm* (`tests/bench/joinbudget`, 50 joins into 200 online walkers, 1,500 ticks, two pairs): within noise (load 7, `want_chunks` for the walkers' unexplored squares dominates: 600-780 ms a run in both), `hook_chunks` 102 and 83 ms against 138 and 73 ms: not a result.
+
+**What is still a loss.**  *The tracker pairing deferral is not done* (the visibility agents are editing `sql/905-909` and `tests/sql/900`): with it the worst tick of a join storm would fall towards 50-60 ms; chunk work does not touch it.  The chunk packets of the head (49 packets) and the bytes of the delivery stay: reading and framing 600 chunks a tick is 8-11 ms of every storm tick whatever holds the queue.
+Walkers that cross a border again before the previous strip is delivered turn their cursor into rows (a backlog of 3,283 rows instead of 5,810 at 35 crossings a tick, not zero), and cursors exist only where every chunk of the strip exists: the first walk through unexplored terrain is rows as before (the `want_chunks` cost of exploring is untouched).
+The inline generation mode keeps rows for border crossings (it sends them in the same tick); only the join tail uses a cursor there.
+
 ## Raw results
 
-`docs/perf-storm-results.jsonl.txt`: (`file` = `round2-ab2`: the round-2 A/B runs, tags `ab2-vanilla` / `ab2-old` / `ab2-new`) one JSON line per run of the post-restart session (`file` = `fin1`: real clients, 50 joins and one 200 set; `fin2`: the 200-join repetition; `jbp`: the paced in-database runs, including the 200-join runs with the earlier overdue rule), without the per-sample arrays.
+`docs/perf-storm-results.jsonl.txt`: (`file` = `round3` and `round3-jbp`: the round-3 old/new pairs, with `docs/perf-storm-round3-micro.txt`; `file` = `round2-ab2`: the round-2 A/B runs, tags `ab2-vanilla` / `ab2-old` / `ab2-new`) one JSON line per run of the post-restart session (`file` = `fin1`: real clients, 50 joins and one 200 set; `fin2`: the 200-join repetition; `jbp`: the paced in-database runs, including the 200-join runs with the earlier overdue rule), without the per-sample arrays.
 The first session's raw file was lost with `/dev/shm` when the container restarted.
 
 ## Reproduce
@@ -166,5 +220,6 @@ The first session's raw file was lost with `/dev/shm` when the container restart
 ```
 tests/e2e/setup.sh                                    # own cluster: DBCRAFT_PGDATA, DBCRAFT_PGPORT (never /tmp for the data)
 SCORE_GATEWAY=rust tools/scoreboard/run.py storm2 --n 200 --reps 3 --servers vanilla,dbcraft --tag x      # the real-client storm with chat probes (SCORE_PGDATA, SCORE_PGPORT, SCORE_GW_PORT, SCORE_VANILLA_*, SCORE_OUT, SCORE_HEAP)
+PGPORT=... PGDATABASE=... python3 tests/bench/chunkcursor/run.py --reps 3 --xmod 25      # round 3: old (rows) against new (cursors), in-database
 JB_PORT=... JB_DB=... python3 tests/bench/joinbudget/run.py --joiners 200 --online 200 --budget 25 --vd 10 --side 30 --walk 0.2     # paced, CPU time per tick
 ```
