@@ -1,0 +1,66 @@
+BASE on players=120 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 30.90 p50 30.61 p95 37.54 max 48.81 | tick wall ms avg 30.0 | wp packets/tick  (track  upd  untrack ) bytes/tick  | out rows/tick 191 KB/tick 80.3
+wp rows 14280 (block 4712 chunk 5590 azimuth 3978)
+load 0.84
+BASE off players=120 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 13.75 p50 13.53 p95 17.29 max 22.00 | tick wall ms avg 13.0 | wp packets/tick  (track  upd  untrack ) bytes/tick  | out rows/tick 71 KB/tick 17.3
+wp rows 0 (block 0 chunk 0 azimuth 0)
+load 0.84
+BASE on players=121 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 31.93 p50 32.41 p95 36.96 max 39.96 | tick wall ms avg 30.6 | wp packets/tick  (track  upd  untrack ) bytes/tick  | out rows/tick 192 KB/tick 82.2
+wp rows 14520 (block 4824 chunk 5708 azimuth 3988)
+load 0.84
+BASE off players=121 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 15.22 p50 15.03 p95 17.69 max 24.02 | tick wall ms avg 14.0 | wp packets/tick  (track  upd  untrack ) bytes/tick  | out rows/tick 71 KB/tick 17.8
+wp rows 0 (block 0 chunk 0 azimuth 0)
+load 0.86
+BASE on players=200 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 75.71 p50 72.58 p95 102.34 max 114.68 | tick wall ms avg 73.7 | wp packets/tick  (track  upd  untrack ) bytes/tick  | out rows/tick 323 KB/tick 222.5
+wp rows 39800 (block 12850 chunk 15352 azimuth 11598)
+load 0.87
+BASE off players=200 side=30 cap=0 speed=0.215 | ticks 40 | CPU ms/tick avg 28.68 p50 27.93 p95 44.13 max 54.99 | tick wall ms avg 26.7 | wp packets/tick  (track  upd  untrack ) bytes/tick  | out rows/tick 123 KB/tick 49.9
+wp rows 0 (block 0 chunk 0 azimuth 0)
+load 0.87
+BASE-funcs on players=50 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 23.91 p50 22.25 p95 30.87 max 56.43 | tick wall ms avg 23.0 | wp packets/tick  (track  upd  untrack ) bytes/tick  | out rows/tick 78 KB/tick 14.3
+wp rows 2450 (block 818 chunk 944 azimuth 688)
+mc.refresh_visibility              calls/tick     1.0  ms/tick   11.094  self ms/tick    0.028
+mc.refresh_visibility_vis          calls/tick     1.0  ms/tick   11.029  self ms/tick    1.769
+mc.vis_wp_pass                     calls/tick     1.0  ms/tick    8.432  self ms/tick    7.705
+mc.vis_step                        calls/tick     1.0  ms/tick    1.256  self ms/tick    0.046
+mc.vis_move                        calls/tick     0.5  ms/tick    0.822  self ms/tick    0.763
+mc.vis_find                        calls/tick     1.0  ms/tick    0.413  self ms/tick    0.402
+mc.vis_first_tick                  calls/tick     0.0  ms/tick    0.198  self ms/tick    0.132
+mc.vis_on                          calls/tick     5.5  ms/tick    0.087  self ms/tick    0.087
+mc.vis_chat_spam                   calls/tick     1.0  ms/tick    0.083  self ms/tick    0.057
+mc.vis_work_now                    calls/tick     1.0  ms/tick    0.024  self ms/tick    0.024
+mc.vis_entity_phase                calls/tick     1.0  ms/tick    0.019  self ms/tick    0.019
+mc.vis_input                       calls/tick     1.0  ms/tick    0.017  self ms/tick    0.015
+BASE-funcs on players=100 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 36.71 p50 34.52 p95 47.01 max 59.02 | tick wall ms avg 34.9 | wp packets/tick  (track  upd  untrack ) bytes/tick  | out rows/tick 158 KB/tick 55.8
+wp rows 9900 (block 3247 chunk 3859 azimuth 2794)
+mc.refresh_visibility              calls/tick     1.0  ms/tick   22.545  self ms/tick    0.028
+mc.refresh_visibility_vis          calls/tick     1.0  ms/tick   22.479  self ms/tick    2.891
+mc.vis_wp_pass                     calls/tick     1.0  ms/tick   18.388  self ms/tick   16.858
+mc.vis_step                        calls/tick     1.0  ms/tick    1.933  self ms/tick    0.044
+mc.vis_move                        calls/tick     0.5  ms/tick    1.462  self ms/tick    1.369
+mc.vis_find                        calls/tick     1.0  ms/tick    0.483  self ms/tick    0.472
+mc.vis_first_tick                  calls/tick     0.0  ms/tick    0.244  self ms/tick    0.139
+mc.vis_on                          calls/tick     6.6  ms/tick    0.107  self ms/tick    0.107
+mc.vis_chat_spam                   calls/tick     1.0  ms/tick    0.064  self ms/tick    0.045
+mc.vis_work_now                    calls/tick     1.0  ms/tick    0.025  self ms/tick    0.025
+mc.vis_entity_phase                calls/tick     1.0  ms/tick    0.023  self ms/tick    0.023
+mc.vis_input                       calls/tick     1.0  ms/tick    0.015  self ms/tick    0.013
+BASE-funcs on players=120 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 42.68 p50 41.69 p95 47.82 max 64.64 | tick wall ms avg 40.9 | wp packets/tick  (track  upd  untrack ) bytes/tick  | out rows/tick 191 KB/tick 80.3
+wp rows 14280 (block 4712 chunk 5590 azimuth 3978)
+mc.refresh_visibility              calls/tick     1.0  ms/tick   27.833  self ms/tick    0.028
+mc.refresh_visibility_vis          calls/tick     1.0  ms/tick   27.771  self ms/tick    3.292
+mc.vis_wp_pass                     calls/tick     1.0  ms/tick   23.198  self ms/tick   21.342
+mc.vis_step                        calls/tick     1.0  ms/tick    2.238  self ms/tick    0.048
+mc.vis_move                        calls/tick     0.5  ms/tick    1.714  self ms/tick    1.618
+mc.vis_find                        calls/tick     1.0  ms/tick    0.474  self ms/tick    0.462
+mc.vis_first_tick                  calls/tick     0.0  ms/tick    0.285  self ms/tick    0.158
+mc.vis_on                          calls/tick     7.2  ms/tick    0.117  self ms/tick    0.117
+mc.vis_chat_spam                   calls/tick     1.0  ms/tick    0.061  self ms/tick    0.041
+mc.vis_work_now                    calls/tick     1.0  ms/tick    0.028  self ms/tick    0.028
+mc.vis_entity_phase                calls/tick     1.0  ms/tick    0.020  self ms/tick    0.020
+mc.vis_input                       calls/tick     1.0  ms/tick    0.017  self ms/tick    0.015
+BASE-count on players=50 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 27.31 p50 26.07 p95 37.06 max 38.35 | tick wall ms avg 25.4 | wp packets/tick 254 (track 16 upd 239 untrack 0) bytes/tick 11550 | out rows/tick 78 KB/tick 14.3
+wp rows 2450 (block 818 chunk 944 azimuth 688)
+BASE-count on players=100 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 37.94 p50 38.13 p95 42.06 max 56.98 | tick wall ms avg 35.6 | wp packets/tick 990 (track 56 upd 934 untrack 0) bytes/tick 44877 | out rows/tick 158 KB/tick 55.8
+wp rows 9900 (block 3247 chunk 3859 azimuth 2794)
+BASE-count on players=200 side=30 cap=100000 speed=0.215 | ticks 40 | CPU ms/tick avg 105.10 p50 102.82 p95 128.71 max 143.38 | tick wall ms avg 103.3 | wp packets/tick 3900 (track 188 upd 3712 untrack 0) bytes/tick 176701 | out rows/tick 323 KB/tick 222.5
+wp rows 39800 (block 12850 chunk 15352 azimuth 11598)
