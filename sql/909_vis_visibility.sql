@@ -217,32 +217,33 @@ begin
     select coalesce(array_agg(p.entity_id), '{}') into sv
       from mc.player p join net.conn c on c.conn_id = p.conn_id
      where p.tp_ground_tick is not null and (c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z);       -- a teleported client has not been sent the chunks of its new position yet (net.stream_chunks runs after this)
-    with pc as materialized (        -- every online player, narrow: k = half of the bound above (disp + 2), infinite for a player that has none
-      select p.entity_id as eid, p.conn_id as conn, p.x, p.z, p.chunk_x as cx, p.chunk_z as cz, (p.gamemode = 3) as spec, l.rng, l.rng * l.rng as rng2, l.vd, (p.entity_id = any (d)) as dirty, (p.entity_id = any (sv)) as stale,
+    with pc as materialized (        -- every online player, narrow, the columns of the pair loop first: k = half of the bound above (disp + 2), infinite for a player that has none or whose bound is wider than 14 blocks
+      select p.entity_id as eid, p.x, p.z, l.rng, (p.entity_id = any (d)) as dirty,
              case when p.vis_eid is not distinct from p.entity_id and p.vis_rng is not distinct from l.rng and p.vis_spec is not distinct from (p.gamemode = 3) and p.vis_x is not null and p.vis_z is not null
                        and not (p.entity_id = any (sv)) and (p.entity_id = any (d) or (p.x - p.vis_x) ^ 2 + (p.z - p.vis_z) ^ 2 < 16)
-                  then sqrt((p.x - p.vis_x) ^ 2 + (p.z - p.vis_z) ^ 2) + 2.005 else 'infinity'::float8 end as k
+                       and (p.x - p.vis_x) ^ 2 + (p.z - p.vis_z) ^ 2 < 196
+                  then sqrt((p.x - p.vis_x) ^ 2 + (p.z - p.vis_z) ^ 2) + 2.005 else 'infinity'::float8 end as k,
+             p.conn_id as conn, p.chunk_x as cx, p.chunk_z as cz, (p.gamemode = 3) as spec, l.vd, (p.entity_id = any (sv)) as stale
         from mc.player p
         cross join lateral (select greatest(2, least(coalesce(p.view_distance_req, 2), srv)) as vd, least(greatest(2, least(coalesce(p.view_distance_req, 2), srv)) * 16.0, trk) as rng) l
        where p.conn_id is not null),
     dp as materialized (select * from pc where dirty),
-    cand as (        -- (a dirty, b anybody) whose distance is near the radius of either of them: |d - R| <= m  <=>  |d^2 - (R^2 + m^2)| <= 2 R m  (R > m; with R <= m the circle of R + m)
-      select a.eid as ae, a.conn as aconn, a.x as ax, a.z as az, a.cx as acx, a.cz as acz, a.spec as aspec, a.rng as arng, a.rng2 as arng2, a.vd as avd, a.stale as astale,
-             b.eid as be, b.conn as bconn, b.x as bx, b.z as bz, b.cx as bcx, b.cz as bcz, b.spec as bspec, b.rng as brng, b.rng2 as brng2, b.vd as bvd, b.stale as bstale, b.dirty as bdirty, a.k + b.k as m
-        from dp a join pc b on b.eid <> a.eid
-                              and (abs((a.x - b.x) * (a.x - b.x) + (a.z - b.z) * (a.z - b.z) - (a.rng2 + (a.k + b.k) * (a.k + b.k))) <= 2 * a.rng * (a.k + b.k)
-                                   or (b.rng <> a.rng and abs((a.x - b.x) * (a.x - b.x) + (a.z - b.z) * (a.z - b.z) - (b.rng2 + (a.k + b.k) * (a.k + b.k))) <= 2 * b.rng * (a.k + b.k))
-                                   or (least(a.rng, b.rng) <= a.k + b.k and (a.x - b.x) * (a.x - b.x) + (a.z - b.z) * (a.z - b.z) <= (greatest(a.rng, b.rng) + a.k + b.k) * (greatest(a.rng, b.rng) + a.k + b.k)))),
-    dirs as (        -- the two directions of those pairs (a pair of two dirty players comes from both of their rows: once each)
+    cand as (        -- (a dirty, b anybody) whose distance is near the radius of either of them: |d - R| <= m.  (m is below 32, the smallest radius, or infinite)  A pair of two dirty players once, from the lower id
+      select a.eid as ae, a.conn as aconn, a.x as ax, a.z as az, a.cx as acx, a.cz as acz, a.spec as aspec, a.rng as arng, a.vd as avd, a.stale as astale,
+             b.eid as be, b.conn as bconn, b.x as bx, b.z as bz, b.cx as bcx, b.cz as bcz, b.spec as bspec, b.rng as brng, b.vd as bvd, b.stale as bstale, a.k + b.k as m
+        from dp a join pc b on a.eid <> b.eid and (not b.dirty or a.eid < b.eid)
+                              and (abs(sqrt((a.x - b.x) * (a.x - b.x) + (a.z - b.z) * (a.z - b.z)) - a.rng) <= a.k + b.k
+                                   or (b.rng <> a.rng and abs(sqrt((a.x - b.x) * (a.x - b.x) + (a.z - b.z) * (a.z - b.z)) - b.rng) <= a.k + b.k))),
+    dirs as (        -- the two directions of those pairs
       select ae as v, be as t, aconn as vconn, astale as vstale,
              (not bspec or aspec) and abs(acx - bcx) <= avd + 1 and abs(acz - bcz) <= avd + 1 and (ax - bx) ^ 2 + (az - bz) ^ 2 <= arng ^ 2 as inr,
-             (arng <= m and (ax - bx) * (ax - bx) + (az - bz) * (az - bz) <= (arng + m) * (arng + m)) or abs((ax - bx) * (ax - bx) + (az - bz) * (az - bz) - (arng2 + m * m)) <= 2 * arng * m as hit
+             abs(sqrt((ax - bx) * (ax - bx) + (az - bz) * (az - bz)) - arng) <= m as hit
         from cand
       union all
       select be, ae, bconn, bstale,
              (not aspec or bspec) and abs(acx - bcx) <= bvd + 1 and abs(acz - bcz) <= bvd + 1 and (ax - bx) ^ 2 + (az - bz) ^ 2 <= brng ^ 2,
-             (brng <= m and (ax - bx) * (ax - bx) + (az - bz) * (az - bz) <= (brng + m) * (brng + m)) or abs((ax - bx) * (ax - bx) + (az - bz) * (az - bz) - (brng2 + m * m)) <= 2 * brng * m
-        from cand where not bdirty),
+             abs(sqrt((ax - bx) * (ax - bx) + (az - bz) * (az - bz)) - brng) <= m
+        from cand),
     chk as materialized (select h.v, h.t, h.vconn, h.vstale, h.inr, (select x.ctid from mc.visible x where x.viewer_eid = h.v and x.target_eid = h.t) as vt       -- (a probe of the primary key each: a join is planned as a hash join over all of mc.visible)
               from dirs h where h.hit)
     select coalesce(array_agg(v) filter (where inr and not vstale and vt is null), '{}'), coalesce(array_agg(t) filter (where inr and not vstale and vt is null), '{}'),
