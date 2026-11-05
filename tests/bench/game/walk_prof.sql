@@ -26,8 +26,8 @@ begin
 end $$;
 
 create or replace function bench.cpu_summary(label text, skip int default 20) returns table(line text) language sql as $$
-  select format('%s | ticks %s | CPU ms/tick avg %s p50 %s p95 %s max %s | tick wall ms avg %s | wp packets/tick %s (track %s upd %s untrack %s) bytes/tick %s | out rows/tick %s KB/tick %s',
-    label, count(*), round((avg(c.cpu_ns) / 1e6)::numeric, 2), round((percentile_cont(.5) within group (order by c.cpu_ns) / 1e6)::numeric, 2),
+  select format('%s | ticks %s | CPU ms/tick avg %s p10 %s p50 %s p95 %s max %s | tick wall ms avg %s | wp packets/tick %s (track %s upd %s untrack %s) bytes/tick %s | out rows/tick %s KB/tick %s',
+    label, count(*), round((avg(c.cpu_ns) / 1e6)::numeric, 2), round((percentile_cont(.1) within group (order by c.cpu_ns) / 1e6)::numeric, 2), round((percentile_cont(.5) within group (order by c.cpu_ns) / 1e6)::numeric, 2),
     round((percentile_cont(.95) within group (order by c.cpu_ns) / 1e6)::numeric, 2), round((max(c.cpu_ns) / 1e6)::numeric, 2), round(avg(l.ms_total)::numeric, 1),
     round(avg(w.n)), round(avg(w.track)), round(avg(w.upd)), round(avg(w.untrack)), round(avg(w.bytes)), round(avg(s.out_rows)), round(avg(s.out_bytes)::numeric / 1024, 1))
   from bench.cpu c join mc.tick_log l on l.tick = c.tick join bench.step s on s.tick = c.tick left join bench.wpn w on w.tick = c.tick where c.tick > skip $$;
