@@ -55,7 +55,9 @@ def verdict(v, d, better="low"):
 POP = [("tick mean (ms)", "mspt_mean", "mspt_mean", "low"), ("tick p99 (ms)", "mspt_p99", "mspt_p99", "low"), ("CPU (cores, dbcraft incl. gateway)", "cpu_cores", "cpu_cores", "low"),
        ("memory PSS (MiB)", "mem_mib", "mem_mib", "low"), ("chat p50 (ms)", "rtt_p50", "rtt_p50", "low"), ("chat p99 (ms)", "rtt_p99", "rtt_p99", "low"),
        ("clients dropped", "failed", "failed", "low")]
-POP500 = POP + [("clients in play when the window started (of 500)", "ready_clients", "ready_clients", "high")]
+POP500 = POP + [("clients in play when the window started (of 500)", "ready_clients", "ready_clients", "high"),
+                ("load generator CPU over the window (cores; both servers share the 4 cores with it)", "loadgen_cpu_cores", "loadgen_cpu_cores", "low"),
+                ("whole machine busy (cores of 4)", "machine_busy_cores", "machine_busy_cores", "low")]
 SPECS = [
     (("idle0", 0, 0.0, "idle"), "idle, 0 players", [POP[0], POP[1], POP[2], POP[3]]),
     (("pop", 50, 0.0, "idle"), "idle, 50 players", POP),
@@ -102,9 +104,10 @@ SPECS = [
      [("tick mean (ms; dbcraft: last 5 minutes; vanilla: one answered `tick query` in 10 minutes)", None, "mspt_mean", "low"), ("tick p99 (ms; dbcraft: last 5 minutes)", None, "mspt_p99", "low"),
       ("vanilla RCON `tick query` polls unanswered for 20 s (of about 27 polls)", "rcon_timeouts", None, "low"), ("CPU (cores)", "cpu_cores", "cpu_cores", "low"), ("clients dropped", "failed", "failed", "low"),
       ("chat p50 (ms)", "rtt_p50", "rtt_p50", "low")]),
-    (("pop", 500, 1.0, "crowd"), "crowded spawn: 500 players in 30 x 30 chunks, all moving",POP500),
-    (("pop", 500, 1.0, "sparse"), "500 players over 100 x 100 chunks, all moving (dbcraft only)",POP500),
-    (("pop", 500, 0.2, "sparse"), "500 players over 100 x 100 chunks, 20% moving (dbcraft only)",POP500),
+    (("pop", 500, 1.0, "crowd"), "crowded spawn: 500 players in 30 x 30 chunks, all moving", POP500),
+    (("pop", 500, 0.2, "crowd"), "crowded spawn: 500 players in 30 x 30 chunks, 20% moving", POP500),
+    (("pop", 500, 1.0, "sparse"), "500 players over 100 x 100 chunks, all moving", POP500),
+    (("pop", 500, 0.2, "sparse"), "500 players over 100 x 100 chunks, 20% moving", POP500),
 ]
 
 
@@ -153,9 +156,12 @@ def build(rows):
             if not v and not d:
                 continue
             w, f = verdict(v, d, better)
+            if v and d and min(len(v), len(d)) < 3 and w != "-":
+                w = w + " (only %d repetition%s: no range, treat as indicative)" % (min(len(v), len(d)), "" if min(len(v), len(d)) == 1 else "s")
             out.append({"scenario": label, "metric": name, "vanilla": rng(v) if v else ("no usable samples" if not vk else "not run"), "dbcraft": rng(d) if d else "not run", "ratio": ("%.2f" % (C.percentile(d, 50) / C.percentile(v, 50)))
                         if v and d and C.percentile(v, 50) else "", "winner": w, "by": f, "reps": "%d/%d" % (len(v), len(d)),
-                        "load": "%.1f-%.1f" % (min(loads), max(loads)) if loads else "", "errors": errs})
+                        "load": "%.1f-%.1f" % (min(loads), max(loads)) if loads else "", "errors": errs,
+                        "vmed": C.percentile(v, 50) if v else None, "dmed": C.percentile(d, 50) if d else None, "better": better})
     return out
 
 
