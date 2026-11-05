@@ -90,6 +90,45 @@ create trigger wp_cnt_trunc after truncate on mc.wp for each statement execute f
 truncate mc.wp_cnt;
 insert into mc.wp_cnt select rcv, count(*)::int from mc.wp group by rcv;
 
+-- The connections of a movement pass that can have an event (see mc.vis_wp_pass).  Functions, not a part of its statement, so that the planner is told how many rows to expect (it multiplies the
+-- estimates of eleven index probes into millions of rows and then scans and hashes the whole table), and so that the plan of each probe is made once.
+create or replace function mc.wp_cand(p_bset int[], p_lset int[], p_cset int[], p_vcset int[], p_pset int[], p_vset int[], p_slow boolean, p_fset int[], p_n int)
+  returns table(rcv int, src int, ok smallint, oang real) language plpgsql stable rows 1000 set plan_cache_mode = force_generic_plan as $$
+declare all3 boolean := p_slow or coalesce(cardinality(p_pset), 0) * 2 >= p_n;
+begin
+  -- block connections of a source that changed block; chunk connections of a source that changed chunk, or of a receiver whose chunk or view changed
+  return query select w.rcv, w.src, w.kind, null::real from mc.wp w where w.kind = 1 and w.src = any(coalesce(p_bset, '{}'));
+  return query select x.rcv, x.src, x.kind, null::real from (
+      select w.rcv, w.src, w.kind from mc.wp w where w.kind = 2 and w.src = any(coalesce(p_cset, '{}'))
+      union select w.rcv, w.src, w.kind from mc.wp w where w.kind = 2 and w.rcv = any(coalesce(p_vcset, '{}'))) x;
+  -- azimuth connections of an end that moved (or all of them: when most players moved the probes would return everything twice, and with a view of 14+ chunks a far connection can be
+  -- inside the view, which is remade on every pass)
+  if all3 then
+    return query select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.kind = 3;
+  else
+    return query select x.rcv, x.src, x.kind, x.ang from (
+        select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.kind = 3 and w.src = any(coalesce(p_pset, '{}'))
+        union select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.kind = 3 and w.rcv = any(coalesce(p_pset, '{}') || coalesce(p_vset, '{}'))) x;
+  end if;
+  -- everything of a player the pass has never seen (the kinds above are in the rows already; a union drops them)
+  if p_fset is not null then
+    return query select x.rcv, x.src, x.kind, case when x.kind = 3 then x.ang end from (
+        select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.rcv = any(p_fset) union select w.rcv, w.src, w.kind, w.ang from mc.wp w where w.src = any(p_fset)) x
+      where not (x.kind = 1 and x.src = any(coalesce(p_bset, '{}') || coalesce(p_lset, '{}'))) and not (x.kind = 3 and (all3 or x.src = any(coalesce(p_pset, '{}')) or x.rcv = any(coalesce(p_pset, '{}') || coalesce(p_vset, '{}'))))
+        and not (x.kind = 2 and (x.src = any(coalesce(p_cset, '{}')) or x.rcv = any(coalesce(p_vcset, '{}'))));
+  end if;
+end $$;
+-- the wanted pairs a mover is missing: the connections it does not have to a source that transmits
+create or replace function mc.wp_cand_missing(p_dset int[]) returns table(rcv int, src int, ok smallint, oang real) language sql stable rows 20 as $$
+  select r.entity_id, s.entity_id, null::smallint, null::real
+    from mc.player r join mc.player s on s.entity_id <> r.entity_id and s.conn_id is not null and s.wp_state is not null and (s.wp_state & 1) = 1
+   where r.entity_id = any(coalesce(p_dset, '{}')) and not exists (select 1 from mc.wp x where x.rcv = r.entity_id and x.src = s.entity_id) $$;
+-- entity phase: every pair of a player whose transmit state changed, with the connection it has
+create or replace function mc.wp_cand_state(p_sset int[]) returns table(rcv int, src int, ok smallint, oang real) language sql stable rows 200 as $$
+  select r.entity_id, s.entity_id, w.kind, case when w.kind = 3 then w.ang end
+    from mc.player r join mc.player s on s.entity_id <> r.entity_id and s.conn_id is not null left join mc.wp w on w.rcv = r.entity_id and w.src = s.entity_id
+   where r.conn_id is not null and (r.entity_id = any(coalesce(p_sset, '{}')) or s.entity_id = any(coalesce(p_sset, '{}'))) $$;
+
 -- one pass.  p_phase 1: movement (positions as applied this tick, the transmit state as of the last entity phase); p_phase 2: the entity phase (the state now, remembered).
 --
 -- DIRTY-DRIVEN (docs/PERF-LOCATOR.md): the pass above (mc.vis_wp_pass_pairs, the reference) looked at every pair of players on every call: N x N rows, half of a walking tick at 50-120 players.  This one
@@ -132,7 +171,9 @@ begin
   tot as (select count(*) filter (where st is not null and (st & 1) = 1)::int as na, count(*) filter (where st is not null and (st & 1) = 1 and (st & 2) = 0)::int as nn from pl),
   -- the changed players, as arrays (an index probe per player below, not a scan of every connection)
   sets as (
-    select array_agg(eid) filter (where manh > 0) as bset, array_agg(eid) filter (where cheb > 0) as cset,
+    select array_agg(eid) filter (where manh > 0 and not (manh = 1 and st is not null and (st & 1) = 1 and (st & 2) = 0)) as bset,
+           array_agg(eid) filter (where manh = 1 and st is not null and (st & 1) = 1 and (st & 2) = 0) as lset,      -- (a source that moved one block and is wanted by everybody: its block connections are UPDATEd, below)
+           array_agg(eid) filter (where cheb > 0) as cset,
            array_agg(eid) filter (where manh > 0 or cheb > 0 or moved or vd) as pset, array_agg(eid) filter (where cheb > 0 or ovr is distinct from vr) as vcset,
            array_agg(eid) filter (where ovr is distinct from vr) as vset, array_agg(eid) filter (where old_st is null) as fset,
            array_agg(eid) filter (where st is distinct from old_st) as sset,
@@ -140,25 +181,9 @@ begin
            array_agg(pl.eid) filter (where pl.moved and coalesce(pl.cnt, 0) < (case when coalesce(pl.st, 0) & 2 = 0 then tot.nn else tot.na end) - (case when pl.st is not null and (pl.st & 1) = 1 then 1 else 0 end)) as dset
       from pl, tot),
   cand as (
-    -- movement: connections whose source's block changed ...
-    select w.rcv, w.src, w.kind as ok, null::real as oang from mc.wp w where p_phase = 1 and w.kind = 1 and w.src = any(coalesce((select bset from sets), '{}'::int[]))
-    -- ... whose chunk changed, or whose receiver's chunk or view changed
-    union select w.rcv, w.src, w.kind, null::real from mc.wp w where p_phase = 1 and w.kind = 2 and w.src = any(coalesce((select cset from sets), '{}'::int[]))
-    union select w.rcv, w.src, w.kind, null::real from mc.wp w where p_phase = 1 and w.kind = 2 and w.rcv = any(coalesce((select vcset from sets), '{}'::int[]))
-    -- ... azimuth connections of an end that moved (or all of them, see "slow")
-    union select w.rcv, w.src, w.kind, w.ang from mc.wp w where p_phase = 1 and w.kind = 3 and w.src = any(coalesce((select pset from sets), '{}'::int[]))
-    union select w.rcv, w.src, w.kind, w.ang from mc.wp w where p_phase = 1 and w.kind = 3 and w.rcv = any(coalesce((select array_cat(pset, vset) from sets), '{}'::int[]))
-    union select w.rcv, w.src, w.kind, w.ang from mc.wp w where p_phase = 1 and w.kind = 3 and (select slow from sets)
-    -- ... everything of a player the pass has never seen
-    union select w.rcv, w.src, w.kind, case when w.kind = 3 then w.ang end from mc.wp w where p_phase = 1 and (select fset is not null from sets) and w.rcv = any(coalesce((select fset from sets), '{}'::int[]))
-    union select w.rcv, w.src, w.kind, case when w.kind = 3 then w.ang end from mc.wp w where p_phase = 1 and (select fset is not null from sets) and w.src = any(coalesce((select fset from sets), '{}'::int[]))
-    -- ... the wanted pairs a mover is missing
-    union select r.eid, s.eid, null::smallint, null::real from pl r join pl s on s.eid <> r.eid
-           where p_phase = 1 and (select dset is not null from sets) and r.eid = any(coalesce((select dset from sets), '{}'::int[])) and s.st is not null and (s.st & 1) = 1
-             and not exists (select 1 from mc.wp x where x.rcv = r.eid and x.src = s.eid)
-    -- entity phase: every pair of a player whose transmit state changed
-    union select r.eid, s.eid, w.kind, case when w.kind = 3 then w.ang end from pl r join pl s on s.eid <> r.eid left join mc.wp w on w.rcv = r.eid and w.src = s.eid
-           where p_phase = 2 and (select sset is not null from sets) and (r.eid = any(coalesce((select sset from sets), '{}'::int[])) or s.eid = any(coalesce((select sset from sets), '{}'::int[])))),
+    select c.* from sets, lateral mc.wp_cand(sets.bset, sets.lset, sets.cset, sets.vcset, sets.pset, sets.vset, sets.slow, sets.fset, n) c where p_phase = 1
+    union all select c.* from sets, lateral mc.wp_cand_missing(sets.dset) c where p_phase = 1
+    union all select c.* from sets, lateral mc.wp_cand_state(sets.sset) c where p_phase = 2),
   pr as (
     select r.eid as rcv, r.conn_id as rconn, s.eid as src, s.uuid as suuid, s.bx, s.by, s.bz, s.cx as scx, s.cz as scz, r.x as rx, r.z as rz, s.x as sx, s.z as sz,
            (s.st is not null and (s.st & 1) = 1 and not ((coalesce(r.st, 0) & 2) = 0 and (s.st & 2) = 2)) as want,
@@ -181,6 +206,12 @@ begin
            case when dc.ok is null then 'track' else dc.act end as what, dc.nk, dc.ok, dc.suuid, dc.bx, dc.by, dc.bz, dc.scx, dc.scz,
            case when dc.ok is null or dc.act = 'remake' or dc.ok = 3 then mc.wp_angle(dc.rx, dc.rz, dc.sx, dc.sz) end as ang       -- (the angle is stored with every connection made; an update of a block or chunk one does not look at it)
       from dc where (dc.ok is null and dc.want and dc.may_create) or dc.act is not null),
+  -- the bulk of a walking crowd's packets: a block connection of a source that moved one block is a plain UPDATE of the source's block position (no remake, no state to look at: the source
+  -- transmits and every receiver wants it), so it skips the evaluation above and goes straight to the packets
+  lp as (select l.eid, mc.pkt_waypoint(2, l.uuid, 1, l.bx, l.by, l.bz, 0) as u1 from pl l where p_phase = 1 and l.eid = any(coalesce((select lset from sets), '{}'::int[]))),
+  ln as (select r.conn_id as rconn, w.src, lp.u1 as pkt
+           from mc.wp w join pl r on r.eid = w.rcv join lp on lp.eid = w.src
+          where p_phase = 1 and w.kind = 1 and w.src = any(coalesce((select lset from sets), '{}'::int[]))),
   ins as (
     insert into mc.wp (rcv, src, kind, ang) select ev.rcv, ev.src, ev.nk, ev.ang from ev where ev.what = 'track'
     on conflict (rcv, src) do update set kind = excluded.kind, ang = excluded.ang returning 1),
@@ -206,11 +237,14 @@ begin
                    bool_or(ev.what = 'untrack') as x
               from ev group by ev.src, ev.suuid, ev.bx, ev.by, ev.bz, ev.scx, ev.scz) g)
   insert into mc.play_out (conn_id, data)
-  select ev.rconn, string_agg(case ev.what
-           when 'update'  then case ev.ok when 1 then sp.u1 when 2 then sp.u2 else sp.u3 || float4send(ev.ang) end
-           when 'untrack' then sp.x
-           else case ev.nk when 1 then sp.t1 when 2 then sp.t2 else sp.t3 || float4send(ev.ang) end end, '\x'::bytea order by ev.src)
-    from ev join sp on sp.src = ev.src group by ev.rconn order by ev.rconn;
+  select q.rconn, string_agg(q.pkt, '\x'::bytea order by q.src)
+    from (select ev.rconn, ev.src, case ev.what
+                   when 'update'  then case ev.ok when 1 then sp.u1 when 2 then sp.u2 else sp.u3 || float4send(ev.ang) end
+                   when 'untrack' then sp.x
+                   else case ev.nk when 1 then sp.t1 when 2 then sp.t2 else sp.t3 || float4send(ev.ang) end end as pkt
+            from ev join sp on sp.src = ev.src
+          union all select ln.rconn, ln.src, ln.pkt from ln) q
+   group by q.rconn order by q.rconn;
   end if;
   if p_phase = 1 then
     update mc.player set wp_bx = floor(x)::int, wp_by = floor(y)::int, wp_bz = floor(z)::int, wp_cx = chunk_x, wp_cz = chunk_z, wp_vr = mc.wp_vr(view_distance_req, vdsrv)
@@ -226,7 +260,7 @@ end $$;
 -- (the state now, remembered).
 drop function if exists mc.vis_wp_pass(bigint, int);
 create or replace function mc.vis_wp_pass_pairs(p_cur bigint, p_phase int, p_n int default null) returns void language plpgsql as $$
-declare enabled boolean := mc.rule_bool('locator_bar', true); n int; cap int := coalesce(mc.prop_int('dbcraft.locator-bar-max-players'), 100000);
+declare enabled boolean := mc.rule_bool('locator_bar', true); n int; cap int := coalesce(mc.prop_int('dbcraft.locator-bar-max-players'), 120);
         slice int := coalesce(mc.prop_int('dbcraft.locator-bar-untrack-slice'), 2000000000); vdsrv int := mc.prop_int('view-distance');      -- (once, not once per player row: 20 us each)
 begin
   n := coalesce(p_n, (select count(*)::int from mc.player where conn_id is not null));

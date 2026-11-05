@@ -154,25 +154,36 @@ select t.is_true('...and UNTRACKs', (select coalesce(sum(n), 0) from t.wpd_cov w
 
 -- mutation check: the function with one way into the candidate set removed (or a rule changed) must be noticed by the scenarios
 create or replace function t.wpd_detects(p_find text, p_repl text) returns boolean language plpgsql as $$
-declare def text := replace(pg_get_functiondef('mc.vis_wp_pass(bigint, int, int)'::regprocedure), 'mc.vis_wp_pass(', 'mc.vis_wp_pass_mut('); m text; s int;
+declare def text; m text; s int; fn text; names text[] := array['mc.wp_cand_missing(', 'mc.wp_cand_state(', 'mc.wp_cand(', 'mc.vis_wp_pass('];
+        procs text[] := array['mc.wp_cand_missing(int[])', 'mc.wp_cand_state(int[])', 'mc.wp_cand(int[], int[], int[], int[], int[], int[], boolean, int[], int)', 'mc.vis_wp_pass(bigint, int, int)'];
+        i int; hit boolean := false; mutant text; defs text[] := '{}';
 begin
-  m := replace(def, p_find, p_repl);
-  if m = def then raise exception 'the mutation did not apply: %', p_find; end if;
-  execute m;
-  for s in 1 .. 6 loop
-    if t.wpd_run('mc.vis_wp_pass_mut', s, 30, case s % 3 when 0 then 300 when 1 then 2500 else 900 end, 40, 0.7, 0.08, 0.1) <> '' then return true; end if;
+  -- the mutant is the whole family of functions under other names; the one mutation is applied to the text of whichever contains it
+  for i in 1 .. 4 loop
+    def := pg_get_functiondef(procs[i]::regprocedure);
+    def := replace(replace(replace(replace(def, 'mc.wp_cand_missing(', 'mc.wp_cand_missing_mut('), 'mc.wp_cand_state(', 'mc.wp_cand_state_mut('), 'mc.wp_cand(', 'mc.wp_cand_mut('), 'mc.vis_wp_pass(', 'mc.vis_wp_pass_mut(');
+    m := replace(def, p_find, p_repl);
+    if m <> def then hit := true; end if;
+    defs := defs || m;
+  end loop;
+  if not hit then raise exception 'the mutation did not apply: %', p_find; end if;
+  for i in 1 .. 4 loop execute defs[i]; end loop;
+  for s in 1 .. 8 loop
+    if t.wpd_run('mc.vis_wp_pass_mut', s, 30, case s % 3 when 0 then 300 when 1 then 2500 else 900 end, 40, case when s % 2 = 0 then 0.2 else 0.7 end, 0.08, 0.1) <> '' then return true; end if;
   end loop;
   return false;
 end $$;
 select t.is_true('mutation: kind-1 rows of a source that changed block are not looked at -> noticed', t.wpd_detects('w.kind = 1 and w.src = any(', 'w.kind = 1 and false and w.src = any('));
+select t.is_true('mutation: the one-block UPDATEs of the lean path (a block connection of a source that moved one block) are not sent -> noticed', t.wpd_detects('p_phase = 1 and w.kind = 1 and w.src = any(coalesce((select lset', 'p_phase = 1 and false and w.kind = 1 and w.src = any(coalesce((select lset'));
+select t.is_true('mutation: the lean path also takes a spectator source (it is not wanted by everybody) -> noticed', t.wpd_detects('and (st & 2) = 0) as lset', ') as lset'));
 select t.is_true('mutation: kind-2 rows of a source that changed chunk are not looked at -> noticed', t.wpd_detects('w.kind = 2 and w.src = any(', 'w.kind = 2 and false and w.src = any('));
 select t.is_true('mutation: kind-2 rows of a receiver that changed chunk or view are not looked at -> noticed', t.wpd_detects('w.kind = 2 and w.rcv = any(', 'w.kind = 2 and false and w.rcv = any('));
 select t.is_true('mutation: azimuth rows of a source that moved are not looked at -> noticed', t.wpd_detects('w.kind = 3 and w.src = any(', 'w.kind = 3 and false and w.src = any('));
 select t.is_true('mutation: azimuth rows of a receiver that moved are not looked at -> noticed', t.wpd_detects('w.kind = 3 and w.rcv = any(', 'w.kind = 3 and false and w.rcv = any('));
-select t.is_true('mutation: the rows of a player the pass has not seen are not looked at -> noticed', t.wpd_detects('(select fset is not null from sets) and w.rcv = any(', '(select fset is not null from sets) and false and w.rcv = any('));
-select t.is_true('mutation: the connections a mover is missing are not made -> noticed', t.wpd_detects('p_phase = 1 and (select dset is not null from sets)', 'p_phase = 1 and false and (select dset is not null from sets)'));
+select t.is_true('mutation: the rows of a player the pass has not seen are not looked at -> noticed', t.wpd_detects('if p_fset is not null then', 'if false then'));
+select t.is_true('mutation: the connections a mover is missing are not made -> noticed', t.wpd_detects('r.entity_id = any(coalesce(p_dset, ''{}''))', 'false and r.entity_id = any(coalesce(p_dset, ''{}''))'));
 select t.is_true('mutation: the entity phase looks at the pairs of a changed player only as a receiver -> noticed',
-                 t.wpd_detects('(r.eid = any(coalesce((select sset from sets), ''{}''::int[])) or s.eid = any(coalesce((select sset from sets), ''{}''::int[])))', '(r.eid = any(coalesce((select sset from sets), ''{}''::int[])))'));
+                 t.wpd_detects('(r.entity_id = any(coalesce(p_sset, ''{}'')) or s.entity_id = any(coalesce(p_sset, ''{}'')))', '(r.entity_id = any(coalesce(p_sset, ''{}'')))'));
 select t.is_true('mutation: a block that changed by more than one is an update, not a remake -> noticed', t.wpd_detects('when ok = 1 and manh > 1 then ''remake''', 'when ok = 1 and manh > 1 then ''update'''));
 select t.is_true('mutation: the angle threshold is a degree, not half a degree -> noticed', t.wpd_detects('> 0.008726646::real then ''update''', '> 0.017453292::real then ''update'''));
 select t.is_true('mutation: a view distance change does not look at the chunk connections of the receiver -> noticed',
@@ -180,7 +191,7 @@ select t.is_true('mutation: a view distance change does not look at the chunk co
 select set_config('t.wpd_bigvr', 'on', false);
 select t.is_true('mutation: the view of 14+ chunks does not make every azimuth connection a candidate -> noticed', t.wpd_detects('coalesce(max(vr) >= 14, false) as slow', 'false as slow'));
 select set_config('t.wpd_bigvr', 'off', false);
-drop function if exists mc.vis_wp_pass_mut(bigint, int, int);
+drop function if exists mc.vis_wp_pass_mut(bigint, int, int), mc.wp_cand_mut(int[], int[], int[], int[], int[], int[], boolean, int[], int), mc.wp_cand_missing_mut(int[]), mc.wp_cand_state_mut(int[]);
 
 -- restore the settings the scenarios changed
 update mc.server_property set value = '10' where key = 'view-distance';
