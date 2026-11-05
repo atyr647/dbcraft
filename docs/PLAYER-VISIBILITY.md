@@ -153,6 +153,10 @@ configuration is about +-5 ms on this machine.
   probed before they are inserted, and the pairing bundle of a player that wears nothing uses a memo of its attribute entries (`sql/981`).  The e2e comparison (`tests/e2e/vis.sh`, recorded fresh with this tree's
   vanilla jar on 2026-11-04 because no recording existed) shows the same differing steps in the tree before and after this work: join identical; the armor-modifier order inside one attribute, the order of a `/tp`'s forget
   packets and a jump's movement sync (listed above as not verified) differ; the tree before also differed in the adventure step of `pose`.
+* **Update, docs/PERF-VIS2.md (2026-11-05):** `mc.refresh_visibility_vis` now looks only at the pairs whose distance is within `disp(a) + disp(b) + 4` blocks of the radius of the viewer (`disp` = how far a
+  player is from where its pairs were last evaluated; a player that has no such bound, a new session, a changed view distance or game mode, a teleport that waits for its chunks, is tested against everybody
+  as before) and probes `mc.visible` for those only.  Same pairs, same packets in the same order on every tick of random walks (`tests/sql/990`, with a mutation check); the neighbourhood version it replaced is
+  `mc.refresh_visibility_vis_nb`, the reference of that test.  Three more columns of `mc.player` (`vis_eid`, `vis_rng`, `vis_spec`) hold what the evaluation used.  500 crowded walkers, live: 183 -> 35 ms for the phase.
 
 To repeat: build the database (`tools/migrate.sh`, the loaders as `tests/sql/prun.sh` does), `tests/bench/game/bench.sql` for the helper functions, then per repetition and per setting of
 `dbcraft.vanilla-tracker` run `bench.setup(500, 100)`, `vacuum full mc.play_in_work, mc.play_out, mc.play_in, mc.player`, and 120 times `select bench.gen(F); select mc.tick(); select bench.drain();` in ONE
