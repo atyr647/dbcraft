@@ -15,7 +15,6 @@ alter table mc.player
     add column if not exists dead          boolean not null default false,
     add column if not exists death_tick    bigint,
     add column if not exists death_x       float8, add column if not exists death_y float8, add column if not exists death_z float8,
-    add column if not exists resp_dup      bigint,                        -- the tick of a respawn: the viewers get the entity data and the attributes of the new entity a second time (recorded)
     add column if not exists xp_progress   real   not null default 0,        -- Player.experienceProgress
     add column if not exists xp_total      int    not null default 0,        -- Player.totalExperience
     add column if not exists xp_score      int    not null default 0,        -- Player score (entity data 18, grows with experience points)
@@ -68,6 +67,7 @@ begin
   new.sent_xp_total := new.xp_total; new.sent_score := new.xp_score; new.sent_using := false;
   new.fall_distance := 0; new.fall_tp := 0; new.food_timer := 0; new.hurt_tick := null; new.last_hurt := 0; new.sprinting := false;
   new.use_slot := null; new.use_until := null; new.cb_tick := null; new.cb_fall := 0; new.cb_type := null;
+  new.spam_chat := 0; new.spam_chat_tick := null; new.spam_cmd := 0; new.spam_cmd_tick := null;       -- the rate-limit counters (sql/910) live as long as the connection: a new session starts at zero (recorded)
   new.join_tick := (select game_time from mc.game_state);
   return new;
 end $$;

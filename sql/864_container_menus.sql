@@ -268,6 +268,12 @@ begin
     end if;
   end if;
   if not mc.menu_open(p.uuid, dim, pos.x, pos.y, pos.z, false) then return false; end if;
+  -- the viewers see the arm swing, twice, after the lid sound (recorded, as for a placed block: sql/432)
+  if mc.vis_on() then
+    insert into mc.play_out (conn_id, data)
+    select v.viewer_conn, mc.pkt_swing(v.target_eid, case when get_byte(body, 0) = 0 then 0 else 1 end, 1, 6) || mc.pkt_swing(v.target_eid, case when get_byte(body, 0) = 0 then 0 else 1 end, 1, 6)
+      from mc.visible v where v.target_eid = p.entity_id and v.viewer_conn <> p.conn_id order by v.viewer_conn;
+  end if;
   -- the block's menu provider ran (a barrel's state is open now)
   perform mc.menu_opened_state_hook(dim, pos.x, pos.y, pos.z, ci.blk);
   -- ServerGamePacketListenerImpl.handleUseItemOn: the clicked block (as it is now) and the block beside the clicked face are sent again (the client undoes its prediction), then the ack

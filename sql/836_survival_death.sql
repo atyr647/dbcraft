@@ -36,7 +36,6 @@ begin
          last_hurt = 0, cb_tick = null, cb_fall = 0, cb_type = null, use_slot = null, use_until = null, pend_slot = null, sprinting = false,
          xp_level = case when keep then xp_level else 0 end, xp_progress = case when keep then xp_progress else 0 end, xp_total = case when keep then xp_total else 0 end,
          xp_score = case when keep then xp_score else 0 end,
-         resp_dup = p_cur,
          x = gs.spawn_x, y = gs.spawn_y, z = gs.spawn_z, yaw = gs.spawn_yaw, pitch = 0, on_ground = true, chunk_x = floor(gs.spawn_x / 16)::int, chunk_z = floor(gs.spawn_z / 16)::int,
          sent_qx = mc.quant(gs.spawn_x), sent_qy = mc.quant(gs.spawn_y), sent_qz = mc.quant(gs.spawn_z), sent_yaw = gs.spawn_yaw, sent_pitch = 0, last_sent_tick = p_cur,
          vis_dirty = true, vis_ocx = null, vis_ocz = null, teleport_id = tid, awaiting_teleport = tid, inv_state = 1,
@@ -71,23 +70,6 @@ begin
     || mc.pkt_set_health(20, 20, 5)
     || mc.pkt_set_experience(p.xp_progress, p.xp_level, p.xp_total)
     || mc.cb('chunk_batch_start', '\x') || chunks || mc.cb('chunk_batch_finished', proto.varint(nch)));
-end $$;
-
--- The respawned player's viewers get its entity data and its attributes a second time, right after the add-entity bundle (recorded: the new entity's values are dirty and go out
--- with the tracker's first pass; PlayerList.respawn).  The attribute entries are the same builder as the bundle's (vanilla's order inside the packet is a hash order: masked).
-create or replace function mc.survival_resp_dup(p_cur bigint, p_ids int[]) returns void language plpgsql as $$
-declare t mc.player; attrs bytea[]; eq text[]; pkt bytea;
-begin
-  for t in select * from mc.player where resp_dup is not null and entity_id = any (p_ids) order by entity_id loop
-    update mc.player set resp_dup = null where uuid = t.uuid;
-    continue when not exists (select 1 from mc.visible v where v.target_eid = t.entity_id);
-    eq := mc.equip_now(t.uuid, t.held_slot);
-    attrs := case when not exists (select 1 from unnest(eq) h where h <> '') then mc.attr_memo(coalesce(t.attr_gm, t.gamemode), t.sprinting, t.attr_seen)
-                  else mc.pairing_attrs(t.uuid, t.held_slot, coalesce(t.attr_gm, t.gamemode), t.sprinting, t.attr_seen) end;
-    pkt := mc.pkt_entity_data(t.entity_id, mc.ed_entries(mc.ed_flags(t.shift, t.sprinting, t.gamemode), t.pose, 0, t.health, t.main_hand, t.skin_parts, t.xp_score, mc.ed_nondefault_mask(t)))
-        || case when attrs is not null then mc.pkt_update_attributes(t.entity_id, attrs) else '\x'::bytea end;
-    insert into mc.play_out (conn_id, data) select v.viewer_conn, pkt from mc.visible v where v.target_eid = t.entity_id order by v.viewer_conn;
-  end loop;
 end $$;
 
 create or replace function mc.survival_respawn(p_cur bigint) returns void language plpgsql as $$

@@ -31,6 +31,10 @@ def record(port, out, host="127.0.0.1"):
     for who in ("Surv", "Obs"):                      # an earlier probe may have left them in creative (a vanilla world keeps the game mode)
         c["Surv"].send("minecraft:chat_command", m.string("gamemode survival " + who)); time.sleep(0.3)
     for x in c.values(): x.settle(0.4, 2.0)
+    for who in ("Surv", "Obs"):                      # a death resets the experience TOTAL (set / add of levels never does): both start from nothing
+        c["Surv"].send("minecraft:chat_command", m.string("kill " + who)); time.sleep(0.6)
+        c[who].send("minecraft:client_command", m.varint(0)); time.sleep(0.6)
+    for x in c.values(): x.settle(0.6, 3.0)
     res = []
     for who, cmd in STEPS:
         ks = {n: len(x.events) for n, x in c.items()}

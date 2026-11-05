@@ -31,6 +31,9 @@ def varint(b, o):
         if not c & 0x80: return v, o
         sh += 7
 
+scn_name = [a for a in sys.argv[1:] if not a.startswith("--")][:1] or [""]
+scn_name = scn_name[0]
+
 def reduce(path):
     steps, cur = {}, None
     order = []
@@ -50,7 +53,7 @@ def reduce(path):
             hid, o = varint(b, 0); src, o = varint(b, o); eid, o = varint(b, o); vol, pit = struct.unpack(">ff", b[o:o + 8])
             nm = SND.get(hid - 1, "?%d" % (hid - 1))
             steps[cur].append(("sound_entity", nm, src, "V" if nm in RANDOM_VOLUME else round(vol, 4), "P" if nm in RANDOM_PITCH else round(pit, 4)))
-        elif n in CONTEXT and not SOUNDS_ONLY:
+        elif n in CONTEXT and not SOUNDS_ONLY and not (n == "set_equipment" and scn_name == "eat"):      # (eat: vanilla re-sends the held item when the use starts, a visibility-tracker difference, docs/DIFFERENCES.md)
             item = (n, b.hex()) if n in ("block_update", "block_event") else (n,)
             if n == "block_event" and item in steps[cur]: continue         # an open chest's lid is signalled again every 5 ticks: how many depends on the timing, one is kept
             steps[cur].append(item)

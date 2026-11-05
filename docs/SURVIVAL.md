@@ -44,7 +44,7 @@ entity motion, waypoints, the forced "player standing on air" block update and t
 
 Sounds are compared by `tests/e2e/compare_sound.py` (see [Sounds](#sounds)).  Not compared by the harness although vanilla sent them: `set_entity_motion` after a hit, the one forced `block_update` below a landing player (vanilla
 only), `update_advancements` after eating, `waypoint`, and the operator's command tree in the respawn burst (dbcraft replays a
-recorded level-0 tree).  The second `set_entity_data` and `update_attributes` of a respawned player that vanilla's observers get after the add-entity bundle are sent here since `sql/836` (`mc.survival_resp_dup`) and compared.  Reproduce: `tests/e2e/survival.sh record VANILLA_PORT` (a vanilla server in survival, normal, no mobs, spawn radius 0, "Surv" an operator), then
+recorded level-0 tree).  The second `set_entity_data` and `update_attributes` of a respawned player that vanilla's observers get after the add-entity bundle were already sent (`sql/906`, `mc.vis_respawn`: the tracker's first pass); the harness did not keep `update_attributes` and so did not see it: `compare_survival.py` keeps it now (entries sorted) and `kill` is identical.  Reproduce: `tests/e2e/survival.sh record VANILLA_PORT` (a vanilla server in survival, normal, no mobs, spawn radius 0, "Surv" an operator), then
 `tests/e2e/survival.sh compare DBCRAFT_PORT` (see the header of that script for the dbcraft side).
 
 In SQL (`tests/sql/830_survival.sql`, 136 checks) the same recordings are replayed through the tick functions and compared byte for byte: the **fall** (particles with

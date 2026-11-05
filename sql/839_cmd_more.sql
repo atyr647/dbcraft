@@ -50,7 +50,7 @@ declare tgts mc.player[]; t mc.player; reason text := nullif(args #>> '{reason,t
 begin
   tgts := mc.cmd_players(me, args -> 'targets'); if tgts is null then return; end if;
   nbt := case when reason is null then proto.nbt_root(proto.nbt_str('translate', 'multiplayer.disconnect.kicked')) else mc.nbt_root_text(reason) end;       -- (recorded) a plain reason is a bare string tag
-  comp := case when reason is null then proto.nbt_str('translate', 'multiplayer.disconnect.kicked') else proto.nbt_str('text', reason) end;
+  comp := case when reason is null then proto.nbt_str('translate', 'multiplayer.disconnect.kicked') else mc.tc_arg_str(reason) end;
   foreach t in array tgts loop
     if t.conn_id is not null then
       insert into mc.play_out (conn_id, data) values (t.conn_id, mc.pkt_disconnect(nbt));

@@ -111,7 +111,7 @@ identical results in three and one extra `entity_position_sync` at the end of th
   inventory start from the row defaults.
 * **Equipment**: stacks with data components are forwarded with the bytes the inventory stores (not decoded), attribute modifiers come from the item's default components only (an
   enchanted or renamed stack is treated as its base item), the body and saddle slots are not modelled.
-* **Chat and command rate limits** follow the bytecode (counters, thresholds, `disconnect.spam`, operators exempt) and are tested in SQL only: no vanilla recording of a spam kick.
+* **Chat and command rate limits** follow the bytecode (counters, thresholds, `disconnect.spam`, operators exempt) and were compared with a real spam kick by `tests/e2e/spam_probe.py` (10 chat messages in a burst are answered and the 11th kicks, the 10th command is answered and kicks, steady streams at 500 and 200 ms; see [DIFFERENCES.md](DIFFERENCES.md) item 17 for what still differs).
   Signed chat is out of scope.  `/title`, `/tellraw` and the other text commands belong to the commands track and are not built here.
 * **Entity data not modelled**: on fire, swimming, gliding, glowing, custom names, the air supply, absorption, the shoulder parrots, pose values other than standing and crouching.
 * **Scale**: the locator bar is a row per pair of players per tick: above `dbcraft.locator-bar-max-players` (default 120) it is switched off (see the cost table), a large crowd also
