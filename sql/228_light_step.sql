@@ -13,7 +13,8 @@ create unlogged table if not exists mc.light_dirty (
     y         int  not null,
     z         int  not null,
     kind      text not null default 'block',        -- block | cells | section (as mc.block_event)
-    cells     bytea
+    cells     bytea,
+    effect    smallint not null default 3           -- 1 the sky light can change, 2 the block light can change (see mc.light_effect)
 );
 
 create or replace function mc.light_differs(p_old text, p_new text) returns boolean language sql stable parallel safe as $$
@@ -21,11 +22,19 @@ create or replace function mc.light_differs(p_old text, p_new text) returns bool
       (select o.damp <> n.damp or o.emission <> n.emission or o.shaped or n.shaped
          from mc.light_state o, mc.light_state n where o.name = p_old and n.name = p_new), true) $$;
 
+-- Which light a change of state can touch: 1 = sky (the dampening changed, or a shape is involved: sources and passability), 2 = block (the emission, the dampening or a
+-- shape).  3 for a state the table does not know.
+create or replace function mc.light_effect(p_old text, p_new text) returns smallint language sql stable parallel safe as $$
+  select coalesce(
+      (select (case when o.damp <> n.damp or o.shaped or n.shaped then 3 when o.emission <> n.emission then 2 else 0 end)::smallint
+         from mc.light_state o, mc.light_state n where o.name = p_old and n.name = p_new), 3::smallint) $$;
+
 create or replace function mc.light_queue() returns trigger language plpgsql as $$
 begin
     if not exists (select 1 from mc.light_state limit 1) then return null; end if;
-    insert into mc.light_dirty (dimension, x, y, z, kind, cells)
-    select n.dimension, n.x, n.y, n.z, n.kind, n.cells from new_events n where n.kind <> 'block' or mc.light_differs(n.old_state, n.new_state);
+    insert into mc.light_dirty (dimension, x, y, z, kind, cells, effect)
+    select n.dimension, n.x, n.y, n.z, n.kind, n.cells, case when n.kind = 'block' then mc.light_effect(n.old_state, n.new_state) else 3 end
+      from new_events n;
     return null;
 end $$;
 drop trigger if exists light_queue on mc.block_event;
@@ -99,7 +108,8 @@ create or replace function mc.light_step(p_tick bigint default 0) returns int la
 declare
     r        record;
     xs int[]; ys int[]; zs int[];
-    big      boolean;
+    w_sky    boolean;
+    w_blk    boolean;
     cxs int[]; czs int[];
     n_pkt    int := 0;
     vd       int;
@@ -113,7 +123,13 @@ begin
     delete from lw_all; delete from lw_allc;
     for r in select d.dimension from mc.light_dirty d group by d.dimension loop
         -- the changed cells: block events one by one; a fill or section event as its cells (up to 64) or, beyond that, the chunk columns around it are lit again
-        with d as (delete from mc.light_dirty where dimension = r.dimension returning x, y, z, kind, cells),
+        with d0 as (delete from mc.light_dirty where dimension = r.dimension returning x, y, z, kind, cells, effect),
+        quiet as (                                       -- changes that cannot change light (stone -> dirt): a chunk that has light rows stays as it is
+            update mc.chunk c set dirty = false
+              from (select distinct d0.x >> 4 as cx, d0.z >> 4 as cz from d0 where d0.kind = 'block' and d0.effect = 0) q
+             where c.dimension = r.dimension and c.cx = q.cx and c.cz = q.cz and exists (select 1 from mc.chunk_light l where l.dimension = c.dimension and l.cx = c.cx and l.cz = c.cz)
+            returning 1),
+        d as (select * from d0 where d0.effect > 0),
         cells as (
             select d.x, d.y, d.z from d where d.kind = 'block'
             union
@@ -122,14 +138,15 @@ begin
              where d.kind = 'cells' and d.cells is not null and bit_count(d.cells) <= 64 and ((get_byte(d.cells, b >> 3) >> (b & 7)) & 1) = 1),
         bigs as (select distinct (d.x >> 4) as cx, (d.z >> 4) as cz from d where d.kind = 'section' or (d.kind = 'cells' and (d.cells is null or bit_count(d.cells) > 64)))
         select coalesce(array_agg(c.x), '{}'), coalesce(array_agg(c.y), '{}'), coalesce(array_agg(c.z), '{}'),
-               (select coalesce(array_agg(b.cx), '{}') from bigs b), (select coalesce(array_agg(b.cz), '{}') from bigs b)
-          into xs, ys, zs, cxs, czs from cells c;
+               (select coalesce(array_agg(b.cx), '{}') from bigs b), (select coalesce(array_agg(b.cz), '{}') from bigs b),
+               (select coalesce(bool_or((d3.effect & 1) <> 0), false) from d d3), (select coalesce(bool_or((d3.effect & 2) <> 0), false) from d d3)
+          into xs, ys, zs, cxs, czs, w_sky, w_blk from cells c;
         -- the chunks of the changed cells are current now (a later send does not light them again from scratch)
         update mc.chunk c set dirty = false from (select distinct x >> 4 as cx, z >> 4 as cz from unnest(xs, zs) u(x, z) union select cx, cz from unnest(cxs, czs) u(cx, cz)) q
          where c.dimension = r.dimension and c.cx = q.cx and c.cz = q.cz;
         res := 0;
         if cardinality(xs) > 0 then
-            res := mc.light_update(r.dimension, xs, ys, zs);
+            res := mc.light_update(r.dimension, xs, ys, zs, w_sky, w_blk);
             if res >= 0 then
                 insert into lw_all select cx, cz, idx, sky, blk, cs, cb from lw_delta;
             else                                              -- the cube was too big, or a section turned empty / non-empty: the chunks around the cells are lit again

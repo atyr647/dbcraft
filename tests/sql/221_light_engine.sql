@@ -4,6 +4,7 @@
 \! python3 tools/load_world_ref.py
 select mc.light_ready() as ready \gset
 \if :ready
+  delete from mc.light_dirty;
   insert into mc.dimension (name) values ('dbcraft:lf'), ('dbcraft:ln');
   insert into mc.flat_layer (dimension, y, block) values ('dbcraft:lf', -64, 'minecraft:bedrock'), ('dbcraft:lf', -63, 'minecraft:dirt'), ('dbcraft:lf', -62, 'minecraft:dirt'), ('dbcraft:lf', -61, 'minecraft:grass_block');
   select mc.generate_flat_area('dbcraft:lf', -3, -3, 3, 3);
@@ -42,11 +43,11 @@ select mc.light_ready() as ready \gset
   select mc.light_step(0);
   select t.eq('the torch removed: its cells are dark again', mc.light_at('dbcraft:lf', 8, -60, 8) + mc.light_at('dbcraft:lf', 9, -60, 8), 0);
   -- an edit that changes no light property is not queued (dirt -> stone: both opaque, neither emits)
-  select count(*) as q0 from mc.light_dirty \gset
+  select count(*) as q0 from mc.light_dirty where effect > 0 \gset
   select mc.set_block('dbcraft:lf', 3, -62, 3, 'minecraft:stone');
-  select t.eq('dirt -> stone is not queued', (select count(*)::int from mc.light_dirty), :q0);
+  select t.eq('dirt -> stone is queued as one that cannot change light (effect 0)', (select count(*)::int from mc.light_dirty where effect > 0), :q0);
   select mc.set_block('dbcraft:lf', 3, -62, 3, 'minecraft:air');
-  select t.eq('dirt -> air is', (select count(*)::int from mc.light_dirty), :q0 + 1);
+  select t.eq('dirt -> air changes sky and block light (effect 3)', (select count(*)::int from mc.light_dirty where effect = 3), :q0 + 1);
   select mc.set_block('dbcraft:lf', 3, -62, 3, 'minecraft:dirt');
   select mc.light_step(0);
 

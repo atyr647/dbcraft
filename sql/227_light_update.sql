@@ -81,7 +81,8 @@ begin
     return v_min_y - 1;
 end $$;
 
-create or replace function mc.light_update(p_dim text, p_x int[], p_y int[], p_z int[]) returns int language plpgsql volatile set plan_cache_mode = force_generic_plan set jit = off as $$
+drop function if exists mc.light_update(text, int[], int[], int[]);
+create or replace function mc.light_update(p_dim text, p_x int[], p_y int[], p_z int[], p_sky boolean default true, p_blk boolean default true) returns int language plpgsql volatile set plan_cache_mode = force_generic_plan set jit = off as $$
 declare
     v_min_y  int;
     v_height int;
@@ -163,6 +164,7 @@ begin
 
     ---------------------------------------------------------------------------------------------------- sky sources of the free sections, from the top down
     select min(sy), max(sy) into lo, hi from lw_free;
+    if p_sky then
     for ly in reverse hi .. lo loop
         with act as (
             select s.i, s.cx, s.cz, s.cl, c.carry as chain, f.cx is not null as above_free
@@ -183,17 +185,21 @@ begin
         up as (update lw_sec s set src = ~c.a from calc c where s.i = c.i returning 1)
         update lw_chunk k set carry = substring(c.a from 1 for 256)::bit(256) from calc c where k.cx = c.cx and k.cz = c.cz;
     end loop;
+    end if;
 
     ---------------------------------------------------------------------------------------------------- waves: sky, then block (frozen cells start waves at their stored level)
-    insert into lw_em select s.i, 15, s.src from lw_sec s where s.src is not null and bit_count(s.src) > 0;
-    insert into lw_em
-    select s.i, v.lvl, v.m
-      from lw_sec s join lw_frz z on z.cx = s.cx and z.sy = s.sy and z.cz = s.cz
-      join mc.chunk_light l on l.dimension = p_dim and l.cx = s.cx and l.cz = s.cz and l.idx = s.sy - v_min_sy + 1
-      cross join lateral mc.light_levels(l.sky) v
-     where l.sky_kind = 'data';
-    perform mc.light_waves(1);
-    delete from lw_em;
+    if p_sky then
+        insert into lw_em select s.i, 15, s.src from lw_sec s where s.src is not null and bit_count(s.src) > 0;
+        insert into lw_em
+        select s.i, v.lvl, v.m
+          from lw_sec s join lw_frz z on z.cx = s.cx and z.sy = s.sy and z.cz = s.cz
+          join mc.chunk_light l on l.dimension = p_dim and l.cx = s.cx and l.cz = s.cz and l.idx = s.sy - v_min_sy + 1
+          cross join lateral mc.light_levels(l.sky) v
+         where l.sky_kind = 'data';
+        perform mc.light_waves(1);
+        delete from lw_em;
+    end if;
+    if p_blk then
     insert into lw_em select s.i, u.l, u.m from lw_sec s join lw_free f on f.cx = s.cx and f.sy = s.sy and f.cz = s.cz, unnest(s.em_lvl, s.em_mask) u(l, m) where s.em_lvl is not null;
     insert into lw_em
     select s.i, v.lvl, v.m
@@ -202,21 +208,24 @@ begin
       cross join lateral mc.light_levels(l.block) v
      where l.block_kind = 'data';
     perform mc.light_waves(2);
+    end if;
 
     ---------------------------------------------------------------------------------------------------- compare and write the free sections
     insert into lw_out
     select s.cx, s.cz, s.sy - v_min_sy + 1,
-           case when bit_count(rs.c0 | rs.c1 | rs.c2 | rs.c3) > 0 then 'data' when l.sky_kind = 'data' then 'data' else 'empty' end,
-           case when bit_count(rs.c0 | rs.c1 | rs.c2 | rs.c3) = 0 then (case when l.sky_kind = 'data' then decode(repeat('00', 2048), 'hex') end)
+           case when not p_sky then l.sky_kind when bit_count(rs.c0 | rs.c1 | rs.c2 | rs.c3) > 0 then 'data' when l.sky_kind = 'data' then 'data' else 'empty' end,
+           case when not p_sky then l.sky
+                when bit_count(rs.c0 | rs.c1 | rs.c2 | rs.c3) = 0 then (case when l.sky_kind = 'data' then decode(repeat('00', 2048), 'hex') end)
                 when bit_count(rs.c0 & rs.c1 & rs.c2 & rs.c3) = 4096 then mc.light_array_uniform(15)
                 else mc.light_array(rs.c3, rs.c2, rs.c1, rs.c0) end,
-           case when bit_count(rb.c0 | rb.c1 | rb.c2 | rb.c3) > 0 then 'data' when l.block_kind = 'data' then 'data' else 'empty' end,
-           case when bit_count(rb.c0 | rb.c1 | rb.c2 | rb.c3) = 0 then (case when l.block_kind = 'data' then decode(repeat('00', 2048), 'hex') end)
+           case when not p_blk then l.block_kind when bit_count(rb.c0 | rb.c1 | rb.c2 | rb.c3) > 0 then 'data' when l.block_kind = 'data' then 'data' else 'empty' end,
+           case when not p_blk then l.block
+                when bit_count(rb.c0 | rb.c1 | rb.c2 | rb.c3) = 0 then (case when l.block_kind = 'data' then decode(repeat('00', 2048), 'hex') end)
                 when bit_count(rb.c0 & rb.c1 & rb.c2 & rb.c3) = 4096 then mc.light_array_uniform(15)
                 else mc.light_array(rb.c3, rb.c2, rb.c1, rb.c0) end
       from lw_sec s join lw_free f on f.cx = s.cx and f.sy = s.sy and f.cz = s.cz
-      join lw_run rs on rs.kind = 1 and rs.i = s.i
-      join lw_run rb on rb.kind = 2 and rb.i = s.i
+      left join lw_run rs on rs.kind = 1 and rs.i = s.i
+      left join lw_run rb on rb.kind = 2 and rb.i = s.i
       join mc.chunk_light l on l.dimension = p_dim and l.cx = s.cx and l.cz = s.cz and l.idx = s.sy - v_min_sy + 1;
     perform mc.light_delta_from_out(p_dim);
     update mc.chunk_light l set sky_kind = o.sky_kind, sky = o.sky, block_kind = o.block_kind, block = o.block
