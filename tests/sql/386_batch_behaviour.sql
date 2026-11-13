@@ -184,7 +184,14 @@ select t.eq('out of reach: nothing is placed', mc.get_block('minecraft:overworld
 select t.eq('out of reach: only the ack (recorded from the real server: handleUseItemOn returns after the acknowledgement, no block update)',
             (select array_agg(name order by idx) from t.g_b5 where name in ('minecraft:block_update', 'minecraft:block_changed_ack')), array['minecraft:block_changed_ack']);
 select t.eq('out of reach: the item is not consumed', (select count from mc.inventory_slot where player = net.offline_uuid('Bob') and slot = 36)::int, 2);
-select t.feed_pkt(12, 'play', 'minecraft:player_action', proto.varint(3) || proto.position(0, -62, 0) || proto.i8(1) || proto.varint(7));
+-- (sql/891) the stop packet is accepted only when the dig took long enough: dirt by hand needs 10 ticks after the start packet; a stop packet alone breaks nothing
+select t.feed_pkt(12, 'play', 'minecraft:player_action', proto.varint(3) || proto.position(0, -62, 0) || proto.i8(1) || proto.varint(6));
+select mc.server_tick_batched(); select t.take(11); select t.take(12);
+select t.eq('a stop_destroy_block without a start breaks nothing', mc.get_block('minecraft:overworld', 0, -62, 0), 'minecraft:dirt');
+select t.feed_pkt(12, 'play', 'minecraft:player_action', proto.varint(0) || proto.position(0, -62, 0) || proto.i8(1) || proto.varint(7));
+select mc.server_tick_batched(); select t.take(11); select t.take(12);
+do $f$ begin for i in 1 .. 10 loop perform mc.server_tick_batched(); end loop; end $f$; select t.take(11); select t.take(12);
+select t.feed_pkt(12, 'play', 'minecraft:player_action', proto.varint(3) || proto.position(0, -62, 0) || proto.i8(1) || proto.varint(8));
 select mc.server_tick_batched(); select t.take(11); select t.take(12);
 select t.eq('survival breaks on stop_destroy_block', mc.get_block('minecraft:overworld', 0, -62, 0), 'minecraft:air');
 select t.feed_pkt(12, 'play', 'minecraft:player_action', proto.varint(3) || proto.position(0, -64, 0) || proto.i8(1) || proto.varint(8));
