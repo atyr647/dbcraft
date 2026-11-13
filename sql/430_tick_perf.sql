@@ -207,7 +207,7 @@ begin
     -- 4, 5
     -- (docs/PERF-IDLE2.md: with players online but idle every phase below used to cost 0.05-0.15 ms for its own start-up before it found nothing to do; the guards are the idle checks the functions
     -- make themselves, one query each, so the function call, its declarations and its savepoint are not paid)
-    if all_phases or exists (select 1 from mc.play_in_work m where m.packet_id in (mc.sid('player_action'), mc.sid('use_item_on'))) or exists (select 1 from mc.mining) then
+    if all_phases or exists (select 1 from mc.play_in_work m where m.packet_id in (mc.sid('player_action'), mc.sid('use_item_on'))) or mc.mining_active() then
         begin perform mc.apply_block_actions(cur); exception when others then
             insert into mc.error_log (tick, step, message) values (cur, 'apply_block_actions', sqlerrm); raise warning 'apply_block_actions failed: %', sqlerrm; end;
     end if;

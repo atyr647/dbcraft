@@ -120,7 +120,7 @@ begin
     if exists (select 1 from mc.mining where pend) then perform mc.mining_flush(); end if;       -- (sql/891) the block a player's own tick broke last tick
     -- (idle early return, the only change to this copy: no block packet this tick, nothing to do; saves planning and cursor setup every tick)
     if not exists (select 1 from mc.play_in_work m where m.packet_id in (i_act, i_use)) then
-        if exists (select 1 from mc.mining) then perform mc.mining_tick(cur_tick); end if;       -- (sql/891) a dig in progress ticks without a packet
+        if mc.mining_active() then perform mc.mining_tick(cur_tick); end if;                      -- (sql/891) a dig in progress ticks without a packet
         return next; return;
     end if;
     for r in select m.seq as mseq, m.packet_id, m.conn_id, m.body, p.uuid, p.gamemode, p.x, p.y, p.z, p.held_slot, p.inv_state, p.yaw, p.pitch, p.sneaking, p.dead
@@ -205,7 +205,7 @@ begin
         end;
     end loop;
     delete from mc.play_in_work where packet_id in (i_act, i_use);
-    if exists (select 1 from mc.mining) then perform mc.mining_tick(cur_tick); end if;           -- (sql/891) ServerPlayerGameMode.tick: after the packets of the tick
+    if mc.mining_active() then perform mc.mining_tick(cur_tick); end if;                         -- (sql/891) ServerPlayerGameMode.tick: after the packets of the tick
     return next;
 end $$;
 

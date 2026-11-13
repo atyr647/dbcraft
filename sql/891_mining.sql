@@ -44,8 +44,12 @@ create unlogged table if not exists mc.mining (
     px int not null default 0, py int not null default 0, pz int not null default 0, pstate text
 );
 
-alter table mc.mining add column if not exists pend boolean not null default false, add column if not exists px int not null default 0, add column if not exists py int not null default 0,
+alter table mc.mining add column if not exists jt bigint, add column if not exists pend boolean not null default false, add column if not exists px int not null default 0, add column if not exists py int not null default 0,
   add column if not exists pz int not null default 0, add column if not exists pstate text;
+
+-- (the row of a player stays after a dig ends: vanilla keeps destroyPos and destroyProgressStart, so a STOP after an ABORT can still break the block; a new session resets it)
+create index if not exists mining_active_idx on mc.mining (uuid) where destroying or delayed or pend;
+create or replace function mc.mining_active() returns boolean language sql stable as $$ select exists (select 1 from mc.mining where destroying or delayed or pend) $$;
 
 ------------------------------------------------------------------------------------------------ what the player holds, where the eyes are
 create or replace function mc.held_item(p_uuid uuid, p_held int) returns text language sql stable as $$
@@ -196,8 +200,12 @@ begin
   select * into p from mc.player where uuid = p_uuid;
   if not found or p.conn_id is null then return 0; end if;
   gt := cur - 1 - coalesce(p.join_tick, 0);                                                   -- gameTicks: this player's own counter (it starts at the join), one behind while packets are handled
-  insert into mc.mining (uuid) values (p_uuid) on conflict do nothing;
+  insert into mc.mining (uuid, jt) values (p_uuid, p.join_tick) on conflict do nothing;
   select * into m from mc.mining where uuid = p_uuid;
+  if m.jt is distinct from p.join_tick then                                                   -- a new session: ServerPlayerGameMode starts from nothing
+    update mc.mining set destroying = false, start_gt = 0, x = 0, y = 0, z = 0, dir = 0, last_state = -1, delayed = false, dx = 0, dy = 0, dz = 0, dstart = 0, pend = false, jt = p.join_tick
+     where uuid = p_uuid returning * into m;
+  end if;
   if not mc.in_dig_reach(p, bx, yy, bz) then                                                  -- "too far"
     if m.destroying and p_act = 2 then
       update mc.mining set destroying = false where uuid = p_uuid;
@@ -249,7 +257,6 @@ begin
     if (m.x, m.y, m.z) <> (bx, yy, bz) then perform mc.destroy_progress_broadcast(p.entity_id, m.x, m.y, m.z, -1); end if;
     perform mc.destroy_progress_broadcast(p.entity_id, bx, yy, bz, -1);
   end if;
-  delete from mc.mining where uuid = p_uuid and not destroying and not delayed and not pend;
   return broke;
 end $$;
 
@@ -270,7 +277,7 @@ end $$;
 create or replace function mc.mining_tick(cur bigint) returns void language plpgsql as $$
 declare m mc.mining; p mc.player; st text; f real; i bigint; gt bigint;
 begin
-  for m in select mi.* from mc.mining mi join mc.player pl on pl.uuid = mi.uuid order by pl.entity_id loop
+  for m in select mi.* from mc.mining mi join mc.player pl on pl.uuid = mi.uuid where mi.destroying or mi.delayed order by pl.entity_id loop
     select * into p from mc.player where uuid = m.uuid;
     if p.conn_id is null or p.dead then delete from mc.mining where uuid = m.uuid; continue; end if;
     gt := cur - coalesce(p.join_tick, 0);                                                       -- gameTicks after this tick's increment
@@ -297,7 +304,6 @@ begin
       end if;
     end if;
   end loop;
-  delete from mc.mining where not destroying and not delayed and not pend;
 end $$;
 
 -- The world change of a block the player's tick broke (the delayed destroy): vanilla ticks the players after the chunk broadcast, so clients hear of it in the next tick, after
@@ -312,5 +318,4 @@ begin
     if conn is not null then insert into mc.block_actor values ('minecraft:overworld', m.px, m.py, m.pz, conn); end if;
     update mc.mining set pend = false where uuid = m.uuid;
   end loop;
-  delete from mc.mining where not destroying and not delayed and not pend;
 end $$;

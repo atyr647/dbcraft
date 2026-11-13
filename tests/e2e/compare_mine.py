@@ -72,17 +72,27 @@ def reduce(path):
             slot, o = varint(b, 0); sk, _ = stack(b, o); r.append(("set_player_inventory", slot, sk))
         elif n == "entity_event":
             r.append(("entity_event", "E", b[4]))
-        elif n == "sound":
-            hid, o = varint(b, 0); src, o = varint(b, o); x, y, z = struct.unpack(">iii", b[o:o + 12]); vol, pit = struct.unpack(">ff", b[o + 12:o + 20])
-            nm = SND.get(hid - 1, "?%d" % (hid - 1)); r.append(("sound", nm, src, x, y, z, round(vol, 3), "P" if nm in ("entity.item.pickup", "entity.item.break") else round(pit, 3)))
-        elif n == "sound_entity":
-            hid, o = varint(b, 0); nm = SND.get(hid - 1, "?%d" % (hid - 1)); r.append(("sound_entity", nm))
+        elif n == "sound":                                                   # (not compared: the world's animals make sounds of their own; the mining sounds are the client's, from the level events)
+            pass
         elif n == "add_entity":
             _, o = varint(b, 0); o += 16; t, _ = varint(b, o); r.append(("add_entity", ETYPE.get(t, "?%d" % t)))
+        elif n == "set_entity_data":                                         # an item entity's stack (entry 8, type 7): count and item; other entity data is not compared
+            _, o = varint(b, 0)
+            while o < len(b) and b[o] != 0xff:
+                idx = b[o]; ty, o = varint(b, o + 1)
+                if ty != 7: break
+                cnt, o = varint(b, o); iid, o = varint(b, o)
+                if idx == 8: r.append(("item_stack", ITEM.get(iid, "?%d" % iid).replace("minecraft:", ""), cnt))
+                _, o = varint(b, o); _, o = varint(b, o)
         elif n == "take_item_entity":
             r.append(("take_item_entity",))
         elif n == "player_abilities" or n == "game_event":
             r.append((n, b.hex()))
+    if "drops" in path:
+        # the item entities of a drop: their packets come in the entity tracker's order (not under test); compared are the stacks (a set: vanilla sends each entity's data twice)
+        for st in order:
+            items = sorted({x[1:] for x in steps[st] if x[0] == "item_stack" and not any(t in x[1] for t in ("_pickaxe", "_shovel", "_sword", "_hoe", "_axe", "shears"))})      # (the tools /give hands out are fake item entities too)
+            steps[st] = [x for x in steps[st] if x[0] not in ("item_stack", "add_entity", "take_item_entity", "sound")] + [("drops", items)]
     return order, steps
 
 if len(args) == 3 and args[0] == "dump":          # dump SCENARIO PREFIX: the reduced steps of one recording

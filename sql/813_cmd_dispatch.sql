@@ -136,6 +136,7 @@ begin
   elsif sig = 'time/set/timemarker' then
     marker := args ->> 'timemarker';
     if not markers ? marker then
+      perform mc.cmd_sync_time();                                               -- (recorded: the clock is synchronised first, then the marker is looked up)
       perform mc.cmd_fail(me, mc.tc_translate_strs('commands.time.no_time_marker_found', array[marker, 'minecraft:overworld'])); return;
     end if;
     day := (markers ->> marker)::bigint;
