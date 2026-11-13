@@ -151,6 +151,7 @@ last byte came, whether it was in play and how much was queued to it, so the nex
 * **Not done: a reader thread in the gateway.**  It would not change a drop (above) and costs a thread-per-connection or a shared read queue for no measured gain.
 * **Not done: a narrow position table.**  A mover's UPDATE of the 111-column `mc.player` row costs 15 us (7.5-12 ms of 500 movers' tick); the columns are read in hundreds of places and `mc.player` is the
   entity table of every other track.
+  **Update (docs/PERF-PAIRING.md):** measured again with the server's statement shape and one transaction per tick: 18.7 us per mover in the wide row against 2.6 us in a narrow unlogged table (9.3 against 1.3 ms at 500 movers); inventory of the 64 SQL files and the plan (a view named `mc.player` over two tables) are there; still not built, the view gives a third of the gain back in the tick's scans.
 * **Not done: streaming chunks without `mc.chunk_wanted`** (delivering what exists in the tick that wants it and storing only the rest).  It would save the 663 inserts (8 ms) and part of the 8.7 ms
   `chunk_wanted_view` clean-up at 500 walkers, but with the tick spending more than 24 ms the global cap of `dbcraft.chunk-budget-per-tick` shrinks to 240 chunks a tick and most wanted rows do wait: the
   rows are needed in exactly the regime this work is about.

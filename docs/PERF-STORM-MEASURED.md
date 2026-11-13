@@ -117,6 +117,8 @@ So round 2 took out what it said it took out (the waypoint pass, the frames, the
 * **After the storm** the online players' chat p99 is 500-820 ms in every run of both trees (p50 6-10 ms): not a tick (the tick log has one tick over 90 ms in that period and the 220-to-20 players leave tick takes 25 ms), so probably the gateway closing 200 connections at once when the load generators exit; not investigated, not caused by this track.
 * **Vanilla at 50 joins** keeps a lower chat p50 (14 ms measured, 28 in the campaign) (its tick is 36 ms on average); dbcraft's 20-30 ms is within about one tick.
 
+**Update (docs/PERF-PAIRING.md, 2026-11-13):** the pairing deferral named below is built (a bounded queue under a measured per-tick budget, `tests/sql/991`); it does nothing for a storm that is already one joiner per tick (the pairing of 12-25 ms is in every tick), but the profile of the join tick found the real cost inside it: the locator bar's first pass for a new player (14 of 20 ms of `mc.vis_step` at 200 players) was a planner accident in `mc.wp_cand_state`, fixed: a joiner's tracker work at 200 online 24.4-25.1 -> 11.3-13.1 ms (database only), `mc.vis_wp_pass` 10.5 -> 5.2 ms per call, function time of the storm -16%.  The end-to-end worst tick is not separable from the noise (3 + 3 runs).
+
 ### One concrete next step
 
 Take the chunk path apart with `auto_explain` (or `EXPLAIN (ANALYZE, BUFFERS)` of the statements inside `net.hook_chunks` and `mc.deliver_ready_chunks`) in a 200-join run and make it cheaper: it is 33% of the storm's in-database function time, 8.6 ms of every join and 8.4 ms of every tick, none of it touched by round 2.
