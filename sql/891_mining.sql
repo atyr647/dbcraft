@@ -34,7 +34,9 @@ create unlogged table if not exists mc.mining (
     last_state  int     not null default -1,           -- lastSentState
     delayed     boolean not null default false,        -- hasDelayedDestroy
     dx int not null default 0, dy int not null default 0, dz int not null default 0,    -- delayedDestroyPos
-    dstart      bigint  not null default 0             -- delayedTickStart
+    dstart      bigint  not null default 0,            -- delayedTickStart
+    pend        boolean not null default false,        -- a block the player's own tick broke: the world changes at the start of the NEXT tick (see mc.mining_flush)
+    px int not null default 0, py int not null default 0, pz int not null default 0, pstate text
 );
 
 ------------------------------------------------------------------------------------------------ what the player holds, where the eyes are
@@ -114,9 +116,9 @@ create or replace function mc.damage_patch(p_damage int) returns text language s
 -- ItemStack.hurtAndBreak(amount, level, player, onBreak) for the held item of a survival player: setDamageValue; at max damage the stack shrinks by one, the break event goes to
 -- the player and everybody who sees it (entity_event 47: the main hand's tool broke).  The slot is sent to the owner (the inventory menu's broadcast of the changed slot).
 create or replace function mc.tool_hurt(p_uuid uuid, p_held int, p_amount int) returns void language plpgsql as $$
-declare s record; mx int; d int; nd int; slot int := 36 + p_held; state int; p mc.player;
+declare s record; mx int; d int; nd int; v_slot int := 36 + p_held; v_state int; p mc.player;
 begin
-  select i.item, i.count, i.components ->> 'raw_hex' as hex into s from mc.inventory_slot i where i.player = p_uuid and i.slot = slot;
+  select i.item, i.count, i.components ->> 'raw_hex' as hex into s from mc.inventory_slot i where i.player = p_uuid and i.slot = v_slot;
   if not found then return; end if;
   select t.max_damage into mx from ref.item_tool t where t.item = s.item;
   if mx is null or mx <= 0 or p_amount <= 0 then return; end if;
@@ -125,25 +127,25 @@ begin
   nd := d + p_amount;
   select * into p from mc.player where uuid = p_uuid;
   if nd >= mx then                                                    -- broken
-    perform mc.set_slot(p_uuid, slot, null, 0);
-    update mc.player set inv_state = inv_state + 1 where uuid = p_uuid returning inv_state into state;
-    insert into mc.play_out (conn_id, data) values (p.conn_id, mc.pkt_cs(0, state, slot, mc.s_empty()));
+    perform mc.set_slot(p_uuid, v_slot, null, 0);
+    update mc.player set inv_state = inv_state + 1 where uuid = p_uuid returning inv_state into v_state;
+    insert into mc.play_out (conn_id, data) values (p.conn_id, mc.pkt_cs(0, v_state, v_slot, mc.s_empty()));
     insert into mc.play_out (conn_id, data)
       select c.conn_id, mc.pkt_entity_event(p.entity_id, 47) from (select p.conn_id union select v.viewer_conn from mc.visible v where v.target_eid = p.entity_id) c order by c.conn_id;
   else
-    perform mc.set_slot(p_uuid, slot, s.item, s.count, case when mc.damage_patch(nd) is null then null else jsonb_build_object('raw_hex', mc.damage_patch(nd)) end);
-    update mc.player set inv_state = inv_state + 1 where uuid = p_uuid returning inv_state into state;
-    insert into mc.play_out (conn_id, data) values (p.conn_id, mc.pkt_cs(0, state, slot, mc.s_mk(s.item, s.count, mc.damage_patch(nd))));
+    perform mc.set_slot(p_uuid, v_slot, s.item, s.count, case when mc.damage_patch(nd) is null then null else jsonb_build_object('raw_hex', mc.damage_patch(nd)) end);
+    update mc.player set inv_state = inv_state + 1 where uuid = p_uuid returning inv_state into v_state;
+    insert into mc.play_out (conn_id, data) values (p.conn_id, mc.pkt_cs(0, v_state, v_slot, mc.s_mk(s.item, s.count, mc.damage_patch(nd))));
   end if;
 end $$;
 
 ------------------------------------------------------------------------------------------------ breaking
 -- ServerPlayerGameMode.destroyBlock: true when the block was broken (or there was nothing to break)
-create or replace function mc.mining_destroy(p mc.player, bx int, yy int, bz int) returns boolean language plpgsql as $$
-declare dim text := 'minecraft:overworld'; st text := coalesce(mc.get_block(dim, bx, yy, bz), 'minecraft:air'); item text := mc.held_item(p.uuid, p.held_slot); creative_ok boolean; ns text; correct boolean;
+create or replace function mc.mining_destroy(p mc.player, bx int, yy int, bz int, p_defer boolean default false) returns boolean language plpgsql as $$
+declare dim text := 'minecraft:overworld'; st text := coalesce(mc.get_block(dim, bx, yy, bz), 'minecraft:air'); v_item text := mc.held_item(p.uuid, p.held_slot); creative_ok boolean; ns text; correct boolean;
 begin
   if mc.is_air(st) then return true; end if;
-  select t.creative_ok into creative_ok from ref.item_tool t where t.item = item;
+  select t.creative_ok into creative_ok from ref.item_tool t where t.item = v_item;
   if p.gamemode = 1 and creative_ok = false then return false; end if;                                             -- Item.canDestroyBlock: a sword does not break blocks in creative
   if split_part(st, '[', 1) in ('minecraft:command_block', 'minecraft:repeating_command_block', 'minecraft:chain_command_block', 'minecraft:structure_block', 'minecraft:jigsaw',
                                 'minecraft:test_block', 'minecraft:test_instance_block')
@@ -152,16 +154,20 @@ begin
     return false;
   end if;
   if p.gamemode in (2, 3) then return false; end if;                                                                 -- blockActionRestricted
-  correct := mc.has_correct_tool(item, st);
+  correct := mc.has_correct_tool(v_item, st);
   ns := case when st like '%waterlogged=true%' then 'minecraft:water[level=0]' else 'minecraft:air' end;           -- removeBlock: the fluid takes the cell
-  perform mc.set_block(dim, bx, yy, bz, ns);
-  perform mc.shape_neighbours(dim, bx, yy, bz);                                                                      -- (sql/890) a fence next to it no longer connects
-  insert into mc.block_actor values (dim, bx, yy, bz, p.conn_id);
+  if p_defer then                                                                                                    -- (ServerPlayerGameMode.tick runs in the entity phase: the chunk broadcast of the change comes one tick later)
+    update mc.mining set pend = true, px = bx, py = yy, pz = bz, pstate = ns where uuid = p.uuid;
+  else
+    perform mc.set_block(dim, bx, yy, bz, ns);
+    perform mc.shape_neighbours(dim, bx, yy, bz);                                                                    -- (sql/890) a fence next to it no longer connects
+    insert into mc.block_actor values (dim, bx, yy, bz, p.conn_id);
+  end if;
   if p.gamemode = 1 then return true; end if;                                                                        -- creative: preventsBlockDrops
-  if mc.block_hardness(st) <> 0::real then perform mc.tool_hurt(p.uuid, p.held_slot, coalesce((select t.damage_per_block from ref.item_tool t where t.item = item), 0)); end if;      -- Item.mineBlock
+  if mc.block_hardness(st) <> 0::real then perform mc.tool_hurt(p.uuid, p.held_slot, coalesce((select t.damage_per_block from ref.item_tool t where t.item = v_item), 0)); end if;      -- Item.mineBlock
   if correct then                                                                                                    -- Block.playerDestroy
     update mc.player set exhaustion = least(exhaustion + 0.005::real, 40::real) where uuid = p.uuid;
-    perform mc.block_drops(p, bx, yy, bz, st, item);
+    perform mc.block_drops(p, bx, yy, bz, st, v_item);
   end if;
   return true;
 end $$;
@@ -177,7 +183,7 @@ end $$;
 ------------------------------------------------------------------------------------------------ the packets of one player
 -- ServerPlayerGameMode.handleBlockBreakAction.  p_act: 0 start, 1 change direction, 2 abort, 3 stop.  Returns 1 when a block was broken.
 create or replace function mc.mining_action(p_uuid uuid, p_act int, bx int, yy int, bz int, p_face int, cur bigint) returns int language plpgsql as $$
-declare p mc.player; m mc.mining; st text; f real; j bigint; gt bigint; item text; broke int := 0; stage int;
+declare p mc.player; m mc.mining; st text; f real; j bigint; gt bigint; v_item text; broke int := 0; stage int;
 begin
   select * into p from mc.player where uuid = p_uuid;
   if not found or p.conn_id is null then return 0; end if;
@@ -200,8 +206,8 @@ begin
       perform mc.queue_block_update(p.conn_id, bx, yy, bz, st);                                 -- "block action restricted"
     else
       f := 1;
-      item := mc.held_item(p_uuid, p.held_slot);
-      if not mc.is_air(st) then f := mc.dig_progress(p, item, st); end if;
+      v_item := mc.held_item(p_uuid, p.held_slot);
+      if not mc.is_air(st) then f := mc.dig_progress(p, v_item, st); end if;
       if not mc.is_air(st) and f >= 1::real then
         broke := mc.mining_destroy_ack(p, bx, yy, bz);                                          -- "insta mine"
         update mc.mining set start_gt = gt where uuid = p_uuid;
@@ -219,8 +225,8 @@ begin
       j := gt - m.start_gt;
       st := coalesce(mc.get_block('minecraft:overworld', bx, yy, bz), 'minecraft:air');
       if not mc.is_air(st) then
-        item := mc.held_item(p_uuid, p.held_slot);
-        f := mc.dig_progress(p, item, st) * (j + 1)::real;
+        v_item := mc.held_item(p_uuid, p.held_slot);
+        f := mc.dig_progress(p, v_item, st) * (j + 1)::real;
         if f >= 0.7::real then
           update mc.mining set destroying = false where uuid = p_uuid;
           perform mc.destroy_progress_broadcast(p.entity_id, bx, yy, bz, -1);
@@ -235,7 +241,7 @@ begin
     if (m.x, m.y, m.z) <> (bx, yy, bz) then perform mc.destroy_progress_broadcast(p.entity_id, m.x, m.y, m.z, -1); end if;
     perform mc.destroy_progress_broadcast(p.entity_id, bx, yy, bz, -1);
   end if;
-  delete from mc.mining where uuid = p_uuid and not destroying and not delayed;
+  delete from mc.mining where uuid = p_uuid and not destroying and not delayed and not pend;
   return broke;
 end $$;
 
@@ -268,7 +274,7 @@ begin
                                                                                          -- progress * (start tick + 1), constant while it waits: a long-online player's dig finishes at once, a new player's never)
         if f >= 1::real then
           update mc.mining set delayed = false where uuid = m.uuid;
-          perform mc.mining_destroy(p, m.dx, m.dy, m.dz);                                       -- (destroyBlock only: no acknowledgement)
+          perform mc.mining_destroy(p, m.dx, m.dy, m.dz, true);                                -- (destroyBlock only: no acknowledgement)
         end if;
       end if;
     elsif m.destroying then
@@ -283,5 +289,20 @@ begin
       end if;
     end if;
   end loop;
-  delete from mc.mining where not destroying and not delayed;
+  delete from mc.mining where not destroying and not delayed and not pend;
+end $$;
+
+-- The world change of a block the player's tick broke (the delayed destroy): vanilla ticks the players after the chunk broadcast, so clients hear of it in the next tick, after
+-- that tick's packets are handled.  Called at the start of mc.apply_block_actions.
+create or replace function mc.mining_flush() returns void language plpgsql as $$
+declare m mc.mining; conn int;
+begin
+  for m in select * from mc.mining where pend loop
+    perform mc.set_block('minecraft:overworld', m.px, m.py, m.pz, m.pstate);
+    perform mc.shape_neighbours('minecraft:overworld', m.px, m.py, m.pz);
+    select conn_id into conn from mc.player where uuid = m.uuid;
+    if conn is not null then insert into mc.block_actor values ('minecraft:overworld', m.px, m.py, m.pz, conn); end if;
+    update mc.mining set pend = false where uuid = m.uuid;
+  end loop;
+  delete from mc.mining where not destroying and not delayed and not pend;
 end $$;

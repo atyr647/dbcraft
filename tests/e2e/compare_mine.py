@@ -7,7 +7,7 @@ and compared in order:
   * level_event (2019 / 2020 dig events, 2001 break effect: type, position, data), block_destruction (breaker id masked: S = the digger, position, stage), block_update (position,
     state), block_changed_ack (sequence), container_set_slot / set_player_inventory (slot, item, count, the component patch), entity_event (the broken tool), the sounds
     (event name, source, position), add_entity (type only: ids, positions, velocities and uuids are random), take_item_entity (count only);
-  * not compared: entity movement, entity data, time, light, keep-alive, chunks (random per run or not what is under test).
+  * not compared: the steps ending in ": end" (set-up of the next case), entity movement, entity data, time, light, keep-alive, chunks (random per run or not what is under test).
 The order of the packets inside one step fixes the TICK in which each happened: a dig sends one level_event per tick, so a block_destruction between the n-th and (n+1)-th
 is the stage reached in tick n.  --show prints every step.  Exit code 0 when every step is equal.
 """
@@ -54,7 +54,8 @@ def reduce(path):
         if n == "level_event":
             ev = struct.unpack(">i", b[:4])[0]; r.append(("level_event", ev, pos(b, 4), struct.unpack(">i", b[12:16])[0]))
         elif n == "block_destruction":
-            _, o = varint(b, 0); r.append(("block_destruction", pos(b, o), b[o + 8]))
+            _, o = varint(b, 0); stg = b[o + 8]
+            r.append(("block_destruction", pos(b, o), stg if stg <= 10 or stg == 255 else "big"))     # (a delayed dig's stage is  progress * (start tick + 1): it depends on how long the player has been online)
         elif n == "block_update":
             r.append(("block_update", pos(b, 0), varint(b, 8)[0]))
         elif n == "block_changed_ack":
@@ -91,6 +92,7 @@ bad = total = 0
 for who in ("surv", "obs"):
     vo, vs = reduce("%s_%s_%s.jsonl" % (vp, scn, who)); oo, os_ = reduce("%s_%s_%s.jsonl" % (op, scn, who))
     for st in vo:
+        if st.endswith(": end") or st.startswith("case "): continue            # (the set-up of the next case: /give noise and the like)
         a, b = vs.get(st, []), os_.get(st, [])
         # (the item entities of a drop: their number is compared, not their packets after the first; set_entity_data and movement are not reduced at all)
         total += 1

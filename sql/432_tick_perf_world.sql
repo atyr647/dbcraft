@@ -117,6 +117,7 @@ declare
     cur text; clicked text; item text; cnt int; blk text; v_slot int; tx int; ty int; tz int; ok boolean; face_nm text; repl boolean; pstate text; ccx float8; ccy float8; ccz float8; ax int; ay int; az int;
 begin
     breaks := 0; places := 0; refused := 0;
+    if exists (select 1 from mc.mining where pend) then perform mc.mining_flush(); end if;       -- (sql/891) the block a player's own tick broke last tick
     -- (idle early return, the only change to this copy: no block packet this tick, nothing to do; saves planning and cursor setup every tick)
     if not exists (select 1 from mc.play_in_work m where m.packet_id in (i_act, i_use)) then
         if exists (select 1 from mc.mining) then perform mc.mining_tick(cur_tick); end if;       -- (sql/891) a dig in progress ticks without a packet
