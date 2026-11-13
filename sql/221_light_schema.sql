@@ -17,5 +17,6 @@ create unique index if not exists light_state_name_key on mc.light_state (name);
 create table if not exists mc.light_face (id smallint primary key, kind smallint not null, boxes text not null);                 -- kind 0 empty, 1 full square, 2 other
 create table if not exists mc.light_face_occ (a smallint not null, b smallint not null, primary key (a, b));                    -- faceShapeOccludes(a, b)
 
+-- The engine runs when its reference data is loaded; `set dbcraft.light_engine = 'off'` (session, role or database) turns it off: mc.compute_light is then the straight-down model.
 create or replace function mc.light_ready() returns boolean language sql stable parallel safe as $$
-  select exists (select 1 from mc.light_state limit 1) $$;
+  select coalesce(current_setting('dbcraft.light_engine', true), 'on') <> 'off' and exists (select 1 from mc.light_state limit 1) $$;

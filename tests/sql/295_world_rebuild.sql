@@ -1,6 +1,8 @@
 -- The faster chunk rebuild (single-pass wire helpers, bit-mask sky light, light cache key, multi-layer light statement) must give exactly the bytes the original code gave.
 -- The original implementations live in schema mc_old (generated from commit 971e8cb by tests/bench/edit/make_old_impl.py).  Two dimensions with the same layers; the same
 -- edits go through the same edit functions on both, then one is rebuilt by the new code and the other by the original, and light rows and packets are compared.
+-- (This test is about the straight-down light model's rebuild: the light engine, which differs from it where light spreads sideways, has its own test, 221.)
+set dbcraft.light_engine = 'off';
 \! python3 tools/load_world_ref.py
 \ir ../bench/edit/old_impl.sql
 

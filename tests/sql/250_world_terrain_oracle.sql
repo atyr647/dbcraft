@@ -57,16 +57,23 @@ select (select count(*) from expected) > 0 and :'have_biomes'::boolean as have_c
           (select sum(ws_diff) from hmcmp), (select count(*) * 256 from hmcmp), (select sum(mb_diff) from hmcmp), (select sum(nl_diff) from hmcmp);
   end $d$;
 
-  -- D. light: the straight-down model against vanilla's engine.  Informational, not asserted: horizontal spreading and cross-chunk light are not modelled.
-  create temp table captured_light as select dimension, cx, cz, idx, sky_kind, sky from mc.chunk_light where dimension = 'dbcraft:terrain';
-  select count(*) as relit from (select mc.compute_light('dbcraft:terrain', cx, cz) from mc.chunk where dimension = 'dbcraft:terrain') q \gset
+  -- D. light: the light engine (sql/221 .. 228) against what vanilla's engine held for these chunks.  The 49 chunks are a 7 x 7 square: only the 25 in the middle have all their
+  -- neighbours here, the ring is reported separately.
+  create temp table captured_light as select dimension, cx, cz, idx, sky_kind, sky, block_kind, block from mc.chunk_light where dimension = 'dbcraft:terrain';
+  select mc.light_region('dbcraft:terrain', array_agg(cx), array_agg(cz)) as relit from mc.chunk where dimension = 'dbcraft:terrain' \gset
+  create temp table light_cmp as
+    select a.cx, a.cz, a.idx, a.sky is not distinct from b.sky as sky_same, a.block is not distinct from b.block as block_same,
+           (select count(*) from mc.chunk n where n.dimension = 'dbcraft:terrain' and abs(n.cx - a.cx) <= 1 and abs(n.cz - a.cz) <= 1) = 9 as has_nb
+      from captured_light a left join mc.chunk_light b using (dimension, cx, cz, idx);
   do $d$ begin
-      raise notice 'terrain sky light: % of % captured sky layers identical to the straight-down model (layers present in both: %)',
-          (select count(*) from captured_light a join mc.chunk_light b using (dimension, cx, cz, idx) where a.sky_kind is not distinct from b.sky_kind and a.sky is not distinct from b.sky),
-          (select count(*) from captured_light where sky_kind is not null),
-          (select count(*) from captured_light a join mc.chunk_light b using (dimension, cx, cz, idx) where a.sky_kind is not null and b.sky_kind is not null);
+      raise notice 'terrain light: sky arrays identical in % of % layers of the 25 chunks that have all their neighbours (% of % in the ring), block arrays in % of %',
+          (select count(*) from light_cmp where has_nb and sky_same), (select count(*) from light_cmp where has_nb),
+          (select count(*) from light_cmp where not has_nb and sky_same), (select count(*) from light_cmp where not has_nb),
+          (select count(*) from light_cmp where has_nb and block_same), (select count(*) from light_cmp where has_nb);
   end $d$;
-  -- compute_light rewrote the light rows; restore the captured ones so later checks see vanilla's data
+  -- (informational, not asserted: this capture is of chunks vanilla had just generated at the edge of its world, 7 x 7 chunks around the player: vanilla lit them before the features of
+  -- the chunks around them had finished, and their light is not the light of their final blocks.  The exact comparison is on a world vanilla finished and saved: tests/light/compare_import.sql.)
+  -- the engine rewrote the light rows; restore the captured ones so later checks see vanilla's data
   delete from mc.chunk_light where dimension = 'dbcraft:terrain';
   \copy mc.chunk_light (dimension, cx, cz, idx, sky_kind, sky, block_kind, block) from program 'python3 tools/import_chunk_capture.py light'
 

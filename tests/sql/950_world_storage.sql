@@ -24,9 +24,17 @@ select t.eq('chunk, light, cache: fillfactors 90, 90, 100; the chunk row compres
 select t.eq('the heightmaps of a chunk row are MAIN (compressed inside the row, never in the TOAST table)',
             (select string_agg(attname::text || attstorage::text, ',' order by attnum) from pg_attribute where attrelid = 'mc.chunk'::regclass and attname in ('hm_motion_blocking', 'hm_motion_blocking_no_leaves', 'hm_world_surface', 'light_ws')),
             'hm_motion_blockingm,hm_motion_blocking_no_leavesm,hm_world_surfacem,light_wsm');
+-- (a flat world of plain layers: the light is the straight-down model's, written with the cache key that compresses the arrays when it is stored; a world with water or glass layers is lit by the
+-- light engine, whose rows keep no key)
+insert into mc.dimension (name) values ('dbcraft:c950f') on conflict do nothing;
+delete from mc.flat_layer where dimension = 'dbcraft:c950f';
+insert into mc.flat_layer (dimension, y, block)
+select 'dbcraft:c950f', y, b from (values (-64, 'minecraft:bedrock'), (-63, 'minecraft:dirt'), (-62, 'minecraft:dirt'), (-61, 'minecraft:grass_block')) l(y, b);
+delete from mc.chunk where dimension = 'dbcraft:c950f';
+select mc.generate_flat('dbcraft:c950f', cx, cz) from generate_series(0, 2) cx, generate_series(0, 1) cz;
 select t.is_true('a never-edited flat chunk of the test world has compressed heightmaps (under 100 bytes each, 536 raw)',
                  (select pg_column_size(hm_world_surface) < 100 and pg_column_size(hm_motion_blocking_no_leaves) < 100 and pg_column_size(light_ws) < 100
-                    from mc.chunk where dimension = 'dbcraft:c950' and cx = 2 and cz = 1));
+                    from mc.chunk where dimension = 'dbcraft:c950f' and cx = 2 and cz = 1));
 select t.eq('every variable-length column of a section is MAIN (never moved to the TOAST table)',
             (select string_agg(attname::text || attstorage::text, ',' order by attnum) from pg_attribute where attrelid = 'mc.chunk_section'::regclass and attnum > 0 and attname in ('dimension', 'palette', 'data', 'biome_palette', 'biome_data')),
             'dimensionm,palettem,datam,biome_palettem,biome_datam');
