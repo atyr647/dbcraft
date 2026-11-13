@@ -61,6 +61,24 @@ SCEN = {
     "water_layer": [("fill", *AIR_BOX, "air"), ("step", 3), ("rec",), ("fill", 0, -55, 0, 15, -55, 15, "water"), ("step", 60)],
     "sand_support_removed": [("fill", *AIR_BOX, "air"), ("fill", -3, -61, -3, 3, -61, 3, "stone"), ("fill", 0, -60, 0, 0, -56, 0, "sand"), ("set", 0, -60, 1, "stone"), ("step", 5), ("rec",),
                              ("set", 0, -60, 0, "air"), ("step", 60)],
+    # leaves (LeavesBlock): a blob of leaves in their default state around a trunk settles to its distances (the ticks scheduled by updateShape, delay 1, each one recomputing and telling its neighbours),
+    # then the top of the trunk is removed (the distances grow outwards, one tick per step of the wave) and put back (they shrink again); random_tick_speed is 0 so nothing decays here
+    "leaves_distance": [("fill", *AIR_BOX, "air"), ("fill", -4, -61, -4, 4, -61, 4, "stone"), ("fill", -2, -58, -2, 2, -56, 2, "oak_leaves"), ("fill", 0, -60, 0, 0, -57, 0, "oak_log"),
+                        ("set", 3, -58, 0, "oak_leaves"), ("set", 4, -58, 0, "oak_leaves"), ("set", -3, -57, 1, "oak_leaves"), ("step", 25), ("rec",),
+                        ("set", 0, -57, 0, "air"), ("step", 12), ("set", 0, -58, 0, "air"), ("step", 14), ("set", 0, -58, 0, "oak_log"), ("step", 14), ("set", 0, -57, 0, "oak_log"), ("step", 14)],
+    # the same blob with half of it persistent (placed by a player: distance and persistent given)
+    "leaves_persistent": [("fill", *AIR_BOX, "air"), ("fill", -4, -61, -4, 4, -61, 4, "stone"), ("fill", -2, -58, -2, 2, -56, 2, "oak_leaves[distance=7,persistent=true,waterlogged=false]"), ("fill", -2, -58, -2, 2, -56, -1, "oak_leaves"),
+                          ("fill", 0, -60, 0, 0, -57, 0, "birch_log"), ("step", 25), ("rec",), ("set", 0, -57, 0, "air"), ("step", 12), ("set", 0, -58, 0, "air"), ("step", 16)],
+    # sugar cane (SugarCaneBlock.canSurvive: sugar cane below, or sand / dirt / grass ... with water beside the supporting block): removing the support schedules a block tick that destroys the plant,
+    # and the destruction updates the next plant up (a column breaks from the bottom, one block a tick); a plant whose support is fine stays
+    "cane_breaks": [("fill", *AIR_BOX, "air"), ("fill", -6, -61, -6, 8, -61, 6, "stone"), ("fill", 1, -60, -1, 3, -60, 1, "stone"), ("set", 0, -60, 0, "sand"), ("set", 1, -60, 0, "water"),
+                    ("set", 0, -59, 0, "sugar_cane[age=0]"), ("set", 0, -58, 0, "sugar_cane[age=5]"), ("set", 0, -57, 0, "sugar_cane[age=0]"),
+                    ("set", 5, -60, 0, "dirt"), ("set", 6, -60, 0, "water"), ("set", 5, -59, 0, "sugar_cane[age=0]"), ("set", 5, -58, 0, "sugar_cane[age=15]"),
+                    ("step", 5), ("rec",), ("set", 0, -60, 0, "air"), ("step", 8), ("set", 6, -60, 0, "air"), ("step", 4), ("set", 4, -59, 0, "stone"), ("step", 4), ("set", 5, -60, 0, "air"), ("step", 8)],
+    # cactus (CactusBlock.canSurvive: no solid block or lava at its four sides, sand below, no liquid above): a solid neighbour or a liquid above schedules the tick that destroys it
+    "cactus_breaks": [("fill", *AIR_BOX, "air"), ("fill", -6, -61, -6, 8, -61, 6, "stone"), ("fill", -2, -60, -1, 2, -60, 1, "sand"), ("set", 0, -59, 0, "cactus[age=0]"), ("set", 0, -58, 0, "cactus[age=3]"),
+                      ("set", -2, -59, 0, "cactus[age=0]"), ("set", 2, -59, 0, "cactus[age=0]"),
+                      ("step", 5), ("rec",), ("set", 1, -59, 0, "stone"), ("step", 4), ("set", -2, -58, 0, "water"), ("step", 4), ("set", 0, -57, 0, "water"), ("step", 6), ("set", 2, -60, 0, "air"), ("step", 6)],
 }
 
 
@@ -162,7 +180,8 @@ def run_dbcraft(a):
     sql("truncate net.conn, mc.play_out, mc.block_event, mc.block_tick; delete from mc.player; "
         "insert into net.conn (conn_id, state, compression, closing, view_cx, view_cz) values (1, 'play', -1, false, 0, 0); "
         "insert into mc.player (uuid, name, conn_id, entity_id, chunk_x, chunk_z) values ('00000000-0000-0000-0000-00000000d001', 'Dyn', 1, 1, 0, 0); "
-        "insert into mc.game_rule (name, value) values ('minecraft:random_tick_speed', '0') on conflict (name) do update set value = '0'")
+        "insert into mc.game_rule (name, value) values ('minecraft:random_tick_speed', '0') on conflict (name) do update set value = '0'; "
+        "update mc.server_property set value = '0' where key = 'dbcraft.dynamics-tick-budget-ms'")           # (vanilla has no per-tick time budget: the comparison runs without)
     sql("select mc.generate_flat_area('minecraft:overworld', -3, -3, 3, 3)")
     sql("select mc.fill('minecraft:overworld', -20, -61, -20, 20, -61, 20, 'minecraft:grass_block[snowy=false]')")          # the floor the scenarios start from
     res = {}
