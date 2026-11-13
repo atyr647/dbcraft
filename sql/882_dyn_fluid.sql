@@ -50,7 +50,8 @@ create or replace function mc.dyn_is_src_of(f int, p_family int) returns boolean
 
 -- FlowingFluid.canMaybePassThrough(level, pos, state, dir, nextPos, nextState, nextFluid)
 create or replace function mc.dyn_maybe_pass(p_fl int4[], p_fa int2[], p_co int4[], p_sk int2[], p_oc bytea, p_ns int, p_family int, p_fs int, p_dir int, p_ts int) returns boolean language sql immutable parallel safe as $$
-  select not mc.dyn_is_src_of(mc.dyn_fstate(p_fl, p_fa, p_ts), p_family) and (p_fl[p_ts + 1] & 512) <> 0 and mc.dyn_pass_wall(p_fs, p_ts, p_dir, p_co, p_sk, p_oc, p_ns) $$;
+  select not ((p_fl[p_ts + 1] & 32) <> 0 and (p_fl[p_ts + 1] & (case when p_family = 0 then 8 else 16 end)) <> 0)                -- (not isSourceBlockOfThisType, written on the flags: no nested call, so that this inlines)
+         and (p_fl[p_ts + 1] & 512) <> 0 and mc.dyn_pass_wall(p_fs, p_ts, p_dir, p_co, p_sk, p_oc, p_ns) $$;
 
 -- FlowingFluid.getNewLiquid(level, pos, state): the fluid state a flowing block at (x, y, z) should have.  p_conv: canConvertToSource(level) (the gamerule of the family).
 create or replace function mc.dyn_new_liquid(p_secs int4[], p_gm int4[], p_fl int4[], p_fa int2[], p_co int4[], p_sk int2[], p_oc bytea, p_ns int, x int, y int, z int, p_family int, p_conv boolean, p_drop int)
@@ -71,7 +72,7 @@ begin
     end loop;
     if srcs >= 2 and p_conv then
         dn := mc.dyn_at(p_secs, p_gm, x, y - 1, z);
-        if (p_fl[dn + 1] & 2) <> 0 or mc.dyn_is_src_of(mc.dyn_fstate(p_fl, p_fa, dn), p_family) then return p_family * 16; end if;     -- BlockState.isSolid() or a source below
+        if (p_fl[dn + 1] & 2) <> 0 or ((p_fl[dn + 1] & 32) <> 0 and (p_fl[dn + 1] & (case when p_family = 0 then 8 else 16 end)) <> 0) then return p_family * 16; end if;     -- BlockState.isSolid() or a source below
     end if;
     up := mc.dyn_at(p_secs, p_gm, x, y + 1, z);
     upf := mc.dyn_fstate(p_fl, p_fa, up);
@@ -85,7 +86,7 @@ end $$;
 create or replace function mc.dyn_is_hole(p_fl int4[], p_fa int2[], p_co int4[], p_sk int2[], p_oc bytea, p_ns int, p_family int, p_fs int, p_bs int)
 returns boolean language sql immutable parallel safe as $$
   select mc.dyn_pass_wall(p_fs, p_bs, 0, p_co, p_sk, p_oc, p_ns)
-         and (mc.dyn_fstate(p_fl, p_fa, p_bs) >> 4 = p_family and mc.dyn_fstate(p_fl, p_fa, p_bs) >= 0                                     -- the fluid below is of this family
+         and ((p_fl[p_bs + 1] & (case when p_family = 0 then 8 else 16 end)) <> 0                                                          -- the fluid below is of this family
               or ((p_fl[p_bs + 1] & 512) <> 0 and mc.dyn_hold_specific(p_fl, p_bs, p_family * 2 + 1))) $$;                                 -- canHoldFluid(.., getFlowing())
 
 -- FlowingFluid.getSlopeDistance(level, pos, distance, fromDir, state, ctx): depth-first search over the four horizontal directions (NORTH, EAST, SOUTH, WEST) for a hole within
@@ -94,7 +95,7 @@ create or replace function mc.dyn_slope(p_secs int4[], p_gm int4[], p_fl int4[],
                                         x int, y int, z int, p_dist int, p_from int, p_state int)
 returns int language plpgsql immutable parallel safe as $$
 declare
-    best int := 1000; d int; nx int; nz int; ns int; sub int;
+    best int := 1000; d int; nx int; nz int; ns int; sub int; bs int;
     dirs int[] := array[2, 5, 3, 4];                                    -- NORTH, EAST, SOUTH, WEST
 begin
     foreach d in array dirs loop
@@ -103,7 +104,8 @@ begin
         ns := mc.dyn_at(p_secs, p_gm, nx, y, nz);
         -- canPassThrough(level, flowing, pos, state, d, next, nextState, nextFluid) = canMaybePassThrough(...) && canHoldSpecificFluid(next, flowing)
         if mc.dyn_maybe_pass(p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, p_state, d, ns) and mc.dyn_hold_specific(p_fl, ns, p_family * 2 + 1) then
-            if mc.dyn_is_hole(p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, ns, mc.dyn_at(p_secs, p_gm, nx, y - 1, nz)) then return p_dist; end if;
+            bs := mc.dyn_at(p_secs, p_gm, nx, y - 1, nz);
+            if mc.dyn_is_hole(p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, ns, bs) then return p_dist; end if;
             if p_dist < p_reach then
                 sub := mc.dyn_slope(p_secs, p_gm, p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, p_reach, nx, y, nz, p_dist + 1, mc.dyn_opp(d), ns);
                 if sub < best then best := sub; end if;
@@ -123,7 +125,7 @@ declare
     best int := 1000; d int; nx int; nz int; ns int; nf int; nl int; dist int; ok boolean;
     sel int[] := '{}'; ncode int[] := array[-1, -1, -1, -1, -1, -1];
     dirs int[] := array[2, 5, 3, 4];                                    -- the EnumMap is filled in this order but read in enum order below
-    nohole boolean := true; dx int; dz int; rr int := p_reach + 1;
+    nohole boolean := true; dx int; dz int; rr int := p_reach + 1; nlt int; nbs int;
 begin
     -- A hole needs a cell below that is not a full block (canPassThroughWall is false when either shape is full), and the search reads cells within p_reach + 1 steps: when every cell
     -- below that diamond is a full block no hole exists, every slope distance is 1000 and the searches are skipped (the common case: a flow over a floor).
@@ -141,10 +143,14 @@ begin
         -- with no hole around every distance is 1000, so a direction only matters when its block can be replaced; water cannot be replaced sideways (FluidState.canBeReplacedWith: DOWN only)
         if nohole and (p_fl[ns + 1] & 8) <> 0 then continue; end if;
         nl := mc.dyn_new_liquid(p_secs, p_gm, p_fl, p_fa, p_co, p_sk, p_oc, p_ns, nx, y, nz, p_family, p_conv, p_drop);
-        if not mc.dyn_hold_specific(p_fl, ns, mc.dyn_ftype(nl)) then continue; end if;       -- (an empty type is -1: only plain blocks hold it)
+        nlt := mc.dyn_ftype(nl);
+        if not mc.dyn_hold_specific(p_fl, ns, nlt) then continue; end if;                  -- (an empty type is -1: only plain blocks hold it)
         if nohole then dist := 1000;
-        elsif mc.dyn_is_hole(p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, ns, mc.dyn_at(p_secs, p_gm, nx, y - 1, nz)) then dist := 0;
-        else dist := mc.dyn_slope(p_secs, p_gm, p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, p_reach, nx, y, nz, 1, mc.dyn_opp(d), ns); end if;
+        else
+            nbs := mc.dyn_at(p_secs, p_gm, nx, y - 1, nz);
+            if mc.dyn_is_hole(p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, ns, nbs) then dist := 0;
+            else dist := mc.dyn_slope(p_secs, p_gm, p_fl, p_fa, p_co, p_sk, p_oc, p_ns, p_family, p_reach, nx, y, nz, 1, mc.dyn_opp(d), ns); end if;
+        end if;
         if dist < best then ncode := array[-1, -1, -1, -1, -1, -1]; end if;                    -- map.clear()
         if dist <= best then
             nf := mc.dyn_fstate(p_fl, p_fa, ns);

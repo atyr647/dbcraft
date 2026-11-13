@@ -32,12 +32,18 @@ alter table mc.sbu_tpl alter column tpl0 set storage external;
 create or replace function mc.sbu_build(p_cells bytea) returns mc.sbu_tpl language plpgsql volatile as $$
 declare ord int[]; r mc.sbu_tpl; k text := md5(p_cells);
 begin
+    if mc.shortset_impl() = 'native' then
+        -- dbcraft_set (sql/962, native/dbcraft_set): the order and both templates in C, tens of microseconds for a whole section
+        r.tpl := dbcraft_set.fill_tpl(p_cells); r.tpl0 := dbcraft_set.fill_tpl0(p_cells); r.n := bit_count(p_cells);
+    else
     ord := mc.shortset_order(mc.cells_positions(p_cells));
     select string_agg(to_hex(8 + ((p >> 4) & 7)) || to_hex(p & 15) || case when ((p >> 11) & 1) = 0 then 'g' else 'h' end || to_hex((p >> 7) & 15) || 'z', '' order by o),
            string_agg(case when p < 128 then lpad(to_hex(p), 2, '0') else to_hex(8 + ((p >> 4) & 7)) || to_hex(p & 15) || lpad(to_hex(p >> 7), 2, '0') end, '' order by o)
       into r.tpl, r.tpl0
       from unnest(ord) with ordinality t(p, o);
-    r.key := k; r.n := cardinality(ord);
+    r.n := cardinality(ord);
+    end if;
+    r.key := k;
     insert into mc.sbu_tpl (key, n, tpl, tpl0) values (r.key, r.n, r.tpl, r.tpl0) on conflict do nothing;
     if (select count(*) from mc.sbu_tpl) > 1000 then
         delete from mc.sbu_tpl where id < (select min(i) from (select id as i from mc.sbu_tpl order by id desc limit 800) q);

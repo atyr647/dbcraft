@@ -14,7 +14,8 @@
 --   standing signs, banners, skulls   rotation 0-15 from the yaw; wall versions via the nearest looking directions
 --   torches, lanterns, ladders, levers, buttons   the nearest looking directions with canSurvive (sturdy faces)
 --   fences, glass panes, iron bars   the connections to the four neighbours
--- Doors and beds (two blocks), walls (tall / low), vines and multiface blocks, snow layers, candles, leaves (persistent), tall plants, rails keep their default state.
+--   leaves                     persistent = true, the distance of its neighbours (sql/886), waterlogged by the fluid in the cell
+-- Doors and beds (two blocks), walls (tall / low), vines and multiface blocks, snow layers, candles, tall plants, rails keep their default state.
 
 create or replace function mc.cl(ch text, cls text) returns boolean language sql immutable as $$ select position('>' || cls || '>' in '>' || ch || '>') > 0 $$;
 
@@ -299,6 +300,12 @@ begin
     foreach d in array array['north', 'east', 'south', 'west'] loop
       st := mc.st_set(st, d, case when mc.connects(p_dim, 'pane', own, tx, ty, tz, d) then 'true' else 'false' end);
     end loop;
+    return st;
+  elsif mc.cl(ch, 'LeavesBlock') then
+    -- LeavesBlock.getStateForPlacement: persistent (a player's leaves do not decay), waterlogged by the fluid in the cell, and the distance updateDistance gives (sql/886 mc.leaf_distance_at)
+    st := mc.st_set(st, 'persistent', 'true');
+    st := mc.st_set(st, 'waterlogged', case when wl then 'true' else 'false' end);
+    st := mc.st_set(st, 'distance', mc.leaf_distance_at(p_dim, tx, ty, tz)::text);
     return st;
   end if;
   return st;

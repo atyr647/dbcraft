@@ -46,9 +46,9 @@ end $$;
 -- The reaction of the block at (qx, qy, qz) (state p_qsid) to a change next to it, in direction p_dir FROM the neighbour TO the changed cell; p_csid is the changed cell's new state.
 -- p_what 1 = neighborChanged, 2 = updateShape.
 create or replace function mc.dyn_notify(p_secs int4[], p_gm int4[], p_fl int4[], p_fa int2[], p_k int4[], p_bid int4[], p_what int, qx int, qy int, qz int, p_qsid int, p_dir int, p_csid int, p_fast boolean,
-                                         p_rl int4[] default '{}', p_stv int4[] default '{}', p_tg int8[] default '{}')
+                                         p_rl int4[] default '{}', p_stv int4[] default '{}', p_tg int8[] default '{}', p_lf int4[] default '{}')
 returns int4[] language plpgsql immutable parallel safe as $$
-declare f int := p_fl[p_qsid + 1]; res int4[] := '{}'; r int; t int; prm int; chk boolean;
+declare f int := p_fl[p_qsid + 1]; res int4[] := '{}'; r int; t int; prm int; chk boolean; gd int;
 begin
     if p_what = 1 then
         if (f & 4) <> 0 then return mc.dyn_liquid_react(p_secs, p_gm, p_fl, p_fa, p_k, qx, qy, qz, p_qsid, p_fast); end if;       -- LiquidBlock.neighborChanged
@@ -57,12 +57,22 @@ begin
     -- updateShape
     if (f & 4) <> 0 then                                                                                                   -- LiquidBlock.updateShape: a source here or there keeps the fluid ticking
         if (f & 32) <> 0 or (p_fl[p_csid + 1] & 32) <> 0 then
-            res := array[2, qx, qy, qz, mc.dyn_ftype(mc.dyn_fstate(p_fl, p_fa, p_qsid)), case when (f & 16) <> 0 then (case when p_fast then 10 else 30 end) else 5 end];
+            res := array[2, qx, qy, qz, (case when (f & 16) <> 0 then 2 else 0 end) + (case when (f & 32) <> 0 then 0 else 1 end), case when (f & 16) <> 0 then (case when p_fast then 10 else 30 end) else 5 end];
         end if;
         return res;
     end if;
     if (f & 8) <> 0 then res := res || array[2, qx, qy, qz, 0, 5]; end if;                                                   -- waterlogged blocks, kelp, seagrass: scheduleTick(pos, Fluids.WATER, 5)
     if (f & 4096) <> 0 then res := res || array[3, qx, qy, qz, p_bid[p_qsid + 1], 2]; end if;                                -- FallingBlock.updateShape
+    if (f & (16777216 | 33554432)) <> 0 then
+        -- SugarCaneBlock / CactusBlock.updateShape: when the block can not stay (any neighbour changed), a block tick is scheduled in 1 tick; the tick destroys it (mc.dyn_run, block ticks)
+        if not mc.dyn_plant_ok(p_secs, p_gm, p_fl, p_tg, p_bid, qx, qy, qz, p_bid[p_qsid + 1], (f & 33554432) <> 0) then res := res || array[3, qx, qy, qz, p_bid[p_qsid + 1], 1]; end if;
+    end if;
+    if (f & 8388608) <> 0 then
+        -- LeavesBlock.updateShape (after the water tick of a waterlogged one, above): the distance the changed cell makes (getDistanceAt: 0 for a block in the tag prevents_nearby_leaf_decay, its own
+        -- distance for leaves, 7 otherwise) plus one: scheduleTick(pos, this, 1) unless that is 1 and the leaves already say so
+        gd := case when ((p_tg[p_csid + 1] >> 10) & 1) = 1 then 0 when (p_fl[p_csid + 1] & 8388608) <> 0 then p_lf[p_csid + 1] & 7 else 7 end;
+        if gd + 1 <> 1 or (p_lf[p_qsid + 1] & 7) <> gd + 1 then res := res || array[3, qx, qy, qz, p_bid[p_qsid + 1], 1]; end if;
+    end if;
     if (f & 262144) <> 0 then
         -- a block with a support rule (sql/886): updateShape returns air when canSurvive says no; Block.updateOrDestroy then destroys it (loud: level event 2001) leaving its fluid
         r := p_rl[p_qsid + 1]; t := r & 255; prm := r >> 8;

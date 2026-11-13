@@ -9,7 +9,11 @@
 -- Reading is an array subscript (0.1 us), writing an array assignment; a cell the engine changed is visible to every later item of the same run.
 -- Returns the number of cells changed.  p_late: the block changes are announced by the NEXT tick's broadcast (what vanilla's entity phase does: it runs after the chunk broadcast).
 
-create or replace function mc.dyn_run(p_dim text, p_cur bigint, p_kind int[], p_x int[], p_y int[], p_z int[], p_aux int[], p_late boolean default false, p_aux2 int[] default '{}', p_darken int default 0) returns int
+-- p_deadline: when the clock passes it (checked every 16 items) the run stops after the item it is in; the number of items that were run is left in the setting mc.dyn_done (transaction
+-- local), the caller queues the rest again.  The cells of a fill's placements (kind 9) are put back to their old state for the WHOLE list, so a run that stops early still gives the items
+-- it ran the world a complete run would have shown them.
+drop function if exists mc.dyn_run(text, bigint, int[], int[], int[], int[], int[], boolean, int[], int);
+create or replace function mc.dyn_run(p_dim text, p_cur bigint, p_kind int[], p_x int[], p_y int[], p_z int[], p_aux int[], p_late boolean default false, p_aux2 int[] default '{}', p_darken int default 0, p_deadline timestamptz default null) returns int
 language plpgsql volatile as $$
 declare
     v     mc.dyn_vec%rowtype;
@@ -34,7 +38,13 @@ declare
     -- level events of this run
     ev_n  int := 0; ev_t int4[] := '{}'; ev_x int4[] := '{}'; ev_y int4[] := '{}'; ev_z int4[] := '{}'; ev_d int4[] := '{}';
     -- the action stack: groups of six
-    st    int4[] := array_fill(0, array[600]); sp int := 0;
+    st    int4[] := array_fill(0, array[600]); top int := 0; nst int; pp int; fn int := 0;                -- the ops stack: frames of ops written forward (see the drain loop)
+    fr_s  int4[] := array_fill(0, array[64]); fr_c int4[] := array_fill(0, array[64]); fr_e int4[] := array_fill(0, array[64]);
+    c_nx constant int[] := array[-1, 1, 0, 0, 0, 0]; c_ny constant int[] := array[0, 0, -1, 1, 0, 0]; c_nz constant int[] := array[0, 0, 0, 0, -1, 1];          -- neighborChanged order: W E D U N S
+    c_sx constant int[] := array[-1, 1, 0, 0, 0, 0]; c_sy constant int[] := array[0, 0, 0, 0, -1, 1]; c_sz constant int[] := array[0, 0, -1, 1, 0, 0]; c_sd constant int[] := array[5, 4, 3, 2, 1, 0];   -- updateShape order: W E N S D U (c_sd: the direction back to the changed cell)
+    nf int; k int; nbt int; lf int4[]; pl int4[]; lnd int; ldd int; lcur int; lage int; lbase int; si_n int := 0; si_x int4[] := '{}'; si_y int4[] := '{}'; si_z int4[] := '{}';
+    c_dvx constant int[] := array[0, 0, 0, 0, -1, 1]; c_dvy constant int[] := array[-1, 1, 0, 0, 0, 0]; c_dvz constant int[] := array[0, 0, -1, 1, 0, 0];     -- Direction.values(): DOWN UP NORTH SOUTH WEST EAST
+    c_hx constant int[] := array[0, 0, -1, 1]; c_hz constant int[] := array[-1, 1, 0, 0];
     ra    int4[]; ra_n int; ii int; jj int;
     u int; ph int; kind int; x int; y int; z int; aux int;
     op int; ax int; ay int; az int; pa int; pb int;
@@ -43,8 +53,9 @@ declare
     wrote int := 0; cr record; cc int4[]; dcx int4[]; dcz int4[]; dver int8[]; land_y int; wet boolean; found_rows int[]; hs int; lt int; tx int; ty2 int; tz int; gsum numeric; gs float8; g1 float8; ab int; m1 int; m2 int; nid int; tkc "char"; ev_max bigint;
 begin
     if n = 0 then return 0; end if;
+    perform set_config('mc.dyn_done', n::text, true);
     select * into v from mc.dyn_vec;
-    fl := v.flags; fa := v.famt; co := v.coll; sk := v.skind; oc := v.occ; ns := v.nshape; kk := v.k; bidv := v.bid; wltv := v.wlt; rl := v.rule; stv := v.sturdy; tg := v.tagbits; npv := v.nextp;
+    fl := v.flags; fa := v.famt; co := v.coll; sk := v.skind; oc := v.occ; ns := v.nshape; kk := v.k; bidv := v.bid; wltv := v.wlt; rl := v.rule; stv := v.sturdy; tg := v.tagbits; npv := v.nextp; lf := v.leaf; pl := v.plant;
     select * into dim from mc.dimension where name = p_dim;
     min_y := dim.min_y; max_y := dim.min_y + dim.height;
 
@@ -52,11 +63,12 @@ begin
     select min((t.px - 6) >> 4), max((t.px + 6) >> 4), min((t.pz - 6) >> 4), max((t.pz + 6) >> 4), min((t.py - 3) >> 4), max((t.py + 3) >> 4)
       into cx0, cx1, cz0, cz1, sy0, sy1 from unnest(p_x, p_y, p_z) t(px, py, pz);
     -- only the sections some item can look at are decoded: the eight corners of each item's neighbourhood name them (the neighbourhood is narrower than two sections in every axis)
+    -- (the distinct section ranges first: thousands of items of a burst share a handful of them)
     select array_agg(distinct (((c.sy - sy0) * (cz1 - cz0 + 1) + (c.cz - cz0)) * (cx1 - cx0 + 1) + (c.cx - cx0) + 1)) into found_rows
-      from unnest(p_x, p_y, p_z, p_kind) t(px, py, pz, pk),
-           lateral (select (t.px + a) >> 4 as cx, (t.py + b) >> 4 as sy, (t.pz + e) >> 4 as cz
-                      from (values (case when t.pk = 1 then -6 else -5 end), (case when t.pk = 1 then 6 else 5 end)) ax(a),
-                           (values (-3), (3)) ay(b), (values (case when t.pk = 1 then -6 else -5 end), (case when t.pk = 1 then 6 else 5 end)) az(e)) c;
+      from (select distinct (t.px - t.r) >> 4 as x0, (t.px + t.r) >> 4 as x1, (t.py - 3) >> 4 as y0, (t.py + 3) >> 4 as y1, (t.pz - t.r) >> 4 as z0, (t.pz + t.r) >> 4 as z1
+              from (select u.px, u.py, u.pz, case when u.pk = 1 then 6 else 5 end as r from unnest(p_x, p_y, p_z, p_kind) u(px, py, pz, pk)) t) d,
+           lateral (values (d.x0), (d.x1)) ax(cx), lateral (values (d.y0), (d.y1)) ay(sy), lateral (values (d.z0), (d.z1)) az(cz),
+           lateral (select ax.cx as cx, ay.sy as sy, az.cz as cz) c;
     secs := mc.dyn_secs(p_dim, cx0, cx1, sy0, sy1, cz0, cz1, found_rows);
     gm := array[sy0, cz0, cx0, cz1 - cz0 + 1, cx1 - cx0 + 1] || array_fill(1, array[(cx1 - cx0 + 1) * (cz1 - cz0 + 1) * (sy1 - sy0 + 1)]);          -- the map of the grid: slot -> row of secs (1 = barrier)
     for ii in 1 .. coalesce(cardinality(found_rows), 0) loop gm[5 + found_rows[ii]] := ii + 1; end loop;
@@ -94,6 +106,10 @@ begin
         end if;
     end loop;
     for u in 1 .. n loop
+        if p_deadline is not null and (u & 15) = 0 and clock_timestamp() > p_deadline then
+            perform set_config('mc.dyn_done', (u - 1)::text, true);
+            exit;
+        end if;
         kind := p_kind[u]; x := p_x[u]; y := p_y[u]; z := p_z[u]; aux := p_aux[u];
         ph := 1;
         <<unit>>
@@ -134,12 +150,15 @@ begin
                     found := false;
                     if mc.dyn_maybe_pass(fl, fa, co, sk, oc, ns, fam, cell, 0, below) then
                         nb := mc.dyn_new_liquid(secs, gm, fl, fa, co, sk, oc, ns, x, y - 1, z, fam, conv, drp);
-                        if mc.dyn_replaceable_by(fl, bf, below, nb, 0, x, y - 1, z, secs, gm) and mc.dyn_hold_specific(fl, below, mc.dyn_ftype(nb)) then
+                        nbt := mc.dyn_ftype(nb);
+                        if mc.dyn_replaceable_by(fl, bf, below, nb, 0, x, y - 1, z, secs, gm) and mc.dyn_hold_specific(fl, below, nbt) then
                             act := array[7, x, y - 1, z, 0, nb];
                             found := true;
                             sc := 0;
-                            foreach d in array array[2, 3, 4, 5] loop
-                                if mc.dyn_is_src_of(mc.dyn_fstate(fl, fa, mc.dyn_at(secs, gm, x + mc.dyn_dx(d), y, z + mc.dyn_dz(d))), fam) then sc := sc + 1; end if;
+                            for k in 1 .. 4 loop                                                        -- the sources of this family around: NORTH SOUTH WEST EAST
+                                qx := x + c_hx[k]; qz := z + c_hz[k];
+                                q := secs[gm[5 + (((y >> 4) - sy0) * gm[4] + ((qz >> 4) - cz0)) * gm[5] + ((qx >> 4) - cx0) + 1]][(((y & 15) << 8) | ((qz & 15) << 4) | (qx & 15)) + 1];
+                                if (fl[q + 1] & 32) <> 0 and (fl[q + 1] & (case when fam = 0 then 8 else 16 end)) <> 0 then sc := sc + 1; end if;
                             end loop;
                             if sc >= 3 and ((fs & 15) = 8 or mc.dyn_famount(fs) - drp > 0) then
                                 sel := mc.dyn_spread(secs, gm, fl, fa, co, sk, oc, ns, fam, reach, conv, drp, x, y, z);
@@ -170,6 +189,22 @@ begin
                     if (fl[below + 1] & (1 | 32768 | 4 | 2048)) <> 0 and y >= min_y then
                         act := array[1, x, y, z, kk[1], 0, 6, x, y, z, cell, 0];
                     end if;
+                elsif (fl[cell + 1] & (16777216 | 33554432)) <> 0 then
+                    -- SugarCaneBlock.tick / CactusBlock.tick: when it can not stay, destroyBlock(pos, true): the break effect (2001) and the block gone (flags 3); the items are not modelled
+                    if not mc.dyn_plant_ok(secs, gm, fl, tg, bidv, x, y, z, bidv[cell + 1], (fl[cell + 1] & 33554432) <> 0) then act := array[1, x, y, z, kk[1], 1]; end if;
+                elsif (fl[cell + 1] & 8388608) <> 0 then
+                    -- LeavesBlock.tick: setBlockAndUpdate(pos, updateDistance(state)): the smallest distance a neighbour gives (DOWN UP NORTH SOUTH WEST EAST) plus one, 0 for a block of the tag
+                    -- prevents_nearby_leaf_decay, its own distance for leaves, 7 for anything else; the state with that distance (flags 3: the neighbours are told)
+                    lnd := 7;
+                    for k in 1 .. 6 loop
+                        qx := x + c_dvx[k]; qy := y + c_dvy[k]; qz := z + c_dvz[k];
+                        q := secs[gm[5 + (((qy >> 4) - sy0) * gm[4] + ((qz >> 4) - cz0)) * gm[5] + ((qx >> 4) - cx0) + 1]][(((qy & 15) << 8) | ((qz & 15) << 4) | (qx & 15)) + 1];
+                        ldd := case when ((tg[q + 1] >> 10) & 1) = 1 then 0 when (fl[q + 1] & 8388608) <> 0 then lf[q + 1] & 7 else 7 end;
+                        if ldd + 1 < lnd then lnd := ldd + 1; end if;
+                        exit when lnd = 1;
+                    end loop;
+                    lcur := lf[cell + 1];
+                    if (lcur & 7) <> lnd then act := array[1, x, y, z, (lcur >> 5) + (lnd - 1) * kk[51], 0]; end if;
                 end if;
 
             elsif kind = 3 then
@@ -235,7 +270,36 @@ begin
                     end if;
                 elsif (fl[cell + 1] & 4194304) <> 0 then
                     -- SaplingBlock.randomTick: light 9 or more at the cell above and 1 in 7: stage 0 -> 1 (flags 260).  A sapling already at stage 1 would grow a tree: not modelled.
-                    if greatest(case when y + 1 >= hs then 15 - p_darken else 0 end, 0) >= 9 and floor(random() * 7)::int = 0 and npv[cell + 1] >= 0 then act := array[1, x, y, z, npv[cell + 1], 2]; end if;
+                    if greatest(case when y + 1 >= hs then 15 - p_darken else 0 end, 0) >= 9 and floor(random() * 7)::int = 0 and npv[cell + 1] >= 0 then act := array[1, x, y, z, npv[cell + 1], 3]; end if;             -- (advanceTree: flags 260, silent)
+                elsif (fl[cell + 1] & (16777216 | 33554432)) <> 0 then
+                    -- SugarCaneBlock.randomTick / CactusBlock.randomTick: with the cell above empty, the plant ages (flags 260: silent) and, at age 15 and fewer than 3 blocks of height, grows a block above
+                    -- (a cactus at age 8 may flower on top first); a cactus column that reached height 3 with age 15 does nothing
+                    ab := mc.dyn_at(secs, gm, x, y + 1, z);
+                    if (fl[ab + 1] & 1) <> 0 then
+                        lnd := 1;
+                        while bidv[mc.dyn_at(secs, gm, x, y - lnd, z) + 1] = bidv[cell + 1] loop
+                            lnd := lnd + 1;
+                            exit when lnd >= 3 and (fl[cell + 1] & 33554432) <> 0 and (pl[cell + 1] & 31) = 15;
+                        end loop;
+                        lcur := pl[cell + 1]; lage := lcur & 31; lbase := lcur >> 5;
+                        if (fl[cell + 1] & 16777216) <> 0 then
+                            if lnd < 3 then
+                                if lage = 15 then act := array[1, x, y + 1, z, lbase, 0, 1, x, y, z, lbase, 3];
+                                else act := array[1, x, y, z, cell + 1, 3]; end if;
+                            end if;
+                        elsif not (lnd >= 3 and lage = 15) then
+                            if lage = 8 and mc.dyn_plant_ok(secs, gm, fl, tg, bidv, x, y + 1, z, bidv[cell + 1], true) then
+                                if random() <= (case when lnd >= 3 then 0.25 else 0.1 end) then act := array[1, x, y + 1, z, kk[52], 0, 1, x, y, z, cell + 1, 3];
+                                else act := array[1, x, y, z, cell + 1, 3]; end if;
+                            elsif lage = 15 then
+                                if lnd < 3 then act := array[1, x, y + 1, z, lbase, 0, 1, x, y, z, lbase, 3]; end if;
+                            else act := array[1, x, y, z, cell + 1, 3]; end if;
+                        end if;
+                    end if;
+                elsif (fl[cell + 1] & 8388608) <> 0 then
+                    -- LeavesBlock.randomTick: leaves that are not persistent and are at distance 7 are removed (removeBlock: the fluid state's block, so water when waterlogged; flags 3; the items are not modelled)
+                    lcur := lf[cell + 1];
+                    if (lcur & 7) = 7 and (lcur & 8) = 0 then act := array[1, x, y, z, case when (lcur & 16) <> 0 then kk[7] else kk[1] end, 0]; end if;
                 end if;
 
             elsif kind = 4 or kind = 9 or kind = 10 then
@@ -254,8 +318,8 @@ begin
                     if kind <> 10 then
                         foreach d in array array[4, 5, 2, 3, 0, 1] loop
                             q := mc.dyn_at(secs, gm, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d));
-                            if (fl[q + 1] & (4 | 8 | 4096 | 262144)) <> 0 then
-                                act := act || mc.dyn_notify(secs, gm, fl, fa, kk, bidv, 2, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d), q, mc.dyn_opp(d), cell, fast, rl, stv, tg);
+                            if (fl[q + 1] & (4 | 8 | 4096 | 262144 | 8388608 | 16777216 | 33554432)) <> 0 then
+                                act := act || mc.dyn_notify(secs, gm, fl, fa, kk, bidv, 2, x + mc.dyn_dx(d), y + mc.dyn_dy(d), z + mc.dyn_dz(d), q, mc.dyn_opp(d), cell, fast, rl, stv, tg, lf);
                             end if;
                         end loop;
                     end if;
@@ -269,18 +333,26 @@ begin
                 ph := 3;
             end if;
 
-            -- push the actions (the first one must come out first)
+            -- push the actions as a frame (the first one must come out first): ops are written FORWARD at the top of st, a frame is [start, end) with a cursor
             ra_n := cardinality(act) / 6;
-            for ii in reverse ra_n .. 1 loop
-                for jj in 1 .. 6 loop st[sp + jj] := act[(ii - 1) * 6 + jj]; end loop;
-                sp := sp + 6;
-                if sp + 6 > cardinality(st) then st := st || array_fill(0, array[cardinality(st)]); end if;
-            end loop;
+            if ra_n > 0 then
+                if top + ra_n * 6 + 8 > cardinality(st) then st := st || array_fill(0, array[greatest(cardinality(st), ra_n * 6 + 64)]); end if;
+                nst := top;
+                for ii in 1 .. ra_n * 6 loop st[top + ii] := act[ii]; end loop;
+                top := top + ra_n * 6;
+                fn := fn + 1;
+                if fn > cardinality(fr_s) then fr_s := fr_s || array_fill(0, array[cardinality(fr_s)]); fr_c := fr_c || array_fill(0, array[cardinality(fr_c)]); fr_e := fr_e || array_fill(0, array[cardinality(fr_e)]); end if;
+                fr_s[fn] := nst; fr_c[fn] := nst; fr_e[fn] := top;
+            end if;
 
             ---------------------------------------------------------------------------------------------------------------------------------------------- drain the stack
-            while sp > 0 loop
-                op := st[sp - 5]; ax := st[sp - 4]; ay := st[sp - 3]; az := st[sp - 2]; pa := st[sp - 1]; pb := st[sp]; sp := sp - 6;
+            while fn > 0 loop
+                pp := fr_c[fn];
+                op := st[pp + 1]; ax := st[pp + 2]; ay := st[pp + 3]; az := st[pp + 4]; pa := st[pp + 5]; pb := st[pp + 6];
+                if pp + 6 >= fr_e[fn] then top := fr_s[fn]; fn := fn - 1; else fr_c[fn] := pp + 6; end if;
                 tmp := '{}';
+                nst := top;
+                if top + 300 > cardinality(st) then st := st || array_fill(0, array[greatest(cardinality(st), 300)]); end if;
                 if op = 1 then                                                                          -- WRITE
                     if ay < min_y or ay >= max_y then continue; end if;
                     ci := gm[5 + (((ay >> 4) - sy0) * gm[4] + ((az >> 4) - cz0)) * gm[5] + ((ax >> 4) - cx0) + 1];
@@ -291,30 +363,83 @@ begin
                     ch_n := ch_n + 1; ch_x[ch_n] := ax; ch_y[ch_n] := ay; ch_z[ch_n] := az; ch_new[ch_n] := pa; ch_loud[ch_n] := pb = 1;
                     if pb = 1 then lo_n := lo_n + 1; lo_x[lo_n] := ax; lo_y[lo_n] := ay; lo_z[lo_n] := az; end if;
                     wrote := wrote + 1;
-                    tmp := mc.dyn_on_place(secs, gm, fl, fa, kk, bidv, ax, ay, az, old, pa, fast);
-                    if pb = 2 then continue; end if;                                                    -- setBlock with flags 2 (random ticks): the clients are told, nothing is notified
-                    foreach d in array array[4, 5, 0, 1, 2, 3] loop                                     -- neighborChanged: WEST EAST DOWN UP NORTH SOUTH
-                        qx := ax + mc.dyn_dx(d); qy := ay + mc.dyn_dy(d); qz := az + mc.dyn_dz(d);
+                    if pb = 3 then si_n := si_n + 1; si_x[si_n] := ax; si_y[si_n] := ay; si_z[si_n] := az; end if;                    -- (flags 260: not even the clients are told)
+                    if pb >= 2 then continue; end if;                                                   -- setBlock with flags 2 (random ticks): the clients are told, nothing is notified
+                    nf := fl[pa + 1];
+                    -- onPlace of the new state (LiquidBlock schedules its own tick, FallingBlock its block tick): the ops go straight into the new frame
+                    if (nf & 4) <> 0 then
+                        if (nf & 16) = 0 then
+                            -- (nothing is on the frame yet, so scheduling now is the same as an op that comes out first: executed here)
+                            hv0 := case when (nf & 32) <> 0 then 1 else 3 end;
+                            key := ((ax::int8 & 33554431) << 35) | ((az::int8 & 33554431) << 10) | (ay + 128);
+                            hp := (((ax::int8 * 73856093) # (ay::int8 * 19349663) # (az::int8 * 83492791)) # (hv0::int8 * 7919)) & hmask;
+                            found := false;
+                            while hv[hp + 1] <> 0 loop
+                                if hk[hp + 1] = key and hv[hp + 1] = hv0 then found := true; exit; end if;
+                                hp := (hp + 1) & hmask;
+                            end loop;
+                            if not found then
+                                hk[hp + 1] := key; hv[hp + 1] := hv0;
+                                nt_n := nt_n + 1; nt_x[nt_n] := ax; nt_y[nt_n] := ay; nt_z[nt_n] := az; nt_kind[nt_n] := 'f'; nt_type[nt_n] := hv0 / 2; nt_due[nt_n] := p_cur + 5;
+                            end if;
+                        else
+                            tmp := mc.dyn_liquid_react(secs, gm, fl, fa, kk, ax, ay, az, pa, fast);
+                        end if;
+                    elsif (nf & 4096) <> 0 then
+                        st[top + 1] := 3; st[top + 2] := ax; st[top + 3] := ay; st[top + 4] := az; st[top + 5] := bidv[pa + 1]; st[top + 6] := 2; top := top + 6;
+                    end if;
+                    if cardinality(tmp) > 0 then
+                        ra_n := cardinality(tmp) / 6;
+                        for ii in 1 .. ra_n * 6 loop st[top + ii] := tmp[ii]; end loop;
+                        top := top + ra_n * 6; tmp := '{}';
+                    end if;
+                    for k in 1 .. 6 loop                                                                -- neighborChanged: WEST EAST DOWN UP NORTH SOUTH
+                        qx := ax + c_nx[k]; qy := ay + c_ny[k]; qz := az + c_nz[k];
                         q := secs[gm[5 + (((qy >> 4) - sy0) * gm[4] + ((qz >> 4) - cz0)) * gm[5] + ((qx >> 4) - cx0) + 1]][(((qy & 15) << 8) | ((qz & 15) << 4) | (qx & 15)) + 1];
                         if (fl[q + 1] & 4) <> 0 then
-                            if (fl[q + 1] & 16) = 0 then tmp := tmp || array[2, qx, qy, qz, mc.dyn_ftype(mc.dyn_fstate(fl, fa, q)), 5];            -- water: LiquidBlock.neighborChanged just schedules its tick (dyn_liquid_react)
-                            else tmp := tmp || mc.dyn_liquid_react(secs, gm, fl, fa, kk, qx, qy, qz, q, fast); end if;
+                            if (fl[q + 1] & 16) = 0 then                                                -- water: LiquidBlock.neighborChanged just schedules its tick
+                                if top = nst then                                                       -- (no op is waiting on the frame: scheduling now is the same as the op coming out first)
+                                    hv0 := case when (fl[q + 1] & 32) <> 0 then 1 else 3 end;
+                                    key := ((qx::int8 & 33554431) << 35) | ((qz::int8 & 33554431) << 10) | (qy + 128);
+                                    hp := (((qx::int8 * 73856093) # (qy::int8 * 19349663) # (qz::int8 * 83492791)) # (hv0::int8 * 7919)) & hmask;
+                                    found := false;
+                                    while hv[hp + 1] <> 0 loop
+                                        if hk[hp + 1] = key and hv[hp + 1] = hv0 then found := true; exit; end if;
+                                        hp := (hp + 1) & hmask;
+                                    end loop;
+                                    if not found then
+                                        hk[hp + 1] := key; hv[hp + 1] := hv0;
+                                        nt_n := nt_n + 1; nt_x[nt_n] := qx; nt_y[nt_n] := qy; nt_z[nt_n] := qz; nt_kind[nt_n] := 'f'; nt_type[nt_n] := hv0 / 2; nt_due[nt_n] := p_cur + 5;
+                                    end if;
+                                else
+                                    st[top + 1] := 2; st[top + 2] := qx; st[top + 3] := qy; st[top + 4] := qz; st[top + 5] := case when (fl[q + 1] & 32) <> 0 then 0 else 1 end; st[top + 6] := 5; top := top + 6;
+                                end if;
+                            else
+                                tmp := mc.dyn_liquid_react(secs, gm, fl, fa, kk, qx, qy, qz, q, fast);
+                                ra_n := cardinality(tmp) / 6;
+                                if top + ra_n * 6 + 8 > cardinality(st) then st := st || array_fill(0, array[greatest(cardinality(st), ra_n * 6 + 64)]); end if;
+                                for ii in 1 .. ra_n * 6 loop st[top + ii] := tmp[ii]; end loop;
+                                top := top + ra_n * 6; tmp := '{}';
+                            end if;
                         end if;
                     end loop;
-                    foreach d in array array[4, 5, 2, 3, 0, 1] loop                                     -- updateShape: WEST EAST NORTH SOUTH DOWN UP
-                        qx := ax + mc.dyn_dx(d); qy := ay + mc.dyn_dy(d); qz := az + mc.dyn_dz(d);
+                    for k in 1 .. 6 loop                                                                -- updateShape: WEST EAST NORTH SOUTH DOWN UP
+                        qx := ax + c_sx[k]; qy := ay + c_sy[k]; qz := az + c_sz[k];
                         q := secs[gm[5 + (((qy >> 4) - sy0) * gm[4] + ((qz >> 4) - cz0)) * gm[5] + ((qx >> 4) - cx0) + 1]][(((qy & 15) << 8) | ((qz & 15) << 4) | (qx & 15)) + 1];
-                        if (fl[q + 1] & (4 | 8 | 4096 | 262144)) <> 0 then
+                        if (fl[q + 1] & (4 | 8 | 4096 | 262144 | 8388608 | 16777216 | 33554432)) <> 0 then
                             -- a liquid block reacts to updateShape only when it or the changed cell is a source (dyn_notify): skip the call otherwise
-                            if (fl[q + 1] & 4) = 0 or (fl[q + 1] & 32) <> 0 or (fl[pa + 1] & 32) <> 0 then
-                                tmp := tmp || mc.dyn_notify(secs, gm, fl, fa, kk, bidv, 2, qx, qy, qz, q, mc.dyn_opp(d), pa, fast, rl, stv, tg);
+                            if (fl[q + 1] & 4) = 0 or (fl[q + 1] & 32) <> 0 or (nf & 32) <> 0 then
+                                tmp := mc.dyn_notify(secs, gm, fl, fa, kk, bidv, 2, qx, qy, qz, q, c_sd[k], pa, fast, rl, stv, tg, lf);
+                                ra_n := cardinality(tmp) / 6;
+                                if top + ra_n * 6 + 8 > cardinality(st) then st := st || array_fill(0, array[greatest(cardinality(st), ra_n * 6 + 64)]); end if;
+                                for ii in 1 .. ra_n * 6 loop st[top + ii] := tmp[ii]; end loop;
+                                top := top + ra_n * 6; tmp := '{}';
                             end if;
                         end if;
                     end loop;
 
                 elsif op = 2 or op = 3 then                                                             -- SCHED_FLUID / SCHED_BLOCK: ignored when the same tick is pending
                     key := ((ax::int8 & 33554431) << 35) | ((az::int8 & 33554431) << 10) | (ay + 128);
-                    tkc := case when op = 2 then 'f'::"char" else 'b'::"char" end;
                     hv0 := pa * 2 + (case when op = 2 then 0 else 1 end) + 1;
                     hp := (((ax::int8 * 73856093) # (ay::int8 * 19349663) # (az::int8 * 83492791)) # (hv0::int8 * 7919)) & hmask;
                     found := false;
@@ -324,7 +449,7 @@ begin
                     end loop;
                     if not found then
                         hk[hp + 1] := key; hv[hp + 1] := hv0;
-                        nt_n := nt_n + 1; nt_x[nt_n] := ax; nt_y[nt_n] := ay; nt_z[nt_n] := az; nt_kind[nt_n] := tkc; nt_type[nt_n] := pa;
+                        nt_n := nt_n + 1; nt_x[nt_n] := ax; nt_y[nt_n] := ay; nt_z[nt_n] := az; nt_kind[nt_n] := case when op = 2 then 'f'::"char" else 'b'::"char" end; nt_type[nt_n] := pa;
                         nt_due[nt_n] := p_cur + pb;
                     end if;
 
@@ -343,8 +468,11 @@ begin
                             tmp := array[1, ax, ay, az, wltv[q + 1], 0, 2, ax, ay, az, 0, 5];
                         end if;
                     else
-                        if (fl[q + 1] & 1) = 0 and (pb >> 4) = 1 then tmp := array[4, ax, ay, az, 1501, 0]; end if;     -- LavaFluid.beforeDestroyingBlock: fizz (water drops the block's items: not modelled)
-                        tmp := tmp || array[1, ax, ay, az, kk[7 + pb], 0];
+                        if (fl[q + 1] & 1) = 0 and (pb >> 4) = 1 then
+                            tmp := array[4, ax, ay, az, 1501, 0, 1, ax, ay, az, kk[7 + pb], 0];        -- LavaFluid.beforeDestroyingBlock: fizz (water drops the block's items: not modelled)
+                        else
+                            st[top + 1] := 1; st[top + 2] := ax; st[top + 3] := ay; st[top + 4] := az; st[top + 5] := kk[7 + pb]; st[top + 6] := 0; top := top + 6;
+                        end if;
                     end if;
 
                 elsif op = 6 then                                                                       -- a falling block (state pa) starts to fall from (ax, ay, az)
@@ -389,11 +517,14 @@ begin
                 end if;
                 if cardinality(tmp) > 0 then
                     ra_n := cardinality(tmp) / 6;
-                    for ii in reverse ra_n .. 1 loop
-                        for jj in 1 .. 6 loop st[sp + jj] := tmp[(ii - 1) * 6 + jj]; end loop;
-                        sp := sp + 6;
-                        if sp + 6 > cardinality(st) then st := st || array_fill(0, array[cardinality(st)]); end if;
-                    end loop;
+                    if top + ra_n * 6 + 8 > cardinality(st) then st := st || array_fill(0, array[greatest(cardinality(st), ra_n * 6 + 64)]); end if;
+                    for ii in 1 .. ra_n * 6 loop st[top + ii] := tmp[ii]; end loop;
+                    top := top + ra_n * 6;
+                end if;
+                if top > nst then                                                                       -- the ops this one produced run next, before the rest of the stack
+                    fn := fn + 1;
+                    if fn > cardinality(fr_s) then fr_s := fr_s || array_fill(0, array[cardinality(fr_s)]); fr_c := fr_c || array_fill(0, array[cardinality(fr_c)]); fr_e := fr_e || array_fill(0, array[cardinality(fr_e)]); end if;
+                    fr_s[fn] := nst; fr_c[fn] := nst; fr_e[fn] := top;
                 end if;
             end loop;
             exit unit when ph >= 3;
@@ -423,6 +554,9 @@ begin
         update mc.dyn_sec_ver k set version = c.version
           from unnest(dcx, dcz, dver) d(cx, cz, v) join mc.chunk c on c.dimension = p_dim and c.cx = d.cx and c.cz = d.cz
          where k.dimension = p_dim and k.cx = d.cx and k.cz = d.cz and k.version = d.v;
+        end if;
+        if si_n > 0 then                                                                         -- flags 260 (silent writes): the clients are not told
+            delete from mc.block_event e where e.id > ev_max and e.kind = 'block' and e.dimension = p_dim and exists (select 1 from unnest(si_x, si_y, si_z) s(x, y, z) where s.x = e.x and s.y = e.y and s.z = e.z);
         end if;
         -- vanilla's setBlock sends no break effect (level_event 2001); only destroyBlock does.  dbcraft's broadcast sends it for every 'block' event that turns a block into air,
         -- so the changes that are not destructions are re-recorded as one-position 'cells' events, which never get it (same set order, same packets otherwise)

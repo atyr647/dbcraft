@@ -1,0 +1,8 @@
+cane    grown    vanilla 0.510  dbcraft 0.530  z = -0.28  ok
+cane    flowered vanilla 0.000  dbcraft 0.000  z = +0.00  ok
+cane    mean age vanilla 6.02 dbcraft 5.76
+cactus  grown    vanilla 0.430  dbcraft 0.430  z = +0.00  ok
+cactus  flowered vanilla 0.170  dbcraft 0.110  z = +1.22  ok
+cactus  mean age vanilla 6.55 dbcraft 6.71
+leaves  alive    vanilla 0.315  dbcraft 0.290  z = +0.54  ok
+ALL RATES AGREE (within 3 standard errors)

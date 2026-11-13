@@ -15,7 +15,8 @@
 -- The light conditions of crops and mushrooms are NOT modelled (there is no block light: a crop in a lit greenhouse would otherwise be uprooted).  What is not covered keeps
 -- its block until something else removes it: sugar cane, cactus, lily pads, kelp, seagrass, mushrooms, stems, dripleaf, vines, fire, sea pickles, snow layers, hanging signs, lanterns.
 -- tagbits: bit 0 supports_vegetation, 1 supports_crops, 2 supports_dry_vegetation, 3 supports_azalea, 4 supports_nether_sprouts, 5 supports_nether_wart, 6 supports_wither_rose,
---          7 grows_crops, 8 maintains_farmland, 9 snow
+--          7 grows_crops, 8 maintains_farmland, 9 snow, 10 prevents_nearby_leaf_decay (what a leaf counts as distance 0: logs, wood ...),
+--          11 supports_sugar_cane, 12 supports_sugar_cane_adjacently (a block tag: frosted ice), 13 supports_cactus
 
 create or replace function mc.dyn_isa(p_chain text, p_class text) returns boolean language sql immutable parallel safe as $$
   select p_chain = p_class or p_chain like p_class || '>%' or p_chain like '%>' || p_class || '>%' or p_chain like '%>' || p_class $$;
@@ -24,7 +25,7 @@ create or replace function mc.dyn_dir_index(p_name text) returns int language sq
   select case p_name when 'down' then 0 when 'up' then 1 when 'north' then 2 when 'south' then 3 when 'west' then 4 when 'east' then 5 end $$;
 
 create or replace function mc.dyn_rebuild_rules() returns void language plpgsql volatile as $$
-declare tags text[] := array['supports_vegetation', 'supports_crops', 'supports_dry_vegetation', 'supports_azalea', 'supports_nether_sprouts', 'supports_nether_wart', 'supports_wither_rose', 'grows_crops', 'maintains_farmland', 'snow'];
+declare tags text[] := array['supports_vegetation', 'supports_crops', 'supports_dry_vegetation', 'supports_azalea', 'supports_nether_sprouts', 'supports_nether_wart', 'supports_wither_rose', 'grows_crops', 'maintains_farmland', 'snow', 'prevents_nearby_leaf_decay', 'supports_sugar_cane', 'supports_sugar_cane_adjacently', 'supports_cactus'];
 begin
     -- per BLOCK facts first (1,286 blocks, not 35,723 states): which classes its chain has, which tags it is in
     create temp table _rb on commit drop as
@@ -45,7 +46,7 @@ begin
                       or mc.dyn_isa(d.chain, 'MushroomBlock') or mc.dyn_isa(d.chain, 'NetherFungusBlock') or mc.dyn_isa(d.chain, 'NetherRootsBlock') or mc.dyn_isa(d.chain, 'PitcherCropBlock')
                       or mc.dyn_isa(d.chain, 'SeaPickleBlock') or mc.dyn_isa(d.chain, 'SeagrassBlock') or mc.dyn_isa(d.chain, 'TallSeagrassBlock') or mc.dyn_isa(d.chain, 'SmallDripleafBlock')
                       or mc.dyn_isa(d.chain, 'FrogspawnBlock') or mc.dyn_isa(d.chain, 'TorchflowerCropBlock') or mc.dyn_isa(d.chain, 'FireflyBushBlock') or mc.dyn_isa(d.chain, 'SweetBerryBushBlock')) as vegetation,
-           mc.dyn_isa(d.chain, 'SpreadingSnowyBlock') as spreading, mc.dyn_isa(d.chain, 'SaplingBlock') and not mc.dyn_isa(d.chain, 'MangrovePropaguleBlock') as sapling,
+           mc.dyn_isa(d.chain, 'LeavesBlock') as leaves, mc.dyn_isa(d.chain, 'SugarCaneBlock') as cane, mc.dyn_isa(d.chain, 'CactusBlock') as cactus, mc.dyn_isa(d.chain, 'SpreadingSnowyBlock') as spreading, mc.dyn_isa(d.chain, 'SaplingBlock') and not mc.dyn_isa(d.chain, 'MangrovePropaguleBlock') as sapling,
            coalesce((select sum(1::int8 << (t.i - 1)) from generate_series(1, array_length(tags, 1)) t(i)
                       where exists (select 1 from ref.dp_tag_member m where m.registry = 'minecraft:block' and m.tag = 'minecraft:' || tags[t.i] and m.member = d.block)), 0)::int8 as tagbits
       from (select distinct block, chain from mc.dyn_state) d join mc.dyn_block b on b.name = d.block;
@@ -80,7 +81,7 @@ begin
     -- the flags the rules need: HAS_RULE (262144), the lower half of a two-block plant or door (131072), the random-tick classes (sql/887)
     update mc.dyn_vec v set flags = (select array_agg(v.flags[i] | (case when v.rule[i] <> 0 then 262144 else 0 end) | (case when b.properties->>'half' = 'lower' then 131072 else 0 end)
                                                        | (case when r.spreading then 524288 else 0 end) | (case when r.crop then 1048576 else 0 end)
-                                                       | (case when d.block = 'minecraft:farmland' then 2097152 else 0 end) | (case when r.sapling then 4194304 else 0 end) order by i)
+                                                       | (case when d.block = 'minecraft:farmland' then 2097152 else 0 end) | (case when r.sapling then 4194304 else 0 end) | (case when r.leaves then 8388608 else 0 end) | (case when r.cane then 16777216 else 0 end) | (case when r.cactus then 33554432 else 0 end) order by i)
                                        from generate_series(1, v.n + 1) i left join ref.block_state b on b.state_id = i - 1 left join mc.dyn_state d on d.sid = i - 1 left join _rb r on r.block = d.block),
         nextp = (select array_agg(coalesce(case when d.sid is null then -1
                                                 when r.crop and b.properties ? 'age' then
@@ -89,6 +90,15 @@ begin
                                                      (select n.state_id from ref.block_state n where n.block = d.block and n.properties = b.properties || jsonb_build_object('stage', '1'))
                                                 else -1 end, -1) order by i)
                    from generate_series(1, v.n + 1) i left join ref.block_state b on b.state_id = i - 1 left join mc.dyn_state d on d.sid = i - 1 left join _rb r on r.block = d.block);
+    -- leaves (LeavesBlock): per state distance | persistent << 3 | waterlogged << 4 | (the state with distance = 1 and the same other properties) << 5
+    update mc.dyn_vec v set leaf = (select array_agg(coalesce(case when r.leaves then (b.properties->>'distance')::int | (case when b.properties->>'persistent' = 'true' then 8 else 0 end)
+                                                                                | (case when b.properties->>'waterlogged' = 'true' then 16 else 0 end)
+                                                                                | ((select n.state_id from ref.block_state n where n.block = d.block and n.properties = b.properties || jsonb_build_object('distance', '1')) << 5) end, 0) order by i)
+                                      from generate_series(1, v.n + 1) i left join ref.block_state b on b.state_id = i - 1 left join mc.dyn_state d on d.sid = i - 1 left join _rb r on r.block = d.block);
+    -- age plants: age | the state of age 0 of the block << 5
+    update mc.dyn_vec v set plant = (select array_agg(coalesce(case when r.cane or r.cactus then (b.properties->>'age')::int
+                                                                                   | ((select n.state_id from ref.block_state n where n.block = d.block and n.properties = b.properties || jsonb_build_object('age', '0')) << 5) end, 0) order by i)
+                                       from generate_series(1, v.n + 1) i left join ref.block_state b on b.state_id = i - 1 left join mc.dyn_state d on d.sid = i - 1 left join _rb r on r.block = d.block);
     drop table _rb;
 end $$;
 
@@ -97,7 +107,7 @@ begin
     perform mc.dyn_rebuild_base();
     if exists (select 1 from mc.dyn_vec) then perform mc.dyn_rebuild_rules(); end if;
     -- the two per-state facts the event trigger (sql/885) and the random-tick lists (sql/887) test by name, without reading the big arrays
-    update mc.dyn_state s set react = (v.flags[s.sid + 1] & (4 | 8 | 4096 | 65536 | 262144)) <> 0, tickc = (v.flags[s.sid + 1] & (524288 | 1048576 | 2097152 | 4194304)) <> 0
+    update mc.dyn_state s set react = (v.flags[s.sid + 1] & (4 | 8 | 4096 | 65536 | 262144 | 8388608 | 16777216 | 33554432)) <> 0, tickc = (v.flags[s.sid + 1] & (524288 | 1048576 | 2097152 | 4194304 | 8388608 | 16777216 | 33554432)) <> 0
       from mc.dyn_vec v where s.sid < v.n;
 end $$;
 
@@ -119,4 +129,47 @@ begin
                   when 8 then ((p_stv[b + 1] >> 13) & 1) = 1
                   when 9 then (p_fl[b + 1] & 2) <> 0
                   else true end;
+end $$;
+
+-- Block.canSurvive of sugar cane (p_cactus = false) and cactus (true) at (qx, qy, qz), whose block ordinal is p_self:
+--   SugarCaneBlock: the block below is sugar cane, or is in the tag supports_sugar_cane and has water (the fluid tag supports_sugar_cane_adjacently) or frosted ice next to it (the four sides of the block below)
+--   CactusBlock:    none of the four sides is solid or has lava, and the block below is cactus or in the tag supports_cactus, and the block above is not a liquid
+create or replace function mc.dyn_plant_ok(p_secs int4[], p_gm int4[], p_fl int4[], p_tg int8[], p_bid int4[], qx int, qy int, qz int, p_self int, p_cactus boolean) returns boolean language plpgsql immutable parallel safe as $$
+declare b int; n int; k int; dx int[] := array[0, 0, -1, 1]; dz int[] := array[-1, 1, 0, 0];
+begin
+    if p_cactus then
+        for k in 1 .. 4 loop
+            n := mc.dyn_at(p_secs, p_gm, qx + dx[k], qy, qz + dz[k]);
+            if (p_fl[n + 1] & 2) <> 0 or (p_fl[n + 1] & 16) <> 0 then return false; end if;
+        end loop;
+        b := mc.dyn_at(p_secs, p_gm, qx, qy - 1, qz);
+        if p_bid[b + 1] <> p_self and ((p_tg[b + 1] >> 13) & 1) = 0 then return false; end if;
+        n := mc.dyn_at(p_secs, p_gm, qx, qy + 1, qz);
+        return (p_fl[n + 1] & 4) = 0;
+    end if;
+    b := mc.dyn_at(p_secs, p_gm, qx, qy - 1, qz);
+    if p_bid[b + 1] = p_self then return true; end if;
+    if ((p_tg[b + 1] >> 11) & 1) = 0 then return false; end if;
+    for k in 1 .. 4 loop
+        n := mc.dyn_at(p_secs, p_gm, qx + dx[k], qy - 1, qz + dz[k]);
+        if (p_fl[n + 1] & 8) <> 0 or ((p_tg[n + 1] >> 12) & 1) = 1 then return true; end if;
+    end loop;
+    return false;
+end $$;
+
+-- LeavesBlock.updateDistance for a cell of the stored world (placement of leaves, sql/890): the smallest of the six neighbours' distance + 1, 7 at most; a neighbour that is a block of the tag
+-- prevents_nearby_leaf_decay counts as 0, leaves as their own distance, anything else as 7.  (The engine does the same on its arrays: mc.dyn_run, block tick of leaves.)
+create or replace function mc.leaf_distance_at(p_dim text, x int, y int, z int) returns int language plpgsql stable as $$
+declare d text; nb text; best int := 7; dd int;
+begin
+    foreach d in array array['down', 'up', 'north', 'south', 'west', 'east'] loop
+        nb := mc.nb(p_dim, x, y, z, d);
+        dd := case when nb is null then 7
+                   when exists (select 1 from ref.dp_tag_member m where m.registry = 'minecraft:block' and m.tag = 'minecraft:prevents_nearby_leaf_decay' and m.member = split_part(nb, '[', 1)) then 0
+                   when nb like '%leaves[%' and nb like '%distance=%' then substring(nb from 'distance=([0-9]+)')::int
+                   else 7 end;
+        best := least(best, dd + 1);
+        exit when best = 1;
+    end loop;
+    return best;
 end $$;
