@@ -1,0 +1,31 @@
+Raw output of the burst and cold-fill measurements quoted in docs/WORLD-DYNAMICS.md ("Cost") and docs/PERF-WORLD2.md (section 5).  Quiet machine (load average 1 to 4), 4 cores shared with other workers.
+
+== vanilla 26.3, tests/bench/world2/vanilla_burst.py (40 x 40 water layer, one /fill, 7 s = 140 ticks per repetition, idle of the same length subtracted; first repetition is the JIT warming up)
+rep 0: server thread 0.662 s (idle 0.165 over the same time), JVM 2.681 s (idle 0.232): net server thread 0.496 s, net JVM 2.449 s
+rep 1: server thread 0.375 s (idle 0.145 over the same time), JVM 1.236 s (idle 0.430): net server thread 0.229 s, net JVM 0.806 s
+rep 2: server thread 0.343 s (idle 0.099 over the same time), JVM 1.143 s (idle 0.179): net server thread 0.244 s, net JVM 0.964 s
+rep 3: server thread 0.332 s (idle 0.106 over the same time), JVM 0.665 s (idle 0.177): net server thread 0.226 s, net JVM 0.488 s
+
+== dbcraft at the start of the round (commit 299673a), tests/bench/world2/burst.py --drop 11, budget not applicable (no budget existed)
+{"ticks": 120, "fill_ms": 365.2, "step_total_ms": 4095.2, "step_worst_ms": 429.7, "bc_total_ms": 1464.4, "bc_worst_ms": 139.3, "total_ms": 5559.6, "worst_tick_ms": 522.1, "ticks_over_60ms": 18, "water_cells": 20592, "world_md5": "b823e3a392d74409be26785f20abee16", "packets_md5": "a6e4fac2a8714e78bf36a007273f2261"}
+{"ticks": 120, "fill_ms": 334.7, "step_total_ms": 3719.0, "step_worst_ms": 426.1, "bc_total_ms": 1188.9, "bc_worst_ms": 157.4, "total_ms": 4907.9, "worst_tick_ms": 583.5, "ticks_over_60ms": 11, "water_cells": 20592, "world_md5": "b823e3a392d74409be26785f20abee16", "packets_md5": "a6e4fac2a8714e78bf36a007273f2261"}
+
+== dbcraft now, dbcraft.dynamics-tick-budget-ms = 0 (3 runs)
+{"label": "final0", "ticks": 120, "step_total_ms": 2211.4, "step_worst_ms": 271.4, "bc_total_ms": 330.6, "bc_worst_ms": 27.9, "total_ms": 2542.0, "worst_tick_ms": 295.7, "ticks_over_60ms": 11, "water_cells": 20592, "world_md5": "b823e3a392d74409be26785f20abee16"}
+{"label": "final0", "ticks": 120, "step_total_ms": 2145.4, "step_worst_ms": 218.2, "bc_total_ms": 309.5, "bc_worst_ms": 24.9, "total_ms": 2454.8, "worst_tick_ms": 242.5, "ticks_over_60ms": 11, "water_cells": 20592, "world_md5": "b823e3a392d74409be26785f20abee16"}
+{"label": "final0", "ticks": 120, "step_total_ms": 2185.2, "step_worst_ms": 221.8, "bc_total_ms": 332.8, "bc_worst_ms": 28.6, "total_ms": 2518.0, "worst_tick_ms": 246.0, "ticks_over_60ms": 11, "water_cells": 20592, "world_md5": "b823e3a392d74409be26785f20abee16"}
+(the packets differ from the starting commit's by NOTHING in the unbudgeted runs: packets_md5 a6e4fac2... in every one)
+
+== dbcraft now, dbcraft.dynamics-tick-budget-ms = 40, 300 ticks
+{"label": "final40", "ticks": 300, "step_total_ms": 4999.1, "step_worst_ms": 59.7, "bc_total_ms": 505.4, "bc_worst_ms": 10.0, "total_ms": 5504.5, "worst_tick_ms": 69.7, "ticks_over_60ms": 3, "water_cells": 20592, "world_md5": "b823e3a392d74409be26785f20abee16", "packets_md5": "20fe7ab6a4c85348bc76965ad4cbf560"}
+155 ticks with work, median 45.0 ms, max 69.7 ms; the last tick over 10 ms is tick 137; the first eight ticks: 44 1 1 1 70 46 44 51 ms
+
+== cold against warm fills, tests/bench/world2/cold_fill.py --reps 7 (statement ms, tick ms); the second pair of runs
+native:  1000 cold [2.4, 0.7] warm_air [1.9, 0.6] warm_stone [1.9, 0.6];  100000 cold [49.8, 7.4] warm_air [40.1, 7.3] warm_stone [44.7, 7.0];  64_sections cold [21.6, 5.0] warm_air [10.6, 4.6] warm_stone [20.2, 4.7]
+sql:     1000 cold [5.2, 0.9] warm_air [2.4, 0.9] warm_stone [2.4, 0.8];  100000 cold [102.3, 8.8] warm_air [39.9, 7.8] warm_stone [48.9, 7.4];  64_sections cold [29.4, 5.5] warm_air [11.3, 5.0] warm_stone [21.5, 4.8]
+(first pair: native 1000 cold [4.3, 0.7] warm [3.8, 0.7]; 100000 cold [60.8, 6.4] warm [52.8, 6.8] / [56.8, 6.2]; 64 sections cold [20.6, 4.3] warm [9.9, 4.0] / [19.4, 4.3];
+ sql 1000 cold [6.2, 0.9] warm [2.0, 0.7]; 100000 cold [91.4, 6.5] warm [34.7, 6.8] / [38.5, 6.4]; 64 sections cold [27.3, 4.3] warm [9.8, 4.0] / [19.4, 4.0])
+
+== the loop-free (recursive CTE) hash-set order, tests/bench/world2/shortset_rounds.sql
+rounds formulation: 42 sequences equal, 0 different; total time 744.7 ms against 11.0 ms for the loop
+a whole section (4096 positions): rounds 1053.4 ms (equal: t), loop 4.1 ms

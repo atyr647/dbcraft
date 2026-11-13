@@ -166,24 +166,55 @@ The ratios (dbcraft / vanilla) are 0.04, 0.42 and 0.06 without a player and 0.00
 scoreboard's rows (0.11, 0.14, 0.21) and I would not quote them to better than a factor of two.  The vanilla column mixes a cold JIT (the JVM was started shortly before) with the load;
 the CPU-time measurements of section 1 are the better comparison for the large fills.  `docs/SCOREBOARD.md` keeps its original values and gets a dated note, not replaced numbers.
 
+## 5. Cold fills (the first fill of a shape): a native accelerator, and why the SQL formulation is not loop-free
+
+`mc.sbu_tpl` caches the packet template of a SHAPE (the bit map of changed positions of one section); the first fill of a shape had to simulate fastutil's `ShortOpenHashSet` for its positions
+(`mc.shortset_order`, a PL/pgSQL simulation, about 1.5 us a position) and build the template text (two string aggregations), 2 to 6 ms per section: 27 distinct shapes in a 100,000-block fill.
+
+**Measured** (`tests/bench/world2/cold_fill.py`, one viewer in range, CPU time of the filling backend and of the tick's broadcast, median of 7 fills; the template cache emptied before each cold fill; machine
+load average 3 to 4, so ratios, not absolute values; the second of two interleaved runs of each kind is the quieter one and is the one quoted first):
+
+| fill | SQL only: cold statement | SQL only: warm statement | with `dbcraft_set`: cold | with `dbcraft_set`: warm | tick (broadcast) |
+|---|---|---|---|---|---|
+| 1,000 blocks (10 x 10 x 10, unaligned) | 5.2 to 6.2 ms | 2.0 to 2.4 ms | 2.4 to 4.3 ms | 1.9 to 3.8 ms | 0.6 to 0.9 ms |
+| 100,000 blocks (46 x 46 x 47, unaligned: 27 shapes) | 91 to 102 ms | 35 to 49 ms | 50 to 61 ms | 40 to 57 ms | 6 to 9 ms |
+| 64 whole sections (262,144) | 27 to 29 ms | 10 ms (air), 19 to 21 ms (stone) | 21 to 22 ms | 10 ms (air), 19 to 20 ms (stone) | 4 to 5 ms |
+
+The cold penalty (cold minus warm) of the 100,000-block fill went from about 55 ms to about 10 ms, that of 1,000 blocks from 3 ms to about 0.5 ms.  (The cold-run numbers of an earlier measurement, 271 ms against 89 ms
+at load 13, are what this replaces.)  Against vanilla's 240 to 290 ms of main-thread CPU for the same fill with a viewer, a cold fill is now 50 to 60 ms plus 6 to 9 ms of tick.
+
+**What was built.**  `native/dbcraft_set` (an optional PostgreSQL extension, `make && make install`; `sql/962_native_set.sql` loads it when the server has it and falls back to SQL otherwise, the way `sql/441`
+does for zlib): `shortset_order(int4[])` is the same simulation in C line by line, `fill_tpl(bytea)` / `fill_tpl0(bytea)` build the whole template of a 512-byte bit map (bit map to positions in /fill order, set order, five
+characters an entry) in one call, 20 to 60 us for a whole section.  `mc.shortset_order` dispatches to it (`mc.select_shortset('native' | 'sql')`, `mc.shortset_impl()`), `mc.sbu_build` uses the template builder when it is selected.
+Equality: `tests/sql/962` (315 random, structured and whole-section sequences, 124 bit maps, 280 shape x state packets against the SQL ones and against the general encoder); against the REAL fastutil class
+(`FN=dbcraft_set.shortset_order tests/bench/world/set_order.sh`: 100 sequences, 0 differ, and the same for the SQL and the dispatcher), and `tests/sql/851`'s 12 vectors taken from the real class pass with the
+native function selected.  The installed extension is shared by every database of the server; tests and the migration run without it too (the checks are skipped with a notice).
+
+**The loop-free formulation.**  I looked for one (a set-based encoder with `generate_series` and window functions).  Linear probing with insertion order is a *serial dictatorship*: key k lands in the first free
+slot at or after its home when it is inserted, so slot s belongs to the earliest-inserted key among those that reached it; that is not a function a window frame can express (the winner of slot s depends on
+who won slots before it, through who is still waiting), and a recursive CTE cannot aggregate or use a window function over its recursive term.  What does work is a recursive CTE whose single row carries the table:
+every unplaced key proposes a slot, a slot keeps the earliest-inserted of its holder and its proposers, the others go on to the next slot, until nobody is displaced (the stable outcome of that is exactly the serial one);
+one statement per table size, a short PL/pgSQL chain over the 7 table sizes, no loop over positions.  It is in `tests/bench/world2/shortset_rounds.sql`; it **equals `mc.shortset_order_sql` on 42 random sequences and on
+a whole section** (and an earlier version differed on a sequence with key 0, which counts towards `size` in fastutil although it has no slot: found by the random check) and it is **250 times slower** (1,053 ms for a
+whole section against 4.1 ms for the PL/pgSQL loop; 745 ms against 11 ms over the 42 sequences): the rounds are as many as the longest probe sequence, and every round touches the whole table.  So the cold path
+is made fast by the C function, not by a set-based formulation; without the extension it stays the loop.
+
 ## What did not work
 
 * **`translate()` instead of `replace()`** in the template fill: one pass instead of two or three, but 0.3 ms against 0.05 ms for the 20 kB template of a whole section (multibyte-aware per-character search).
 * **A faster `mc.shortset_order`** (precomputed hash table, no duplicate test in the probe loop, tighter loops): 5% (2.83 against 2.99 ms for 1,728 positions, 5.93 against 6.09 ms for 4,096, results identical on
   60 random sequences).  The cost is the interpretation of about 15 PL/pgSQL statements per position (inserts and re-inserts of the doubling rehash), not the arithmetic; not applied.  A faster `mc.cells_positions` (one series instead of a cross join):
   0.95 to 0.68 ms for 1,728 positions; not applied (it would rely on the order of an aggregate without ORDER BY).
-* **Set-based simulation of the hash set**: linear probing with insertion order is a sequential process (a later key whose home slot is free takes it, an earlier key that probed past it displaces nothing), and a round-based SQL formulation
-  needs one statement per round; I did not find a loop-free formulation, so a shape's FIRST encoding still costs the simulation (about 1.5 us a position: 2.8 ms for a typical partial section, 6 ms for a whole one).
+* **Set-based simulation of the hash set**: first judged impossible by the argument that linear probing is sequential; later built as a recursive CTE of proposal rounds (section 5): equal to the loop, 250 times
+  slower.  The first encoding of a shape is made cheap by the native function instead.
 * **The vanilla comparisons under load**: every wall-clock vanilla number of this session is inflated by the load and the cold JIT; only main-thread and JVM CPU time are usable, and those only roughly (239 to 286 ms for the 100,000-block fill).
 * **Vanilla terrain without OOM kills and load**: three of four attempts were killed by the memory cgroup (section 3); the one complete run shares the machine with a load average of 18 to 22.
 * A first version of the A/B script ran for 30 minutes before I killed it; the CPU timer's 4 ms resolution had forced groups of hundreds of calls, which at that load took far longer than estimated.
 
 ## What is still a loss, or not done
 
-* **The first fill of a shape costs what the tick used to pay**, now in the filling statement.  Measured (`cold.sql` pattern: empty template cache, one viewer, the scoreboard fill, load average 13): the first fill to stone
-  271 ms of CPU (27 distinct shapes simulated for the 48 sections) and 12 ms in the tick; the same fill again to air 79.5 ms and 7 ms, to stone 88.7 ms and 2.3 ms.  So a cold fill's statement plus tick (about 283 ms)
-  is still below the starting point's (statement about 80 to 90 plus tick 240 to 316 ms at similar load), and a repeated shape is 3 to 4 times cheaper; the saving of a cold fill is 20 to 30%, not the 35x of the tick alone.
-  Only repeated shapes (the interior sections of a big fill, repeated fills) hit the cache.  A native function (the zlib accelerator's way) would make the first encoding about 100 times cheaper; not built.
+* **The first fill of a shape costs what the tick used to pay**, now in the filling statement; with the optional native accelerator that cost is gone, without it it is still there (section 5 above:
+  measured, cold against warm).  Only repeated shapes (the interior sections of a big fill, repeated fills) hit the cache of templates.
 * **A fill issued from inside the tick** pays the encoding there, as before (there is no `/fill` command in dbcraft; only SQL calls `mc.fill`).  The encode-at-fill-time design assumes fills come from other connections.
 * A fill to stone is 7 to 13% more expensive as a statement when a player can see it (the encoding); a whole-section fill costs 1.00x of the original per-block-era fill, not less.
 * **The speed of the fill modes against vanilla was not measured**, and vanilla's packets for them were not recorded.  `keep` and `replace <filter>` read every field of the box (about 0.4 ms a section); the 4-bit bit-map packing is fast, sections with
@@ -203,5 +234,7 @@ python3 tests/bench/world2/vanilla_gen.py --rcon R --size 100                   
 python3 tests/bench/world2/gen_cluster.py --port P --db DB --pgdata DIR --size 80                                      # dbcraft noise terrain, whole-cluster CPU per chunk
 python3 tests/bench/world2/scoreboard_edit.py --db DB --dbport P --repeat 2                                            # the scoreboard's edit rows, V D V D, with and without a viewer
 python3 tests/e2e/fill_probe.py ...; python3 tests/e2e/compare_fill.py V.json D.json                                    # byte comparison with a real vanilla server (tests/e2e/README.md)
+python3 tests/bench/world2/cold_fill.py --port P --reps 7                                                              # section 5: cold against warm fills (mc.select_shortset('sql') / ('native') switches the implementation)
+psql -X -d DB -f tests/bench/world2/shortset_rounds.sql                                                                # section 5: the recursive-CTE hash-set order against the loop
 ```
 Raw output of this session: `docs/perf-world2-results.txt`.
