@@ -39,6 +39,9 @@ create unlogged table if not exists mc.mining (
     px int not null default 0, py int not null default 0, pz int not null default 0, pstate text
 );
 
+alter table mc.mining add column if not exists pend boolean not null default false, add column if not exists px int not null default 0, add column if not exists py int not null default 0,
+  add column if not exists pz int not null default 0, add column if not exists pstate text;
+
 ------------------------------------------------------------------------------------------------ what the player holds, where the eyes are
 create or replace function mc.held_item(p_uuid uuid, p_held int) returns text language sql stable as $$
   select i.item from mc.inventory_slot i where i.player = p_uuid and i.slot = 36 + p_held $$;

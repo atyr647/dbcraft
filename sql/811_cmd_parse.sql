@@ -247,6 +247,95 @@ begin
       'level', case when level_set then jsonb_build_array(lmin, lmax) end, 'x', px, 'y', py, 'z', pz, 'dx', pdx, 'dy', pdy, 'dz', pdz, 'never', case when never then true end)));
 end $$;
 
+------------------------------------------------------------------------------------------------ block positions and block states
+-- BlockPosArgument.parse (WorldCoordinates.parseInt / LocalCoordinates.parse, read from the bytecode): three integers, each `~` / `~n` (a double, relative to the executor's block) or a
+-- plain integer, or three `^` / `^n` (left, up, forwards).  val = [x, y, z] as text: "~", "~1.5", "7", "^", "^-2"; an empty absolute coordinate (two spaces) is 0.
+create or replace function mc.rd_blockpos(s text, cur int) returns mc.cmd_ap language plpgsql immutable as $$
+declare p int := cur; n int := length(s); coords text[] := '{}'; k int; v text; q int; r mc.cmd_ap;
+begin
+  if substr(s, p + 1, 1) = '^' then
+    for k in 1 .. 3 loop
+      if substr(s, p + 1, 1) <> '^' then return mc.ap_err('argument.pos.mixed', null, p); end if;
+      p := p + 1; q := p;
+      if p < n and substr(s, p + 1, 1) <> ' ' then r := mc.rd_double(s, p); if r.ex_key is not null then return r; end if; p := r.pos; end if;
+      coords := coords || ('^' || substr(s, q + 1, p - q));
+      if k < 3 then if p < n and substr(s, p + 1, 1) = ' ' then p := p + 1; else return mc.ap_err('argument.pos3d.incomplete', null, cur); end if; end if;
+    end loop;
+    return mc.ap_ok(p, to_jsonb(coords));
+  end if;
+  for k in 1 .. 3 loop
+    if substr(s, p + 1, 1) = '^' then return mc.ap_err('argument.pos.mixed', null, p); end if;
+    if p >= n then return mc.ap_err('argument.pos.missing.int', null, p); end if;
+    v := '';
+    if substr(s, p + 1, 1) = '~' then v := '~'; p := p + 1; end if;
+    q := p;
+    if p < n and substr(s, p + 1, 1) <> ' ' then
+      if v = '~' then r := mc.rd_double(s, p); else r := mc.rd_int(s, p); end if;
+      if r.ex_key is not null then return r; end if;
+      p := r.pos; v := v || substr(s, q + 1, p - q);
+    end if;
+    coords := coords || v;
+    if k < 3 then if p < n and substr(s, p + 1, 1) = ' ' then p := p + 1; else return mc.ap_err('argument.pos3d.incomplete', null, cur); end if; end if;
+  end loop;
+  return mc.ap_ok(p, to_jsonb(coords));
+end $$;
+
+-- ResourceLocation.read: the characters of a resource location (0-9 a-z _ : / . -); an empty or malformed one is `argument.id.invalid` (cursor at its start)
+create or replace function mc.rd_resloc(s text, cur int) returns mc.cmd_ap language plpgsql immutable as $$
+declare e int := mc.rd_end(s, cur, '[0-9a-z_:/.-]'); v text := substr(s, cur + 1, e - cur);
+begin
+  if v = '' or v !~ '^([a-z0-9_.-]+:)?[a-z0-9_./-]+$' then return mc.ap_err('argument.id.invalid', null, cur); end if;
+  return mc.ap_ok(e, to_jsonb(case when v like '%:%' then v else 'minecraft:' || v end));
+end $$;
+
+-- BlockStateParser (block_state: a block with optional [property=value, ...]; block_predicate: also #tag, and only the named properties are tested).
+-- val = {block | tag, props: {name: value}, state: the full state name (block_state only)}.  A `{...}` block entity tag is not supported (said so, never ignored).
+create or replace function mc.rd_blockstate(s text, cur int, p_pred boolean) returns mc.cmd_ap language plpgsql stable as $$
+declare p int := cur; n int := length(s); r mc.cmd_ap; blk text; tg text; props jsonb := '{}'; st text; allowed jsonb; pstart int; pname text; pval text; vstart int; e int;
+begin
+  if substr(s, p + 1, 1) = '#' and p_pred then
+    r := mc.rd_resloc(s, p + 1); if r.ex_key is not null then return mc.ap_err(r.ex_key, r.ex_args, p + 1); end if;
+    tg := r.val #>> '{}'; p := r.pos;
+    if not exists (select 1 from ref.dp_tag_member where registry = 'minecraft:block' and tag = tg) then return mc.ap_err('arguments.block.tag.unknown', jsonb_build_array(tg), cur); end if;
+  else
+    if substr(s, p + 1, 1) = '#' then return mc.ap_err('argument.block.tag.disallowed', null, p); end if;
+    r := mc.rd_resloc(s, p); if r.ex_key is not null then return r; end if;
+    blk := r.val #>> '{}'; p := r.pos;
+    if not exists (select 1 from ref.block where name = blk) then return mc.ap_err('argument.block.id.invalid', jsonb_build_array(blk), cur); end if;
+    select b.properties into allowed from ref.block b where b.name = blk;
+  end if;
+  if substr(s, p + 1, 1) = '[' then
+    p := mc.rd_skip_ws(s, p + 1);
+    while p < n and substr(s, p + 1, 1) <> ']' loop
+      p := mc.rd_skip_ws(s, p); pstart := p;
+      r := mc.rd_string(s, p); if r.ex_key is not null then return r; end if;
+      pname := r.val #>> '{}'; p := r.pos;
+      if blk is not null and not allowed ? pname then return mc.ap_err('argument.block.property.unknown', jsonb_build_array(blk, pname), pstart); end if;
+      if props ? pname then return mc.ap_err('argument.block.property.duplicate', jsonb_build_array(pname, coalesce(blk, '#' || tg)), pstart); end if;
+      p := mc.rd_skip_ws(s, p);
+      if p >= n or substr(s, p + 1, 1) <> '=' then return mc.ap_err('argument.block.property.novalue', jsonb_build_array(pname, coalesce(blk, '#' || tg)), pstart); end if;
+      p := mc.rd_skip_ws(s, p + 1); vstart := p;
+      r := mc.rd_string(s, p); if r.ex_key is not null then return r; end if;
+      pval := r.val #>> '{}'; p := r.pos;
+      if blk is not null and not allowed -> pname ? pval then return mc.ap_err('argument.block.property.invalid', jsonb_build_array(blk, pval, pname), vstart); end if;
+      props := props || jsonb_build_object(pname, pval);
+      p := mc.rd_skip_ws(s, p);
+      if p < n then
+        if substr(s, p + 1, 1) = ',' then p := p + 1; continue; end if;
+        if substr(s, p + 1, 1) <> ']' then return mc.ap_err('argument.block.property.unclosed', null, p); end if;
+      end if;
+      exit;
+    end loop;
+    if p < n and substr(s, p + 1, 1) = ']' then p := p + 1; else return mc.ap_err('argument.block.property.unclosed', null, p); end if;
+  end if;
+  if substr(s, p + 1, 1) = '{' then return mc.ap_unsupported('block entity NBT', p); end if;
+  if blk is not null then
+    select b2.name into st from ref.block b join ref.block_state b2 on b2.state_id = b.default_state where b.name = blk;
+    for pname, pval in select key, value #>> '{}' from jsonb_each(props) loop st := mc.st_set(st, pname, pval); end loop;
+  end if;
+  return mc.ap_ok(p, jsonb_strip_nulls(jsonb_build_object('block', blk, 'tag', tg, 'props', props, 'state', st)));
+end $$;
+
 ------------------------------------------------------------------------------------------------ argument types
 -- p_node: the argument node (its parser type and properties come from the row).  p_sel_ok: the source may use selectors (permission level 2).
 create or replace function mc.cmd_arg(p_node int, s text, cur int, p_sel_ok boolean) returns mc.cmd_ap language plpgsql stable as $$
@@ -362,6 +451,12 @@ begin
       end if;
     end loop;
     return mc.ap_ok(p, to_jsonb(coords));
+  when 'minecraft:block_pos' then
+    return mc.rd_blockpos(s, cur);
+  when 'minecraft:block_state' then
+    return mc.rd_blockstate(s, cur, false);
+  when 'minecraft:block_predicate' then
+    return mc.rd_blockstate(s, cur, true);
   when 'minecraft:rotation' then
     p := cur;
     for k in 1 .. 2 loop

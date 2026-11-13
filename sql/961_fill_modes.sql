@@ -27,9 +27,12 @@ create or replace function mc.fill_filter_states(p_filter text) returns text[] l
 declare f text := btrim(p_filter); nm text; props jsonb := '{}'; res text[]; q text;
 begin
     if f like '#%' then
-        nm := substr(f, 2); if position(':' in nm) = 0 then nm := 'minecraft:' || nm; end if;
+        nm := substr(split_part(f, '[', 1), 2); if position(':' in nm) = 0 then nm := 'minecraft:' || nm; end if;
+        if position('[' in f) > 0 then      -- #tag[property=value, ...]: only the states with those properties (BlockPredicate with a tag and properties)
+            props := coalesce((select jsonb_object_agg(btrim(split_part(kv, '=', 1)), btrim(split_part(kv, '=', 2))) from unnest(string_to_array(rtrim(split_part(f, '[', 2), ']'), ',')) kv where btrim(kv) <> ''), '{}');
+        end if;
         res := array(with recursive t(tag) as (select nm union select substr(m.member, 2) from t join ref.dp_tag_member m on m.registry = 'minecraft:block' and m.tag = t.tag and m.member like '#%')
-                     select distinct s.name from t join ref.dp_tag_member m on m.registry = 'minecraft:block' and m.tag = t.tag and m.member not like '#%' join ref.block_state s on s.block = m.member order by 1);
+                     select distinct s.name from t join ref.dp_tag_member m on m.registry = 'minecraft:block' and m.tag = t.tag and m.member not like '#%' join ref.block_state s on s.block = m.member and s.properties @> props order by 1);
         if not exists (select 1 from ref.dp_tag where registry = 'minecraft:block' and tag = nm) then raise exception 'unknown block tag %', f; end if;
     else
         if position('[' in f) > 0 then
