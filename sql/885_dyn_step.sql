@@ -9,7 +9,7 @@
 -- Which chunks tick: vanilla runs scheduled ticks only in chunks inside the players' simulation distance (DistanceManager.inBlockTickingRange); ticks elsewhere wait in the
 -- chunk.  dbcraft: a chunk ticks when an online player's chunk is within simulation-distance chunks of it (square, Chebyshev).
 
-create index if not exists block_tick_due_only_idx on mc.block_tick (due);
+drop index if exists mc.block_tick_due_only_idx;                 -- (a second index on due only cost a quarter of every tick insert; the (kind, due) index of sql/880 answers the same questions)
 
 -- position of a key in a sorted int8 array (binary search), null when absent
 create or replace function mc.dyn_bsearch(p_arr int8[], p_key int8) returns int language plpgsql immutable parallel safe as $$
@@ -58,29 +58,82 @@ end $$;
 create or replace function mc.dyn_ticking(p_cx int, p_cz int) returns boolean language sql stable as $$
   select exists (select 1 from mc.player p where p.conn_id is not null and abs(p.chunk_x - p_cx) <= mc.prop_int('simulation-distance') and abs(p.chunk_z - p_cz) <= mc.prop_int('simulation-distance')) $$;
 
--- Run the due ticks of one kind ('b' blocks, 'f' fluids).  The ticks are taken out of the queue first (vanilla polls them before running, so a tick may schedule itself again).
+-- Run the due ticks of one kind ('b' blocks, 'f' fluids), in vanilla's order: due time, priority, the order they were scheduled (LevelTicks.DRAIN_ORDER; within one tick INTRA_TICK_DRAIN_ORDER).
+-- The ticks are taken out of the queue first (vanilla polls them before running, so a tick may schedule itself again), p_max at most (vanilla's own limit of 65,536 per kind per tick: the
+-- rest stays queued, in order).
+-- A time budget (dbcraft.dynamics-tick-budget-ms, 0 = none) keeps one tick from taking seconds when a huge burst is due: the ticks are taken and run in slices sized by the measured cost per
+-- tick (a session-level average), and when the budget is used up the rest stays queued and runs first in the next tick.  That deviates from vanilla only when a tick costs more than the budget
+-- (vanilla itself would take the whole burst in one tick); the packets of a burst then arrive spread over more ticks.  The clock starts at mc.dyn_step (setting mc.dyn_t0).
+-- All ticks of a slice run in ONE call of the engine in vanilla's order (so the ticks they schedule get their order numbers in vanilla's global order, and the random draws of the engine come in
+-- vanilla's order) unless they are spread over a very large area (more than dbcraft.dynamics-single-run-chunks = 1,024 chunk columns): then they are split into groups of chunks that touch each
+-- other, which cannot influence one another (the starting commit always split: 0 gives that back, the equivalence tests use it).
 create or replace function mc.dyn_run_due(p_cur bigint, p_kind "char", p_max int) returns int language plpgsql volatile as $$
 declare
     dim text := coalesce((select default_dimension from mc.world limit 1), 'minecraft:overworld');
     r int := mc.prop_int('simulation-distance');
-    tk "char"[]; tx int[]; ty int[]; tz int[]; tt text[]; comp int[]; c int; kinds int[]; xs int[]; ys int[]; zs int[]; auxs int[]; total int := 0; k int; ftypes text[] := array['minecraft:water', 'minecraft:flowing_water', 'minecraft:lava', 'minecraft:flowing_lava'];
+    tx int[]; ty int[]; tz int[]; tt text[]; td bigint[]; tp int[]; tq bigint[]; comp int[]; c int; kinds int[]; xs int[]; ys int[]; zs int[]; auxs int[]; total int := 0; dl timestamptz; done int;
+    budget float8 := coalesce(mc.prop_int('dbcraft.dynamics-tick-budget-ms'), 0);
+    t0 timestamptz := coalesce(nullif(current_setting('mc.dyn_t0', true), '')::timestamptz, clock_timestamp());
+    per float8 := coalesce(nullif(current_setting('mc.dyn_ms_per_item', true), '')::float8, 0.12);
+    remaining int := p_max; take int; got int; el float8; ts timestamptz; cx0 int; cx1 int; cz0 int; cz1 int; first boolean := true;
 begin
-    with due as materialized (
-        select t.dimension, t.x, t.y, t.z, t.type, t.prio, t.seq
-          from mc.block_tick t
-         where t.kind = p_kind and t.due <= p_cur and t.dimension = dim
-           and exists (select 1 from mc.player p where p.conn_id is not null and abs(p.chunk_x - (t.x >> 4)) <= r and abs(p.chunk_z - (t.z >> 4)) <= r)
-         order by t.prio, t.seq limit p_max),
-         del as (delete from mc.block_tick t using due d where t.dimension = d.dimension and t.x = d.x and t.y = d.y and t.z = d.z and t.kind = p_kind and t.type = d.type returning d.x, d.y, d.z, d.type, d.prio, d.seq)
-    select array_agg(x order by prio, seq), array_agg(y order by prio, seq), array_agg(z order by prio, seq), array_agg(type order by prio, seq) into tx, ty, tz, tt from del;
-    if tx is null then return 0; end if;
-    comp := mc.dyn_components(array(select (a >> 4) from unnest(tx) a), array(select (a >> 4) from unnest(tz) a));
-    for c in 1 .. (select max(v) from unnest(comp) v) loop
-        select array_agg(case when p_kind = 'f' then 1 else 2 end), array_agg(tx[i]), array_agg(ty[i]), array_agg(tz[i]),
-               array_agg(case when p_kind = 'f' then (case tt[i] when 'minecraft:water' then 0 when 'minecraft:flowing_water' then 1 when 'minecraft:lava' then 2 else 3 end)
-                              else (select b.bid from mc.dyn_block b where b.name = tt[i]) end)
-          into kinds, xs, ys, zs, auxs from generate_series(1, cardinality(tx)) i where comp[i] = c;
-        total := total + mc.dyn_run(dim, p_cur, kinds, xs, ys, zs, auxs);
+    loop
+        take := remaining;
+        if budget > 0 then
+            el := extract(epoch from clock_timestamp() - t0) * 1000;
+            exit when el >= budget and not first;                                                     -- (every tick runs at least a slice of each kind, however little time is left: nothing starves)
+            take := least(remaining, greatest(32, floor((budget - el) / (per * 1.3))::int));
+        end if;
+        exit when take <= 0;
+        ts := clock_timestamp();
+        with due as materialized (
+            select t.ctid as tid
+              from mc.block_tick t
+             where t.kind = p_kind and t.due <= p_cur and t.dimension = dim
+               and exists (select 1 from mc.player p where p.conn_id is not null and abs(p.chunk_x - (t.x >> 4)) <= r and abs(p.chunk_z - (t.z >> 4)) <= r)
+             order by t.due, t.prio, t.seq limit take),
+             del as (delete from mc.block_tick t where t.ctid = any (array(select d.tid from due d)) returning t.x, t.y, t.z, t.type, t.due, t.prio, t.seq)
+        select array_agg(x order by due, prio, seq), array_agg(y order by due, prio, seq), array_agg(z order by due, prio, seq), array_agg(type order by due, prio, seq),
+               array_agg(due order by due, prio, seq), array_agg(prio order by due, prio, seq), array_agg(seq order by due, prio, seq) into tx, ty, tz, tt, td, tp, tq from del;
+        exit when tx is null;
+        got := cardinality(tx);
+        select min(a >> 4), max(a >> 4) into cx0, cx1 from unnest(tx) a;
+        select min(a >> 4), max(a >> 4) into cz0, cz1 from unnest(tz) a;
+        if (cx1 - cx0 + 1)::bigint * (cz1 - cz0 + 1) <= coalesce(mc.prop_int('dbcraft.dynamics-single-run-chunks'), 1024) then
+            select array_agg(case when p_kind = 'f' then 1 else 2 end), array_agg(tx[i]), array_agg(ty[i]), array_agg(tz[i]),
+                   array_agg(case when p_kind = 'f' then (case tt[i] when 'minecraft:water' then 0 when 'minecraft:flowing_water' then 1 when 'minecraft:lava' then 2 else 3 end)
+                                  else (select b.bid from mc.dyn_block b where b.name = tt[i]) end)
+              into kinds, xs, ys, zs, auxs from generate_series(1, got) i;
+            dl := case when budget > 0 then greatest(t0 + (budget * 1.25) * interval '1 millisecond', clock_timestamp() + interval '3 milliseconds') end;      -- (the slice is sized to fit the budget; a clear overshoot stops it)
+            total := total + mc.dyn_run(dim, p_cur, kinds, xs, ys, zs, auxs, false, '{}', 0, dl);
+            done := coalesce(nullif(current_setting('mc.dyn_done', true), '')::int, got);
+            if done < got then
+                -- the ticks that did not run go back into the queue as they were (an equal tick scheduled meanwhile is the one that was not pending in vanilla: the original wins)
+                insert into mc.block_tick (dimension, x, y, z, kind, type, due, prio, seq)
+                select dim, tx[i], ty[i], tz[i], p_kind, tt[i], td[i], tp[i], tq[i] from generate_series(done + 1, got) i
+                on conflict (dimension, x, y, z, kind, type) do update set due = excluded.due, prio = excluded.prio, seq = excluded.seq;
+                got := done;
+            end if;
+        else
+            comp := mc.dyn_components(array(select (a >> 4) from unnest(tx) a), array(select (a >> 4) from unnest(tz) a));
+            for c in 1 .. (select max(v) from unnest(comp) v) loop
+                select array_agg(case when p_kind = 'f' then 1 else 2 end), array_agg(tx[i]), array_agg(ty[i]), array_agg(tz[i]),
+                       array_agg(case when p_kind = 'f' then (case tt[i] when 'minecraft:water' then 0 when 'minecraft:flowing_water' then 1 when 'minecraft:lava' then 2 else 3 end)
+                                      else (select b.bid from mc.dyn_block b where b.name = tt[i]) end)
+                  into kinds, xs, ys, zs, auxs from generate_series(1, got) i where comp[i] = c;
+                total := total + mc.dyn_run(dim, p_cur, kinds, xs, ys, zs, auxs);
+            end loop;
+        end if;
+        remaining := remaining - got;
+        first := false;
+        if budget > 0 then
+            -- the cost of one tick of this kind, smoothed (the next slice and the next tick are sized by it)
+            if got > 0 then
+                per := greatest(0.002, 0.6 * per + 0.4 * (extract(epoch from clock_timestamp() - ts) * 1000 / got));
+                perform set_config('mc.dyn_ms_per_item', per::text, false);
+            end if;
+        end if;
+        exit when got < take;
     end loop;
     return total;
 end $$;
@@ -95,17 +148,42 @@ begin
     perform set_config('mc.dyn_busy', 'off', false);
 end $$;
 
+-- The reactions of fills that did not fit in a tick's budget (mc.dyn_work, queued by mc.dyn_on_events): run in the order they were queued, the oldest fill first, each slice as long as the
+-- budget allows; the part of a fill that is left stays queued.  The engine gets the whole remainder of the fill (it puts the cells of the placements back for all of it) and a deadline.
+create or replace function mc.dyn_run_work(p_cur bigint) returns int language plpgsql volatile as $$
+declare
+    budget float8 := coalesce(mc.prop_int('dbcraft.dynamics-tick-budget-ms'), 0);
+    t0 timestamptz := coalesce(nullif(current_setting('mc.dyn_t0', true), '')::timestamptz, clock_timestamp());
+    dl timestamptz; gt bigint; dim text; ids bigint[]; kinds int[]; xs int[]; ys int[]; zs int[]; auxs int[]; aux2s int[]; n int; done int; total int := 0;
+begin
+    loop
+        select w.t, w.dimension into gt, dim from mc.dyn_work w order by w.id limit 1;
+        exit when gt is null;
+        select array_agg(q.id order by q.id), array_agg(q.kind order by q.id), array_agg(q.x order by q.id), array_agg(q.y order by q.id), array_agg(q.z order by q.id), array_agg(q.aux order by q.id), array_agg(q.aux2 order by q.id)
+          into ids, kinds, xs, ys, zs, auxs, aux2s from mc.dyn_work q where q.t = gt and q.dimension = dim;
+        n := cardinality(ids);
+        dl := case when budget > 0 then t0 + budget * interval '1 millisecond' end;
+        total := total + mc.dyn_run(dim, gt, kinds, xs, ys, zs, auxs, false, aux2s, 0, dl);
+        done := coalesce(nullif(current_setting('mc.dyn_done', true), '')::int, n);
+        delete from mc.dyn_work w where w.id = any (ids[1 : done]);
+        exit when done < n or (budget > 0 and clock_timestamp() >= t0 + budget * interval '1 millisecond');
+    end loop;
+    return total;
+end $$;
+
 create or replace function mc.dyn_step(p_cur bigint) returns void language plpgsql volatile as $$
 declare mx int := coalesce(mc.prop_int('dbcraft.dynamics-max-ticks'), 65536);
 begin
     -- idle test in ONE statement (no tick due, nothing late, no random-tick run this tick, no list to rebuild): the whole step is about this
     if not (select coalesce((select value <> 'off' from mc.server_property where key = 'dbcraft.dynamics'), true) and exists (select 1 from mc.dyn_vec)
-                   and (exists (select 1 from mc.block_tick where due <= p_cur) or exists (select 1 from mc.dyn_late_event) or exists (select 1 from mc.dyn_rt_dirty d where d.mt <= p_cur - coalesce((select value::int from mc.server_property where key = 'dbcraft.random-tick-quiet'), 100))
+                   and (exists (select 1 from mc.block_tick where kind in ('b', 'f', 'l') and due <= p_cur) or exists (select 1 from mc.dyn_late_event) or exists (select 1 from mc.dyn_work) or exists (select 1 from mc.dyn_rt_dirty d where d.mt <= p_cur - coalesce((select value::int from mc.server_property where key = 'dbcraft.random-tick-quiet'), 100))
                         or (p_cur % greatest(coalesce((select value::int from mc.server_property where key = 'dbcraft.random-tick-interval'), 4), 1) = 0
                             and exists (select 1 from mc.player where conn_id is not null) and coalesce((select value::int from mc.game_rule where name = 'minecraft:random_tick_speed'), 3) > 0))) then return; end if;
     begin
+        perform set_config('mc.dyn_t0', clock_timestamp()::text, true);
         perform mc.dyn_release_late();
-        if exists (select 1 from mc.block_tick where due <= p_cur) then
+        if exists (select 1 from mc.dyn_work) then perform mc.dyn_run_work(p_cur); end if;
+        if exists (select 1 from mc.block_tick where kind in ('b', 'f', 'l') and due <= p_cur) then
             perform mc.dyn_run_due(p_cur, 'b', mx);
             perform mc.dyn_run_due(p_cur, 'f', mx);
         end if;
@@ -159,7 +237,7 @@ create or replace function mc.dyn_on_events() returns trigger language plpgsql v
 declare
     v mc.dyn_vec%rowtype; e record; cur bigint; dim text; osid int; nsid int; keep boolean; k int; many boolean;
     xs int[] := '{}'; ys int[] := '{}'; zs int[] := '{}'; auxs int[] := '{}'; aux2s int[] := '{}'; kinds int[] := '{}'; n int := 0; pos int[]; p int; cx0 int; sy int; cz0 int; ci int;
-    dirs int[][] := array[[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]]; interesting int := 4 | 8 | 4096 | 65536 | 262144; dims text; any_react boolean; any_tick boolean;
+    dirs int[][] := array[[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]]; interesting int := 4 | 8 | 4096 | 65536 | 262144 | 8388608 | 16777216 | 33554432; dims text; any_react boolean; any_tick boolean; budget float8; done int; wats boolean[];
 begin
     if not mc.dyn_enabled() then return null; end if;
     -- Is there anything here that can react, or whose random-tick list can change?  Asked of the PALETTES of the sections the events are in (and of the face neighbours: a block event only when
@@ -179,6 +257,17 @@ begin
         select d.react, d.tickc from (select distinct x.nm from new_ev ne, lateral (values (ne.old_state), (ne.new_state)) x(nm)) st join mc.dyn_state d on d.name = st.nm
     ) q;
     if not any_react and not any_tick then return null; end if;
+    if any_tick and (select count(*) from new_ev) <= 24 and not exists (select 1 from new_ev where kind <> 'block') then
+        -- a few single-block edits: patch the lists of the cells around them now (no rebuild of the chunk 100 ticks later) when the chunks have lists
+        select array_agg(ne.x order by ne.id), array_agg(ne.y order by ne.id), array_agg(ne.z order by ne.id), min(ne.dimension),
+               array_agg(exists (select 1 from mc.dyn_state s where s.name in (ne.old_state, ne.new_state) and s.fluid <> '') order by ne.id) into xs, ys, zs, dims, wats from new_ev ne;
+        begin
+            if mc.dyn_rt_patch(dims, xs, ys, zs, wats) then any_tick := false; end if;
+        exception when others then
+            insert into mc.error_log (tick, step, message) values ((select game_time from mc.game_state), 'dyn_rt_patch', sqlerrm);          -- (the chunks are queued for a rebuild below)
+        end;
+        xs := '{}'; ys := '{}'; zs := '{}'; dims := null;
+    end if;
     if any_tick then
         -- the random-tick lists (sql/887) of the chunks a change touches, and of the neighbours when it is within 4 cells of them (water reaches farmland, dirt grass, over a chunk border)
         insert into mc.dyn_rt_dirty (dimension, cx, cz, mt)
@@ -228,8 +317,15 @@ begin
     end loop;
     if n > 0 then
         perform set_config('mc.dyn_nocache', 'on', true);
-        perform mc.dyn_run(dim, cur, kinds, xs, ys, zs, auxs, false, aux2s);
+        budget := coalesce(mc.prop_int('dbcraft.dynamics-tick-budget-ms'), 0);
+        perform mc.dyn_run(dim, cur, kinds, xs, ys, zs, auxs, false, aux2s, 0, case when budget > 0 then clock_timestamp() + budget * interval '1 millisecond' end);
         perform set_config('mc.dyn_nocache', 'off', true);
+        -- a fill whose reactions do not fit in the budget: the rest is queued (run by mc.dyn_run_work in the following ticks, with this game time)
+        done := coalesce(nullif(current_setting('mc.dyn_done', true), '')::int, n);
+        if done < n then
+            insert into mc.dyn_work (dimension, t, kind, x, y, z, aux, aux2)
+            select dim, cur, kinds[i], xs[i], ys[i], zs[i], auxs[i], aux2s[i] from generate_series(done + 1, n) i order by i;
+        end if;
     end if;
     return null;
 end $$;

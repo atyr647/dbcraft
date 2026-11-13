@@ -9,7 +9,7 @@
 --   * farmland: active unless it is fully wet (moisture 7) with water within reach.
 -- The list of active cells of a section is built (mc.dyn_rt_build) when its chunk is new or a block changed in it or within 4 cells of it (mc.dyn_rt_dirty is filled by the statement
 -- trigger of sql/885 and by a trigger on new chunks) and kept in mc.dyn_rt_sec (only sections with at least one active cell have a row).  A run then is: the number of hits is Poisson
--- distributed with mean n * (active cells in range) / 4096 (n = random_tick_speed * 3 draws per section and tick, times the interval), each hit lands in a section with probability
+-- distributed with mean n * (active cells in range) / 4096 (n = random_tick_speed draws per section and tick, times the interval), each hit lands in a section with probability
 -- proportional to its active cells, at a uniformly random one of them: O(hits) work, and next to nothing when no active cell is near a player.  All online players' areas are served.
 -- The hits of one run are capped (a random subset, so a very large farm ticks slower than vanilla's rate): dbcraft.random-tick-max-hits per tick.
 --
@@ -71,7 +71,7 @@ end $$;
 create or replace function mc.dyn_rt_build(p_dim text, p_cx int, p_cz int) returns void language plpgsql volatile as $$
 declare
     v     mc.dyn_vec%rowtype;
-    fl    int4[]; fa int2[]; kk int4[]; tg int8[]; npv int4[]; ld int2[];
+    fl    int4[]; fa int2[]; kk int4[]; tg int8[]; npv int4[]; ld int2[]; lf int4[]; bidv int4[]; pl int4[];
     ver   bigint; sys int[]; sy0 int; sy1 int; nsy int; secs int4[]; gm int4[];
     ii int; s int; rw int; cand int[]; act smallint[]; k int; i int; x int; y int; z int; lx int; ly int; lz int; cell int; ab int; a2 int; q int;
     ex_x int[]; ex_y int[]; ex_z int[]; ex_n int; dpos int[]; hit boolean; dx int; dy int; dz int; m1 int; need_ex boolean; found boolean; memo_key text; total_act int := 0;
@@ -99,13 +99,13 @@ begin
             on conflict (dimension, cx, cz) do update set version = excluded.version;
             return;
         end if;
-        select dv.flags, dv.k into fl, kk from mc.dyn_vec dv;                                   -- (the other arrays are read when a class needs them: each is 70 to 280 KB)
+        select dv.flags, dv.k, dv.leaf, dv.bid, dv.plant into fl, kk, lf, bidv, pl from mc.dyn_vec dv;                      -- (the other arrays are read when a class needs them: each is 70 to 280 KB)
         secs := mc.dyn_secs(p_dim, p_cx - 1, p_cx + 1, sy0, sy1, p_cz - 1, p_cz + 1, array(select generate_series(1, 9 * nsy)));
         gm := array[sy0, p_cz - 1, p_cx - 1, 3, 3] || array(select generate_series(2, 9 * nsy + 1));
         for ii in 1 .. cardinality(sys) loop
             s := sys[ii];
             rw := gm[5 + ((s - sy0) * 3 + 1) * 3 + 2];
-            select array_agg(u.o - 1) into cand from unnest(secs[rw:rw][1:4096]) with ordinality u(c, o) where (fl[u.c + 1] & 7864320) <> 0;
+            select array_agg(u.o - 1) into cand from unnest(secs[rw:rw][1:4096]) with ordinality u(c, o) where (fl[u.c + 1] & 66584576) <> 0;
             if cand is null then continue; end if;
             act := '{}';
             -- exposed dirt of this section (grass spreads to dirt that has no opaque block and no water above it)
@@ -152,6 +152,10 @@ begin
                 elsif (fl[cell + 1] & 1048576) <> 0 or (fl[cell + 1] & 4194304) <> 0 then
                     if npv is null then select dv.nextp into npv from mc.dyn_vec dv; end if;
                     hit := npv[cell + 1] >= 0;                                                       -- a crop that can age, a sapling at stage 0
+                elsif (fl[cell + 1] & 8388608) <> 0 then
+                    hit := (lf[cell + 1] & 7) = 7 and (lf[cell + 1] & 8) = 0;                         -- leaves that decay: not persistent, distance 7
+                elsif (fl[cell + 1] & (16777216 | 33554432)) <> 0 then
+                    hit := mc.dyn_rt_hit(secs, gm, fl, kk, tg, npv, ld, lf, bidv, pl, x, y, z);        -- sugar cane, cactus: the one-cell rule
                 elsif (fl[cell + 1] & 2097152) <> 0 then
                     if tg is null then select dv.tagbits into tg from mc.dyn_vec dv; end if;
                     m1 := cell - kk[42];                                                             -- the moisture of this state
@@ -178,6 +182,103 @@ begin
     end if;
     insert into mc.dyn_rt_chunk (dimension, cx, cz, version) values (p_dim, p_cx, p_cz, ver)
     on conflict (dimension, cx, cz) do update set version = excluded.version;
+end $$;
+
+-- Is the cell (x, y, z) of the section block (secs, gm) ACTIVE: can its random tick change something?  The same rules as the batch version in mc.dyn_rt_build (which finds the exposed dirt of a whole
+-- section at once and is faster for a section), written for ONE cell, so that an edit can patch the lists of the cells around it instead of rebuilding its chunk (mc.dyn_rt_patch).  The
+-- test in tests/sql/880 patches random edits and compares every list with a fresh build.
+create or replace function mc.dyn_rt_hit(p_secs int4[], p_gm int4[], p_fl int4[], p_kk int4[], p_tg int8[], p_npv int4[], p_ld int2[], p_lf int4[], p_bid int4[], p_pl int4[], x int, y int, z int) returns boolean language plpgsql immutable parallel safe as $$
+declare cell int := mc.dyn_at(p_secs, p_gm, x, y, z); ab int; m1 int; dx int; dy int; dz int; found boolean := false; w int; h int;
+begin
+    if (p_fl[cell + 1] & 524288) <> 0 then                                                            -- grass block, mycelium
+        ab := mc.dyn_at(p_secs, p_gm, x, y + 1, z);
+        if ab <> p_kk[50] and ((p_fl[ab + 1] & 8) <> 0 and (p_fl[ab + 1] & (32 | 64)) <> 0 or p_ld[ab + 1] >= 15) then return true; end if;               -- it dies
+        for dy in -3 .. 1 loop
+            for dz in -1 .. 1 loop
+                for dx in -1 .. 1 loop
+                    if mc.dyn_at(p_secs, p_gm, x + dx, y + dy, z + dz) = p_kk[41] then
+                        m1 := mc.dyn_at(p_secs, p_gm, x + dx, y + dy + 1, z + dz);
+                        if (m1 = p_kk[50] or not ((p_fl[m1 + 1] & 8) <> 0 and (p_fl[m1 + 1] & (32 | 64)) <> 0 or p_ld[m1 + 1] >= 15)) and (p_fl[m1 + 1] & 8) = 0 then return true; end if;
+                    end if;
+                end loop;
+            end loop;
+        end loop;
+        return false;
+    elsif (p_fl[cell + 1] & 1048576) <> 0 or (p_fl[cell + 1] & 4194304) <> 0 then                       -- a crop that can age, a sapling at stage 0
+        return p_npv[cell + 1] >= 0;
+    elsif (p_fl[cell + 1] & (16777216 | 33554432)) <> 0 then                                           -- sugar cane, cactus: the cell above is air and the column is not finished
+        if (p_fl[mc.dyn_at(p_secs, p_gm, x, y + 1, z) + 1] & 1) = 0 then return false; end if;
+        h := 1;
+        while p_bid[mc.dyn_at(p_secs, p_gm, x, y - h, z) + 1] = p_bid[cell + 1] loop h := h + 1; end loop;
+        if (p_fl[cell + 1] & 16777216) <> 0 then return h < 3; end if;                                  -- cane: grows while shorter than 3
+        return not (h >= 3 and (p_pl[cell + 1] & 31) = 15);                                              -- cactus: ages up to 15, grows while shorter than 3
+    elsif (p_fl[cell + 1] & 8388608) <> 0 then                                                         -- leaves: decaying
+        return (p_lf[cell + 1] & 7) = 7 and (p_lf[cell + 1] & 8) = 0;
+    elsif (p_fl[cell + 1] & 2097152) <> 0 then                                                         -- farmland
+        m1 := cell - p_kk[42];
+        for dx in -4 .. 4 loop
+            for dz in -4 .. 4 loop
+                for dy in 0 .. 1 loop
+                    if (p_fl[mc.dyn_at(p_secs, p_gm, x + dx, y + dy, z + dz) + 1] & 8) <> 0 then found := true; exit; end if;
+                end loop;
+                exit when found;
+            end loop;
+            exit when found;
+        end loop;
+        if found then return m1 < 7; end if;
+        return m1 > 0 or ((p_tg[mc.dyn_at(p_secs, p_gm, x, y + 1, z) + 1] >> 8) & 1) = 0;
+    end if;
+    return false;
+end $$;
+
+-- Patch the lists of the cells around a few single-block edits (a player placing or breaking a block, a command) instead of queueing their chunks for a rebuild 100 ticks later.  The cells whose
+-- activity can change: next to an edit (1 cell horizontally, 2 below to 3 above: grass sees dirt 1 away and 3 below, whether that dirt is exposed depends on the cell above it, farmland and
+-- grass look at the cell above), and when the edit places or removes a fluid (p_wat) farmland within 4 cells horizontally and one below (it sees water 4 away, at its level and the one above); each of them is evaluated again with mc.dyn_rt_hit and added to or removed from its section's list.  Returns false (nothing done) when there are more than 24 edits or an
+-- edited chunk has no list yet: the caller queues the chunks for a rebuild as before.
+create or replace function mc.dyn_rt_patch(p_dim text, p_x int[], p_y int[], p_z int[], p_wat boolean[]) returns boolean language plpgsql volatile as $$
+declare
+    n int := coalesce(cardinality(p_x), 0); fl int4[]; kk int4[]; tg int8[]; npv int4[]; ld int2[]; lf int4[]; bidv int4[]; pl int4[];
+    cx0 int; cx1 int; cz0 int; cz1 int; sy0 int; sy1 int; ncx int; ncz int; nsy int; secs int4[]; gm int4[];
+    cand record; cur smallint[]; r record; hx int[] := '{}'; hy int[] := '{}'; hz int[] := '{}'; hh boolean[] := '{}'; k int := 0;
+begin
+    if n = 0 or n > 24 then return false; end if;
+    if exists (select 1 from unnest(p_x, p_z) u(x, z) where not exists (select 1 from mc.dyn_rt_chunk k where k.dimension = p_dim and k.cx = (u.x >> 4) and k.cz = (u.z >> 4))) then return false; end if;
+    select dv.flags, dv.k, dv.tagbits, dv.nextp, dv.lightd, dv.leaf, dv.bid, dv.plant into fl, kk, tg, npv, ld, lf, bidv, pl from mc.dyn_vec dv;
+    select min((x - 8) >> 4), max((x + 8) >> 4), min((z - 8) >> 4), max((z + 8) >> 4), min((y - 7) >> 4), max((y + 8) >> 4) into cx0, cx1, cz0, cz1, sy0, sy1 from unnest(p_x, p_y, p_z) u(x, y, z);
+    ncx := cx1 - cx0 + 1; ncz := cz1 - cz0 + 1; nsy := sy1 - sy0 + 1;
+    if ncx * ncz * nsy > 64 then return false; end if;
+    secs := mc.dyn_secs(p_dim, cx0, cx1, sy0, sy1, cz0, cz1, array(select generate_series(1, ncx * ncz * nsy)));
+    gm := array[sy0, cz0, cx0, ncz, ncx] || array(select generate_series(2, ncx * ncz * nsy + 1));
+    for cand in
+        select gx.x, gy.y, gz.z
+          from unnest(p_x, p_y, p_z, p_wat) e(ex, ey, ez, wat), generate_series(e.ex - 4, e.ex + 4) gx(x), generate_series(e.ey - 2, e.ey + 3) gy(y), generate_series(e.ez - 4, e.ez + 4) gz(z)
+         where (e.wat and gy.y between e.ey - 1 and e.ey or abs(gx.x - e.ex) <= 1 and abs(gz.z - e.ez) <= 1)
+           and (fl[mc.dyn_at(secs, gm, gx.x, gy.y, gz.z) + 1] & 66584576) <> 0
+        union select u.x, u.y, u.z from unnest(p_x, p_y, p_z) u(x, y, z)             -- (an edited cell that is not randomly ticking any more must leave its list)
+    loop
+        k := k + 1; hx[k] := cand.x; hy[k] := cand.y; hz[k] := cand.z; hh[k] := mc.dyn_rt_hit(secs, gm, fl, kk, tg, npv, ld, lf, bidv, pl, cand.x, cand.y, cand.z);
+    end loop;
+    for r in select (u.x >> 4) as cx, (u.y >> 4) as sy, (u.z >> 4) as cz,
+                    array_agg((((u.y & 15) << 8) | ((u.z & 15) << 4) | (u.x & 15))::smallint) filter (where u.h) as add_,
+                    array_agg((((u.y & 15) << 8) | ((u.z & 15) << 4) | (u.x & 15))::smallint) filter (where not u.h) as del_
+               from unnest(hx, hy, hz, hh) u(x, y, z, h) group by 1, 2, 3 loop
+        select a.cells into cur from mc.dyn_rt_sec a where a.dimension = p_dim and a.cx = r.cx and a.sy = r.sy and a.cz = r.cz;
+        cur := coalesce(cur, '{}');
+        cur := array(select c from unnest(cur) c where not (c = any (coalesce(r.del_, '{}'))) and not (c = any (coalesce(r.add_, '{}'))))
+               || coalesce(r.add_, '{}');
+        if cardinality(cur) = 0 then
+            delete from mc.dyn_rt_sec a where a.dimension = p_dim and a.cx = r.cx and a.sy = r.sy and a.cz = r.cz;
+        else
+            insert into mc.dyn_rt_sec (dimension, cx, sy, cz, version, cnt, cells)
+            values (p_dim, r.cx, r.sy, r.cz, coalesce((select c.version from mc.chunk c where c.dimension = p_dim and c.cx = r.cx and c.cz = r.cz), 0), cardinality(cur), cur)
+            on conflict (dimension, cx, cz, sy) do update set cnt = excluded.cnt, cells = excluded.cells, version = excluded.version;
+        end if;
+    end loop;
+    -- the lists of the edited chunks are current for the chunk's version now (the reconcile pass of mc.dyn_random_ticks compares the two)
+    update mc.dyn_rt_chunk k set version = c.version from mc.chunk c
+     where c.dimension = k.dimension and c.cx = k.cx and c.cz = k.cz and k.dimension = p_dim
+       and exists (select 1 from unnest(p_x, p_z) u(x, z) where (u.x >> 4) = k.cx and (u.z >> 4) = k.cz);
+    return true;
 end $$;
 
 -- Keep the lists current: build the list of the newest queued chunk, then the next, until this tick's share of CPU time (dbcraft.random-tick-build-ms, 0.3 ms) is used; a build that cost more
@@ -233,9 +334,10 @@ begin
       from (select a.cx, a.sy, a.cz, a.cnt from mc.dyn_rt_sec a
              where a.dimension = dim and exists (select 1 from mc.player p where p.conn_id is not null and p.chunk_x between a.cx - r and a.cx + r and p.chunk_z between a.cz - r and a.cz + r)) t;
     if wtot = 0 then return; end if;
-    -- vanilla draws speed * 3 positions per section and tick; a draw hits an active cell with probability cnt / 4096: the number of hits of the area is Poisson (mean ew), capped at lim
+    -- vanilla draws `speed` (the gamerule, 3) positions per section and tick (ServerLevel.tickChunk); a draw hits an active cell with probability cnt / 4096: the number of hits of the area is Poisson (mean ew), capped at lim.
+    -- (An earlier version drew speed * 3, three times vanilla's rate; found by tests/e2e/rt_rate.py against the real server: sugar cane 51 of 100 plants grown after 21,000 ticks, as 3 draws a tick give.)
     lim := cap * iv;
-    ew := speed * 3.0 * iv * wtot / 4096.0;
+    ew := speed * 1.0 * iv * wtot / 4096.0;
     if ew > 2 * lim then h := lim;
     else
         l := exp(-ew); pr := 1; h := 0;

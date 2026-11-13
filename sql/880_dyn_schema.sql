@@ -60,21 +60,24 @@ alter table mc.dyn_vec add column if not exists lightd int2[] not null default '
 alter table mc.dyn_vec add column if not exists nextp int4[] not null default '{}';        -- per state: the state with the next `age` (crops) or `stage` (saplings), -1 if none
 alter table mc.dyn_vec add column if not exists rule int4[] not null default '{}';        -- per state: the support rule, see sql/886
 alter table mc.dyn_vec add column if not exists tagbits int8[] not null default '{}';     -- per state: membership of the block tags the rules use, see sql/886
+alter table mc.dyn_vec add column if not exists plant int4[] not null default '{}';       -- per state (sugar cane, cactus; else 0): age | (state id of the age = 0 state of the block) << 5
+alter table mc.dyn_vec add column if not exists leaf int4[] not null default '{}';        -- per state (leaves only, else 0): distance | persistent << 3 | waterlogged << 4 | (state id of the distance = 1 variant with the same other properties) << 5
 alter table mc.dyn_vec add column if not exists wlt int4[] not null default '{}';        -- per state: the state id of the waterlogged = true variant (-1: none)
 alter table mc.dyn_vec add column if not exists sturdy int4[] not null default '{}';     -- per state: bits 0-5 isFaceSturdy FULL, 6-11 CENTER, 12-17 RIGID for DOWN UP NORTH SOUTH WEST EAST
 -- The arrays are read whole by every engine run and every list build: stored uncompressed (a pglz pass over 140-280 KB costs a millisecond or more each time they are detoasted).
 alter table mc.dyn_vec alter column flags set storage external, alter column famt set storage external, alter column coll set storage external, alter column skind set storage external,
                        alter column bid set storage external, alter column occ set storage external, alter column k set storage external, alter column wlt set storage external,
                        alter column sturdy set storage external, alter column lightd set storage external, alter column nextp set storage external, alter column rule set storage external,
-                       alter column tagbits set storage external;
+                       alter column tagbits set storage external, alter column leaf set storage external, alter column plant set storage external;
 -- k[]: 1 air, 2 void_air, 3 cobblestone, 4 obsidian, 5 stone, 6 basalt, 7 .. 22 water[level = 0 .. 15], 23 .. 38 lava[level = 0 .. 15], 39 soul_soil, 40 blue_ice, 41 dirt,
---      42 .. 49 farmland[moisture = 0 .. 7]
+--      42 .. 49 farmland[moisture = 0 .. 7], 50 snow[layers = 1], 51 the distance between the state ids of two leaf states that differ in `distance` by one, 52 cactus_flower
 -- F_* flags (powers of two; the engine uses the literal numbers, keep them in sync)
 --       1 AIR            2 SOLID (BlockState.isSolid)        4 LIQUID (a LiquidBlock: water, lava)      8 WATER fluid state      16 LAVA fluid state
 --      32 SOURCE (fluid source)    64 FALLING flowing         128 WATERLOGGABLE (SimpleWaterloggedBlock) 256 LiquidBlockContainer 512 HOLD (canHoldAnyFluid)
 --    1024 RTICK       2048 REPLACEABLE     4096 GRAVITY (a FallingBlock)  8192 BLOCKS_MOTION  16384 BARRIER (unloaded)  32768 FIRE (tag)
 --   65536 CONCRETE POWDER (turns into concrete next to water)   131072 lower half (a door or a tall plant)   262144 has a support rule (sql/886)
---  524288 SPREADING (grass block, mycelium)  1048576 CROP  2097152 FARMLAND  4194304 SAPLING (random-tick behaviours of sql/887)
+--  524288 SPREADING (grass block, mycelium)  1048576 CROP  2097152 FARMLAND  4194304 SAPLING (random-tick behaviours of sql/887)  8388608 LEAVES (LeavesBlock: distance, decay)
+--  16777216 SUGAR CANE   33554432 CACTUS (age 0 .. 15 plants of sql/887: growth by random tick, support checked by a block tick)
 create or replace function mc.dyn_ready() returns boolean language sql stable as $$ select exists (select 1 from mc.dyn_vec) $$;
 
 create or replace function mc.dyn_rebuild_base() returns void language plpgsql volatile as $$
@@ -121,7 +124,9 @@ begin
                 || array(select (select sid from mc.dyn_state where name = 'minecraft:water[level=' || l || ']') from generate_series(0, 15) l order by l)
                 || array(select (select sid from mc.dyn_state where name = 'minecraft:lava[level=' || l || ']') from generate_series(0, 15) l order by l)
                 || array[(select default_state from ref.block where name = 'minecraft:soul_soil'), (select default_state from ref.block where name = 'minecraft:blue_ice'), (select default_state from ref.block where name = 'minecraft:dirt')]
-                || array(select (select sid from mc.dyn_state where name = 'minecraft:farmland[moisture=' || l || ']') from generate_series(0, 7) l order by l) || array[(select sid from mc.dyn_state where name = 'minecraft:snow[layers=1]')]),
+                || array(select (select sid from mc.dyn_state where name = 'minecraft:farmland[moisture=' || l || ']') from generate_series(0, 7) l order by l) || array[(select sid from mc.dyn_state where name = 'minecraft:snow[layers=1]')]
+                || array[(select s2.sid - s1.sid from mc.dyn_state s1, mc.dyn_state s2 where s1.name = 'minecraft:oak_leaves[distance=1,persistent=false,waterlogged=false]' and s2.name = 'minecraft:oak_leaves[distance=2,persistent=false,waterlogged=false]')]
+                || array[(select default_state from ref.block where name = 'minecraft:cactus_flower')]),
         (select array_agg(coalesce(w.sid, -1) order by s.sid) || array[-1] from mc.dyn_state s left join mc.dyn_state w on s.wl and w.name = replace(s.name, 'waterlogged=false', 'waterlogged=true') and s.name like '%waterlogged=false%'),
         (select array_agg((select sum(case when substr(s.sf, i, 1) = '1' then 1 << (i - 1) else 0 end) + sum(case when substr(s.sc, i, 1) = '1' then 1 << (i + 5) else 0 end) + sum(case when substr(s.sr, i, 1) = '1' then 1 << (i + 11) else 0 end)
                              from generate_series(1, 6) i) order by s.sid) || array[63] from mc.dyn_state s),
@@ -139,10 +144,10 @@ end $$;
 -- nobody was near runs as soon as a player comes into range).
 create sequence if not exists mc.block_tick_seq;
 create table if not exists mc.block_tick (
-    dimension text not null default 'minecraft:overworld',
+    dimension text collate "C" not null default 'minecraft:overworld',                    -- ("C": byte comparison; the keys of this table are compared millions of times in a burst)
     x int not null, y int not null, z int not null,
     kind "char" not null,
-    type text not null,
+    type text collate "C" not null,
     due bigint not null,
     prio smallint not null default 0,
     seq bigint not null default nextval('mc.block_tick_seq'),
@@ -158,6 +163,13 @@ create table if not exists mc.dyn_late_event (
     kind text not null, dimension text not null, x int not null, y int not null, z int not null, old_state text not null, new_state text not null, cells bytea
 );
 
+-- reactions of a fill that did not fit in the tick's time budget (dbcraft.dynamics-tick-budget-ms): the items the engine had not run when the budget was used up, in order, with the game time
+-- of the fill (the ticks they schedule are due relative to it, as if they had run at once); mc.dyn_run_work (sql/885) runs them in the following ticks.
+create table if not exists mc.dyn_work (
+    id bigint generated always as identity primary key,
+    dimension text not null, t bigint not null, kind int not null, x int not null, y int not null, z int not null, aux int not null, aux2 int not null
+);
+
 -- random ticks (sql/887): the chunks whose list of randomly ticking cells that can change something must be rebuilt (a block changed in or next to them, or they are new)
 drop table if exists mc.dyn_rt_dirty;                              -- derived data: sql/887 queues every chunk again
 create sequence if not exists mc.dyn_rt_dirty_seq;
@@ -168,6 +180,8 @@ create index dyn_rt_dirty_seq_idx on mc.dyn_rt_dirty (dimension, seq);          
 insert into mc.server_property (key, value, default_value, note) values
     ('dbcraft.dynamics', 'on', 'on', 'dbcraft: world dynamics (scheduled ticks, fluids, falling blocks, neighbour updates, random ticks); off makes every dynamics entry point return at once'),
     ('dbcraft.dynamics-max-ticks', '65536', '65536', 'dbcraft: most scheduled block ticks, and most fluid ticks, run in one tick; the rest stay queued for the following ticks.  65,536 is vanilla''s limit (ServerLevel.tick passes it to LevelTicks.tick, whose drain stops there and leaves the rest queued)'),
+    ('dbcraft.dynamics-tick-budget-ms', '40', '40', 'dbcraft: wall-clock milliseconds one tick may spend running scheduled block and fluid ticks (0 = no limit, vanilla''s behaviour: its only limit is 65,536 ticks per kind).  When a huge burst is due, the ticks that do not fit stay queued, in vanilla order, and run first in the next tick: the burst takes more ticks but no tick takes seconds.  Only a tick that would exceed the budget differs from vanilla'),
+    ('dbcraft.dynamics-single-run-chunks', '1024', '1024', 'dbcraft: the due scheduled ticks of a tick run in one engine call (vanilla''s global order) when they lie within this many chunk columns; more spread out ticks are split into groups of touching chunks (0: always split, the behaviour before sql/885 changed)'),
     ('dbcraft.dynamics-dimensions', 'minecraft:overworld,minecraft:the_nether,minecraft:the_end', 'minecraft:overworld,minecraft:the_nether,minecraft:the_end', 'dbcraft: comma-separated dimensions in which block edits trigger world dynamics (other dimensions, such as the tests'' dbcraft:a, store blocks without reacting)')
 on conflict (key) do nothing;
 
