@@ -180,6 +180,7 @@ declare
 begin
     -- sql/800: nothing queued, nobody connected: the whole tick is the clock and a log row (mc.tick_quiet says when; same bytes: there is nothing to send)
     if mc.tick_quiet() then return mc.tick_quiet_step(true); end if;
+    perform set_config('dbcraft.tick_t0', t0::text, true);                          -- sql/903: the start of this tick, for the pairing budget (dbcraft.pair-tick-ms)
     -- housekeeping, once a second: the queues only the tick uses are emptied with TRUNCATE (sql/435 says why; the others are emptied with DELETE every tick)
     -- (a queue that was never written since its last truncate has a zero-length file: nothing to empty, and truncating it anyway would create new files for nothing;
     -- an idle server therefore creates no relation file at all)

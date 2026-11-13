@@ -204,15 +204,18 @@ end $$;
 --   The pairs found are probed in mc.visible (the primary key) and only the changes are written: O(pairs near the edge), not O(dirty x online).  A pair to delete is deleted by the tuple id the probe found.
 create or replace function mc.refresh_visibility_vis() returns table(added int, removed int) language plpgsql as $$
 declare srv int := least(mc.prop_int('view-distance'), 32); trk float8 := ((coalesce(mc.prop_int('entity-broadcast-range-percentage'), 100) * 512) / 100)::float8;
-        d int[]; sv int[]; wl int[]; av int[]; at_ int[]; ac int[]; dtid tid[]; wk mc.vis_work; gt bigint := (select game_time from mc.game_state); wp_on boolean;
+        d int[]; sv int[]; wl int[]; av int[]; at_ int[]; ac int[]; dtid tid[]; wk mc.vis_work; gt bigint := (select game_time from mc.game_state); wp_on boolean; adm int; pend int[]; t_r timestamptz;
 begin
   added := 0; removed := 0;
+  adm := mc.vis_pair_release(gt);                                           -- sql/903: the joiners whose pairing waits in the queue leave it, as many as the budget allows
+  if adm > 0 then t_r := clock_timestamp(); end if;
+  pend := (select array_agg(entity_id) from mc.vpair);                      --   the others are not evaluated (mc.vis_find leaves them out of w.dirty), and are not a pair partner of anybody yet
   wk := mc.vis_find(gt);                                                    -- one scan of the online players for the whole tick (sql/905)
   wp_on := wk.n > 1 and mc.rule_bool('locator_bar', true) and wk.n <= coalesce(mc.prop_int('dbcraft.locator-bar-max-players'), 120);
   if wk.wp1 or wp_on is distinct from exists (select 1 from mc.wp) then perform mc.vis_wp_pass(gt, 1, wk.n); end if;
   if wk.recheck then
     perform mc.vis_recheck_mark();
-    select coalesce(array_agg(entity_id), '{}') into d from mc.player where vis_dirty and conn_id is not null;
+    select coalesce(array_agg(entity_id), '{}') into d from mc.player where vis_dirty and conn_id is not null and not (entity_id = any (coalesce(pend, '{}')));
   else
     d := coalesce(wk.dirty, '{}');
   end if;
@@ -228,7 +231,7 @@ begin
         from mc.player p
         cross join lateral (select p.tp_ground_tick is not null and coalesce(exists (select 1 from net.conn c where c.conn_id = p.conn_id and (c.view_cx, c.view_cz) <> (p.chunk_x, p.chunk_z)), false) as s) stl     -- a teleported client has not been sent the chunks of its new position yet (net.stream_chunks runs after this)
         cross join lateral (select greatest(2, least(coalesce(p.view_distance_req, 2), srv)) as vd, least(greatest(2, least(coalesce(p.view_distance_req, 2), srv)) * 16.0, trk) as rng) l
-       where p.conn_id is not null),
+       where p.conn_id is not null and not (p.entity_id = any (coalesce(pend, '{}')))),
     dp as materialized (select * from pc where dirty),
     cand as (        -- (a dirty, b anybody) whose distance is near the radius of either of them: |d - R| <= m.  (m is below 32, the smallest radius, or infinite)  A pair of two dirty players once, from the lower id
       select a.eid as ae, a.conn as aconn, a.x as ax, a.z as az, a.cx as acx, a.cz as acz, a.spec as aspec, a.rng as arng, a.vd as avd, a.stale as astale,
@@ -289,5 +292,6 @@ begin
     -- with what it is now.  It must stay without a bound until it is evaluated itself: if what it is now changed back before that, its baseline would look right for pairs that were evaluated otherwise.
     update mc.player p set vis_eid = null where p.entity_id = any (sv || wl) and p.vis_eid is not null;
   end if;
+  if t_r is not null then perform mc.vis_pair_note(extract(epoch from clock_timestamp() - t_r) * 1000); end if;       -- (sql/903: the cost of the released joiners' pairing, for the budget)
   return next;
 end $$;

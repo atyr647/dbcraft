@@ -157,6 +157,7 @@ create or replace function mc.wp_cand_state(p_sset int[]) returns table(rcv int,
 create or replace function mc.vis_wp_pass(p_cur bigint, p_phase int, p_n int default null) returns void language plpgsql set plan_cache_mode = force_generic_plan set join_collapse_limit = 1 as $$
 declare enabled boolean := mc.rule_bool('locator_bar', true); n int; cap int := coalesce(mc.prop_int('dbcraft.locator-bar-max-players'), 100000);
         slice int := coalesce(mc.prop_int('dbcraft.locator-bar-untrack-slice'), 2000000000); vdsrv int := mc.prop_int('view-distance');      -- (once, not once per player row: 20 us each)
+        pend int[] := coalesce((select array_agg(entity_id) from mc.vpair), '{}');      -- joiners whose pairing waits (sql/903): no transmit state yet, so nobody is connected to them yet
 begin
   n := coalesce(p_n, (select count(*)::int from mc.player where conn_id is not null));
   if n > cap then enabled := false; end if;
@@ -175,7 +176,7 @@ begin
     select p.entity_id as eid, p.conn_id, p.uuid, p.x, p.y, p.z, p.last_move_tick, p.wp_state as old_st, floor(p.x)::int as bx, floor(p.y)::int as by, floor(p.z)::int as bz, p.chunk_x as cx, p.chunk_z as cz,
            (abs(floor(p.x)::int - coalesce(p.wp_bx, floor(p.x)::int)) + abs(floor(p.y)::int - coalesce(p.wp_by, floor(p.y)::int)) + abs(floor(p.z)::int - coalesce(p.wp_bz, floor(p.z)::int))) as manh,   -- (blocks the source
            greatest(abs(p.chunk_x - coalesce(p.wp_cx, p.chunk_x)), abs(p.chunk_z - coalesce(p.wp_cz, p.chunk_z))) as cheb,                                                                          --  moved since the last pass)
-           case when p_phase = 2 then mc.wp_state_now(p) else p.wp_state end as st,
+           case when p_phase = 2 and not (p.entity_id = any (pend)) then mc.wp_state_now(p) else p.wp_state end as st,
            mc.wp_vr(p.view_distance_req, vdsrv) as vr, p.wp_vr as ovr, (p_phase = 1 and p.last_move_tick = p_cur) as moved, p.vis_dirty as vd, c.n as cnt
       from mc.player p left join mc.wp_cnt c on c.rcv = p.entity_id where p.conn_id is not null),
   tot as (select count(*) filter (where st is not null and (st & 1) = 1)::int as na, count(*) filter (where st is not null and (st & 1) = 1 and (st & 2) = 0)::int as nn from pl),
@@ -273,7 +274,7 @@ begin
      where conn_id is not null and (wp_bx is distinct from floor(x)::int or wp_by is distinct from floor(y)::int or wp_bz is distinct from floor(z)::int or wp_cx is distinct from chunk_x or wp_cz is distinct from chunk_z
                                     or wp_vr is distinct from mc.wp_vr(view_distance_req, vdsrv));
   else
-    update mc.player p set wp_state = mc.wp_state_now(p) where p.conn_id is not null and p.wp_state is distinct from mc.wp_state_now(p);
+    update mc.player p set wp_state = mc.wp_state_now(p) where p.conn_id is not null and p.wp_state is distinct from mc.wp_state_now(p) and not (p.entity_id = any (pend));
   end if;
 end $$;
 

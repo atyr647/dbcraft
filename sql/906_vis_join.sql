@@ -26,6 +26,7 @@ begin
       wp_hidden = exists (select 1 from mc.inventory_slot i join ref.item_attr a on a.item = i.item and a.slot = 'head' and a.attribute = 'minecraft:waypoint_transmit_range' where i.player = p.uuid and i.slot = 5)
    where p.uuid = p_uuid;
   perform mc.vis_wp_join((select entity_id from mc.player where uuid = p_uuid));          -- the locator bar: connected to every transmitting player at once (sql/908)
+  insert into mc.vpair (entity_id, since) select entity_id, gt from mc.player where uuid = p_uuid and entity_id is not null on conflict (entity_id) do update set since = excluded.since;       -- its pairing with the viewers waits for the budget (sql/903)
 end $$;
 
 -- The packets of the entry burst that are not generated from the join record: the captured static ones, adapted to this player.  Used by net.play_entry_packets (sql/150).

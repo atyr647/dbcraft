@@ -76,6 +76,7 @@ end $$;
 -- The answer is also kept for the rest of the tick (a transaction-local setting): mc.refresh_visibility computes it, mc.vis_step reuses it.
 create or replace function mc.vis_find(p_cur bigint) returns mc.vis_work language plpgsql as $$
 declare w mc.vis_work; vison boolean := mc.vis_on(); all_mv boolean := coalesce(current_setting('dbcraft.vis_scan_all', true), '') = 'on';       -- (tests: look at everybody)
+        pend int[] := (select array_agg(entity_id) from mc.vpair);       -- joiners whose pairing waits in the queue (sql/903): not evaluated, not announced, not given a transmit state yet
 begin
   w.cur := p_cur;
   select count(*)::int,
@@ -86,7 +87,7 @@ begin
          coalesce(bool_or(x.wp1), false), coalesce(bool_or(x.wp2), false), coalesce(bool_or(x.recheck), false)
     into w.n, w.dirty, w.mvn, w.ed, w.eq, w.att, w.pose, w.tpg, w.first, w.wp1, w.wp2, w.recheck
     from (
-      select p.entity_id as eid, p.vis_dirty as dirty,
+      select p.entity_id as eid, (p.vis_dirty and not q.pn) as dirty,
              (p.trk_start is not null and p.trk_start <= p_cur and (p_cur - p.trk_start) % 2 = 0
               and (all_mv or p.last_move_tick >= p_cur - 1 or (p.last_move_tick = p_cur - 2 and p.yaw_prev is distinct from p.yaw)
                    or p.vis_wake >= p_cur or (p_cur - p.trk_start) % 60 = 0 or p_cur - p.trk_start - p.trk_sync >= 802)) as mv,
@@ -97,12 +98,12 @@ begin
              (p.attr_gm is distinct from p.gamemode or p.attr_spr is distinct from p.sprinting or (p.attr_due is not null and p.attr_due <= p_cur)) as att,
              (p.pose is distinct from (case when p.shift and not p.flying then 5 else 0 end)) as pose,
              (p.tp_ground_tick is not null and p.tp_ground_tick <= p_cur) as tpg,
-             p.trk_first as first,
+             (p.trk_first and not q.pn) as first,
              (p.last_move_tick = p_cur or p.wp_bx is distinct from floor(p.x)::int or p.wp_by is distinct from floor(p.y)::int or p.wp_bz is distinct from floor(p.z)::int
               or p.wp_cx is distinct from p.chunk_x or p.wp_cz is distinct from p.chunk_z) as wp1,
-             (p.wp_state is distinct from ((case when p.pose <> 5 and not p.wp_hidden then 1 else 0 end) | (case when p.gamemode = 3 then 2 else 0 end))) as wp2,
+             (not q.pn and p.wp_state is distinct from ((case when p.pose <> 5 and not p.wp_hidden then 1 else 0 end) | (case when p.gamemode = 3 then 2 else 0 end))) as wp2,
              (p.vis_recheck and exists (select 1 from mc.player m where m.last_move_tick = p_cur and m.conn_id is not null)) as recheck
-        from mc.player p where p.conn_id is not null) x;
+        from mc.player p cross join lateral (select pend is not null and p.entity_id = any (pend) as pn) q where p.conn_id is not null) x;
   select count(*)::int into w.nvt from mc.vtrk;
   perform set_config('dbcraft.vis_work', w::text, true);
   return w;
@@ -120,7 +121,7 @@ begin
 end $$;
 
 create or replace function mc.vis_step(p_cur bigint) returns void language plpgsql as $$
-declare w mc.vis_work;
+declare w mc.vis_work; t_p timestamptz;
 begin
   if not mc.vis_on() then return; end if;
   w := mc.vis_work_now(p_cur);
@@ -132,9 +133,12 @@ begin
   perform mc.vis_chat_spam(p_cur);                  -- chat and command rate limits (sql/910)
   if w.ed is not null then perform mc.survival_tracker(p_cur, w.ed); end if;      -- tracker pass: the dirty entity data of the players that have some, in one set_entity_data each
   if w.mvn > 0 then perform mc.vis_move(p_cur); end if;      --   ... and the movement (sql/907)
+  if coalesce(nullif(current_setting('dbcraft.pair_adm', true), '')::int, 0) > 0 and (w.first or w.wp2) then t_p := clock_timestamp(); end if;       -- (sql/903: the cost of this tick's pairings, for the budget)
   if w.first then perform mc.vis_first_tick(p_cur); end if;      -- a new entity's first tick: what became dirty while it was created
   if w.wp2 then perform mc.vis_wp_pass(p_cur, 2, w.n); end if;   -- entity phase: the locator bar follows crouching, the game mode, a new player
+  if t_p is not null then perform mc.vis_pair_note(extract(epoch from clock_timestamp() - t_p) * 1000); end if;
   perform mc.vis_entity_phase(p_cur, w);            --   ... pose, equipment, attributes, latency
+  perform mc.vis_pair_measure(p_cur);               -- (sql/903) what this tick's pairings cost
 end $$;
 
 -- a player row that went online without the triggers: the tracker starts for it now (a tracker row, and the sent_* state of what it has been told counts as the current one)

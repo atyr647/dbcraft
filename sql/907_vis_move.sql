@@ -84,9 +84,11 @@ end $$;
 create or replace function mc.vis_first_tick(p_cur bigint) returns void language plpgsql as $$
 declare e int[]; d bytea[];
 begin
-  if not exists (select 1 from mc.player where trk_first and conn_id is not null) then return; end if;
+  if not exists (select 1 from mc.player p where p.trk_first and p.conn_id is not null and not exists (select 1 from mc.vpair q where q.entity_id = p.entity_id)) then return; end if;
   with f as (
-    select p.* from mc.player p where p.trk_first and p.conn_id is not null and p_cur >= p.trk_start order by p.entity_id),
+    select p.* from mc.player p where p.trk_first and p.conn_id is not null and p_cur >= p.trk_start
+       and not exists (select 1 from mc.vpair q where q.entity_id = p.entity_id)        -- (a joiner whose pairing waits in the queue, sql/903, has no viewers yet: its first pass comes with its pairing)
+     order by p.entity_id),
   pk as (
     select f.entity_id as eid,
            case when (mc.ed_nondefault_mask(f) & 120) <> 0
