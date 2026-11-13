@@ -14,6 +14,7 @@ create or replace function mc.lk_z15() returns bit(4096) language sql immutable 
 create or replace function mc.lk_y0()  returns bit(4096) language sql immutable parallel safe as $$ select (repeat('1', 256) || repeat('0', 3840))::bit(4096) $$;      -- y = 0
 create or replace function mc.lk_y15() returns bit(4096) language sql immutable parallel safe as $$ select (repeat('0', 3840) || repeat('1', 256))::bit(4096) $$;      -- y = 15
 create or replace function mc.lk_ones() returns bit(4096) language sql immutable parallel safe as $$ select repeat('1', 4096)::bit(4096) $$;
+create or replace function mc.lk_msb() returns bit(4096) language sql immutable parallel safe as $$ select ('1' || repeat('0', 4095))::bit(4096) $$;   -- only position 0 set
 create or replace function mc.lk_zero() returns bit(4096) language sql immutable parallel safe as $$ select repeat('0', 4096)::bit(4096) $$;
 
 -- Palette classification: per palette entry (in order) its light dampening, emission and whether it uses its occlusion shape.  Names the table does not know count as air.
@@ -95,3 +96,10 @@ begin
         em_lvl := em_lvl || lv; em_mask := em_mask || map_em::bit(4096);
     end loop;
 end $$;
+
+-- The cells of a section whose state uses its occlusion shape, with the six face-shape ids of the state (order DOWN UP NORTH SOUTH WEST EAST): idx = (y << 8) | (z << 4) | x.
+create or replace function mc.light_shaped_cells(p_bits int, p_data bytea, p_palette text[]) returns table (idx int, f smallint[]) language sql stable strict parallel safe as $$
+  select u.i - 1, array[l.f_down, l.f_up, l.f_north, l.f_south, l.f_west, l.f_east]
+    from unnest(mc.unpack_longs(p_data, p_bits, 4096)) with ordinality u(e, i)
+    join (select p.o - 1 as pidx, ls.f_down, ls.f_up, ls.f_north, ls.f_south, ls.f_west, ls.f_east
+            from unnest(p_palette) with ordinality p(n, o) join mc.light_state ls on ls.name = p.n and ls.shaped) l on l.pidx = u.e $$;

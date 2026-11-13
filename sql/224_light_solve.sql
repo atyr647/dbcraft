@@ -22,7 +22,12 @@ begin
             em_lvl int[], em_mask bit(4096)[],                   -- block: emitting cells per level
             sh   bit(4096) storage plain,                        -- cells whose state uses its occlusion shape (NULL: none)
             stored boolean not null default false,               -- a stored section row exists
-            n0 int, n1 int, n2 int, n3 int, n4 int, n5 int) on commit delete rows;
+            n0 int, n1 int, n2 int, n3 int, n4 int, n5 int,
+            -- occlusion shapes (NULL: nothing blocked): ia<side> the cells that may receive light from the neighbour on that side inside the section (side 0 down, 1 up,
+            -- 2 north, 3 south, 4 west, 5 east), rc<j> the cells of neighbour n<j> that may receive from this section
+            ia0 bit(4096) storage plain, ia1 bit(4096) storage plain, ia2 bit(4096) storage plain, ia3 bit(4096) storage plain, ia4 bit(4096) storage plain, ia5 bit(4096) storage plain,
+            rc0 bit(4096) storage plain, rc1 bit(4096) storage plain, rc2 bit(4096) storage plain, rc3 bit(4096) storage plain, rc4 bit(4096) storage plain, rc5 bit(4096) storage plain)
+            on commit delete rows;
         create unique index lw_sec_pos on lw_sec (cx, sy, cz);
         create temp table lw_em (i int not null, lvl int not null, m bit(4096) storage plain not null) on commit delete rows;
         create index lw_em_lvl on lw_em (lvl);
@@ -37,8 +42,14 @@ begin
         create temp table lw_ne (cx int, cz int, sy int) on commit delete rows;
         create temp table lw_out (cx int, cz int, idx int, sky_kind text, sky bytea, block_kind text, block bytea) on commit delete rows;
         create temp table lw_chg (cx int not null, cz int not null) on commit delete rows;                  -- chunks whose light rows changed in the last mc.light_region
+        create temp table lw_pal (cx int not null, sy int not null, cz int not null, has_em boolean not null, has_sh boolean not null) on commit delete rows;
+        create temp table lw_shc (ax int not null, ay int not null, az int not null, f smallint[] not null) on commit delete rows;      -- cells with an occlusion shape (absolute position)
+        create index lw_shc_pos on lw_shc (ax, ay, az);
+        create temp table lw_occ (cx int not null, sy int not null, cz int not null, side smallint not null, m bit(4096) storage plain not null) on commit delete rows;
+        create index lw_occ_pos on lw_occ (cx, sy, cz);
     else
         delete from lw_sec; delete from lw_em; delete from lw_run; delete from lw_fr; delete from lw_chunk; delete from lw_lim; delete from lw_ne; delete from lw_out; delete from lw_chg;
+        delete from lw_pal; delete from lw_shc; delete from lw_occ;
     end if;
 end $$;
 
@@ -65,16 +76,17 @@ begin
     delete from lw_fr;
     if top = 0 then return; end if;
     for lv in reverse top .. 1 loop
-        with p as (select i, f from lw_fr),
+        with p as (select p0.i, p0.f, s.n0, s.n1, s.n2, s.n3, s.n4, s.n5, s.ia0, s.ia1, s.ia2, s.ia3, s.ia4, s.ia5, s.rc0, s.rc1, s.rc2, s.rc3, s.rc4, s.rc5
+                     from lw_fr p0 join lw_sec s on s.i = p0.i),
         c as (
-            select i as t, (((f << 1) & ~mc.lk_x0()) | ((f >> 1) & ~mc.lk_x15()) | ((f << 16) & ~mc.lk_z15()) | ((f >> 16) & ~mc.lk_z0())
-                          | ((f << 256) & ~mc.lk_y15()) | ((f >> 256) & ~mc.lk_y0())) as m from p
-            union all select s.n0, (p.f << 15)   & mc.lk_x15() from p join lw_sec s on s.i = p.i where s.n0 is not null
-            union all select s.n1, (p.f >> 15)   & mc.lk_x0()  from p join lw_sec s on s.i = p.i where s.n1 is not null
-            union all select s.n2, (p.f >> 240)  & mc.lk_z15() from p join lw_sec s on s.i = p.i where s.n2 is not null
-            union all select s.n3, (p.f << 240)  & mc.lk_z0()  from p join lw_sec s on s.i = p.i where s.n3 is not null
-            union all select s.n4, (p.f >> 3840) & mc.lk_y15() from p join lw_sec s on s.i = p.i where s.n4 is not null
-            union all select s.n5, (p.f << 3840) & mc.lk_y0()  from p join lw_sec s on s.i = p.i where s.n5 is not null),
+            select i as t, (((f << 1) & coalesce(ia4, ~mc.lk_x0())) | ((f >> 1) & coalesce(ia5, ~mc.lk_x15())) | ((f << 16) & coalesce(ia3, ~mc.lk_z15()))
+                          | ((f >> 16) & coalesce(ia2, ~mc.lk_z0())) | ((f << 256) & coalesce(ia1, ~mc.lk_y15())) | ((f >> 256) & coalesce(ia0, ~mc.lk_y0()))) as m from p
+            union all select n0, (f << 15)   & coalesce(rc0, mc.lk_x15()) from p where n0 is not null
+            union all select n1, (f >> 15)   & coalesce(rc1, mc.lk_x0())  from p where n1 is not null
+            union all select n2, (f >> 240)  & coalesce(rc2, mc.lk_z15()) from p where n2 is not null
+            union all select n3, (f << 240)  & coalesce(rc3, mc.lk_z0())  from p where n3 is not null
+            union all select n4, (f >> 3840) & coalesce(rc4, mc.lk_y15()) from p where n4 is not null
+            union all select n5, (f << 3840) & coalesce(rc5, mc.lk_y0())  from p where n5 is not null),
         g as (select t as i, bit_or(m) as m from c group by t),
         cand as (select g.i, g.m & s.pass as m from g join lw_sec s on s.i = g.i
                  union all select e.i, e.m from lw_em e where e.lvl = lv),

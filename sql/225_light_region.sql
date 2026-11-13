@@ -40,6 +40,36 @@ begin
       join mc.chunk ch on ch.dimension = p_dim and ch.cx = c.cx and ch.cz = c.cz;
     if not exists (select 1 from lw_chunk where tgt) then return 0; end if;
 
+    -- which sections hold emitters (block light) or states that use their occlusion shape (face occlusion between neighbouring cells)
+    insert into lw_pal
+    select c.cx, s.sy, c.cz, coalesce(bool_or(l.emission > 0), false) or cardinality(s.palette) = 0, coalesce(bool_or(l.shaped), false) or cardinality(s.palette) = 0
+      from lw_chunk c
+      join lateral (select cs.sy, cs.palette from mc.chunk_section cs where cs.dimension = p_dim and cs.cx = c.cx and cs.cz = c.cz and cs.block_count > 0 offset 0) s on true
+      left join lateral unnest(s.palette) u(nm) on true
+      left join mc.light_state l on l.name = u.nm
+     group by c.cx, c.cz, s.sy, s.palette;
+    if exists (select 1 from lw_pal where has_sh) then
+        insert into lw_shc
+        select cs.cx * 16 + (m.idx & 15), cs.sy * 16 + (m.idx >> 8), cs.cz * 16 + ((m.idx >> 4) & 15), m.f
+          from lw_pal p
+          join lateral (select c0.cx, c0.cz, c0.sy, c0.bits, c0.data, c0.palette from mc.chunk_section c0
+                         where c0.dimension = p_dim and c0.cx = p.cx and c0.cz = p.cz and c0.sy = p.sy offset 0) cs on true,
+          lateral mc.light_shaped_cells(cs.bits, cs.data, cs.palette) m
+         where p.has_sh;
+        -- the edges between two cells (one of them shaped) whose face shapes together cover the whole square (Shapes.faceShapeOccludes); direction numbers as Direction.ordinal()
+        with dirs(d, dx, dy, dz, opp) as (values (0, 0, -1, 0, 1), (1, 0, 1, 0, 0), (2, 0, 0, -1, 3), (3, 0, 0, 1, 2), (4, -1, 0, 0, 5), (5, 1, 0, 0, 4)),
+        e as (
+            select c.ax, c.ay, c.az, d.d, d.opp, c.ax + d.dx as nx, c.ay + d.dy as ny, c.az + d.dz as nz
+              from lw_shc c cross join dirs d
+             where exists (select 1 from mc.light_face_occ o
+                            where o.a = c.f[d.d + 1]
+                              and o.b = coalesce((select n.f[d.opp + 1] from lw_shc n where n.ax = c.ax + d.dx and n.ay = c.ay + d.dy and n.az = c.az + d.dz), 0))),
+        q as (select nx as x, ny as y, nz as z, opp as side from e union select ax, ay, az, d from e)     -- the cell of an edge receives from the side where the other lies
+        insert into lw_occ
+        select x >> 4, y >> 4, z >> 4, side, bit_or(mc.lk_msb() >> ((((y & 15) << 8) | ((z & 15) << 4) | (15 - (x & 15)))))
+          from q group by x >> 4, y >> 4, z >> 4, side;
+    end if;
+
     if dbg then raise notice 'light_region: chunks done after % ms', round(extract(epoch from clock_timestamp() - t0) * 1000); end if;
     ---------------------------------------------------------------------------------------------------- sky: columns from the top down
     select least(coalesce(max(top), v_min_sy - 1) + 1, v_max_sy + 1) into h from lw_chunk;
@@ -47,8 +77,9 @@ begin
     for ly in reverse h .. v_min_sy - 1 loop
         with act as (select c.cx, c.cz, c.carry from lw_chunk c where not c.done),
         m as (
-            select a.cx, a.cz, a.carry, s.ssy, s.op, s.cl, s.em_lvl, s.em_mask, s.sh
+            select a.cx, a.cz, a.carry, s.ssy, s.op, s.cl, s.em_lvl, s.em_mask, s.sh, qo.m as qx
               from act a
+              left join lw_occ qo on qo.cx = a.cx and qo.sy = ly and qo.cz = a.cz and qo.side = 1
               left join lateral (select cs.sy as ssy, mm.op, mm.cl, mm.em_lvl, mm.em_mask, mm.sh
                                    from mc.chunk_section cs, lateral mc.light_secmasks(cs.bits, cs.data, cs.palette) mm
                                   where cs.dimension = p_dim and cs.cx = a.cx and cs.cz = a.cz and cs.sy = ly and cs.block_count > 0 limit 1) s on true),
@@ -56,7 +87,7 @@ begin
             select m.cx, m.cz, m.ssy, coalesce(m.op, mc.lk_zero()) as op, m.em_lvl, m.em_mask, m.sh,
                    (a4 | repeat(m.carry::text, 16)::bit(4096)) as a
               from m,
-                   lateral (select ~coalesce(m.cl, mc.lk_ones()) as q) q,
+                   lateral (select ~coalesce(m.cl, mc.lk_ones()) | coalesce(m.qx, mc.lk_zero()) as q) q,
                    lateral (select q.q | (q.q << 256) as a1) l1,
                    lateral (select a1 | (a1 << 512) as a2) l2,
                    lateral (select a2 | (a2 << 1024) as a3) l3,
@@ -93,11 +124,7 @@ begin
 
     if dbg then raise notice 'light_region: sky phase 2 done after % ms', round(extract(epoch from clock_timestamp() - t0) * 1000); end if;
     ---------------------------------------------------------------------------------------------------- block: emitters and what surrounds them
-    with em as (
-        select s.cx, s.sy, s.cz
-          from lw_chunk c
-          join lateral (select cs.cx, cs.cz, cs.sy, cs.palette from mc.chunk_section cs where cs.dimension = p_dim and cs.cx = c.cx and cs.cz = c.cz and cs.block_count > 0 offset 0) s on true
-         where cardinality(s.palette) = 0 or exists (select 1 from unnest(s.palette) u(nm) join mc.light_state l on l.name = u.nm and l.emission > 0)),
+    with em as (select p.cx, p.sy, p.cz from lw_pal p where p.has_em),
     nb as (
         select distinct e.cx + dx as cx, e.sy + dy as sy, e.cz + dz as cz from em e, generate_series(-1, 1) dx, generate_series(-1, 1) dy, generate_series(-1, 1) dz),
     new as (
@@ -114,6 +141,23 @@ begin
     select base + row_number() over (order by m.cx, m.sy, m.cz), m.cx, m.sy, m.cz, ~coalesce(m.op, mc.lk_zero()), null, m.em_lvl, m.em_mask, m.sh, m.ssy is not null from m;
 
     perform mc.light_link();
+    if exists (select 1 from lw_occ) then
+        -- occlusion masks per section; the allow masks of the waves (sql/224)
+        create temp table if not exists lw_o (i int primary key, o0 bit(4096), o1 bit(4096), o2 bit(4096), o3 bit(4096), o4 bit(4096), o5 bit(4096)) on commit delete rows;
+        delete from lw_o;
+        insert into lw_o
+        select s.i, bit_or(q.m) filter (where q.side = 0), bit_or(q.m) filter (where q.side = 1), bit_or(q.m) filter (where q.side = 2), bit_or(q.m) filter (where q.side = 3),
+               bit_or(q.m) filter (where q.side = 4), bit_or(q.m) filter (where q.side = 5)
+          from lw_occ q join lw_sec s on s.cx = q.cx and s.sy = q.sy and s.cz = q.cz group by s.i;
+        update lw_sec s set ia0 = ~mc.lk_y0() & ~o.o0, ia1 = ~mc.lk_y15() & ~o.o1, ia2 = ~mc.lk_z0() & ~o.o2, ia3 = ~mc.lk_z15() & ~o.o3, ia4 = ~mc.lk_x0() & ~o.o4, ia5 = ~mc.lk_x15() & ~o.o5
+          from lw_o o where o.i = s.i;
+        update lw_sec s set rc0 = mc.lk_x15() & ~o.o5 from lw_o o where s.n0 = o.i and o.o5 is not null;
+        update lw_sec s set rc1 = mc.lk_x0()  & ~o.o4 from lw_o o where s.n1 = o.i and o.o4 is not null;
+        update lw_sec s set rc2 = mc.lk_z15() & ~o.o3 from lw_o o where s.n2 = o.i and o.o3 is not null;
+        update lw_sec s set rc3 = mc.lk_z0()  & ~o.o2 from lw_o o where s.n3 = o.i and o.o2 is not null;
+        update lw_sec s set rc4 = mc.lk_y15() & ~o.o1 from lw_o o where s.n4 = o.i and o.o1 is not null;
+        update lw_sec s set rc5 = mc.lk_y0()  & ~o.o0 from lw_o o where s.n5 = o.i and o.o0 is not null;
+    end if;
 
     ---------------------------------------------------------------------------------------------------- waves
     if dbg then raise notice 'light_region: link done after % ms', round(extract(epoch from clock_timestamp() - t0) * 1000); end if;
