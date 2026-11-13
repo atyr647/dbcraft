@@ -18,6 +18,31 @@ create or replace function mc.java_hash_order(p_keys text[]) returns text[] lang
     from (select k, o, mc.java_string_hash(k) as h, case when cardinality(p_keys) <= 12 then 16 when cardinality(p_keys) <= 24 then 32 when cardinality(p_keys) <= 48 then 64 else 128 end as cap
             from unnest(p_keys) with ordinality t(k, o)) q $$;
 
+-- a quoted SNBT string: the escapes \\ \' \" \b \f \n \r \s \t \xHH \uHHHH \UHHHHHHHH (an unknown escape: parsing.quote.escape)
+create or replace function mc.snbt_string(s text, cur int) returns mc.cmd_ap language plpgsql immutable as $$
+declare q text := substr(s, cur + 1, 1); p int := cur + 1; ch text; out text := ''; n int := length(s); hex text; len int;
+begin
+  while p < n loop
+    ch := substr(s, p + 1, 1); p := p + 1;
+    if ch = '\' then
+      if p >= n then return mc.ap_err('parsing.quote.expected.end', null, p); end if;
+      ch := substr(s, p + 1, 1); p := p + 1;
+      case ch
+        when '\' then out := out || '\'; when '''' then out := out || ''''; when '"' then out := out || '"';
+        when 'b' then out := out || chr(8); when 'f' then out := out || chr(12); when 'n' then out := out || E'\n'; when 'r' then out := out || E'\r';
+        when 's' then out := out || ' '; when 't' then out := out || E'\t';
+        when 'x', 'u', 'U' then
+          len := case ch when 'x' then 2 when 'u' then 4 else 8 end; hex := substr(s, p + 1, len);
+          if length(hex) <> len or hex !~ '^[0-9a-fA-F]+$' then return mc.ap_err('parsing.quote.escape', jsonb_build_array(ch), p - 1); end if;
+          out := out || chr(('x' || lpad(hex, 8, '0'))::bit(32)::int); p := p + len;
+        else return mc.ap_err('parsing.quote.escape', jsonb_build_array(ch), p - 1);
+      end case;
+    elsif ch = q then return mc.ap_ok(p, to_jsonb(out));
+    else out := out || ch; end if;
+  end loop;
+  return mc.ap_err('parsing.quote.expected.end', null, p);
+end $$;
+
 ------------------------------------------------------------------------------------------------ SNBT -> typed JSON
 -- val: a string is a JSON string; a number {"$": "b|s|i|l|f|d", "v": n}; a list a JSON array; a compound a JSON object.  Booleans are bytes {"$": "b", "v": 1}.
 create or replace function mc.snbt_value(s text, cur int) returns mc.cmd_ap language plpgsql immutable as $$
@@ -26,14 +51,14 @@ begin
   if p >= n then return mc.ap_err('argument.literal.incorrect', jsonb_build_array('"'), p); end if;
   c := substr(s, p + 1, 1);
   if c in ('"', '''') then
-    r := mc.rd_string(s, p); if r.ex_key is not null then return r; end if;
+    r := mc.snbt_string(s, p); if r.ex_key is not null then return r; end if;
     return mc.ap_ok(r.pos, r.val);
   elsif c = '{' then
     items := '{}'; p := mc.rd_skip_ws(s, p + 1);
     while true loop
       if p >= n then return mc.ap_err('argument.literal.incorrect', jsonb_build_array('"'), p); end if;
       if substr(s, p + 1, 1) = '}' then return mc.ap_ok(p + 1, items); end if;
-      if substr(s, p + 1, 1) in ('"', '''') then r := mc.rd_string(s, p); if r.ex_key is not null then return r; end if; key := r.val #>> '{}'; p := r.pos;
+      if substr(s, p + 1, 1) in ('"', '''') then r := mc.snbt_string(s, p); if r.ex_key is not null then return r; end if; key := r.val #>> '{}'; p := r.pos;
       else e := mc.rd_unquoted_end(s, p); if e = p then return mc.ap_err('argument.literal.incorrect', jsonb_build_array('"'), p); end if; key := substr(s, p + 1, e - p); p := e; end if;
       p := mc.rd_skip_ws(s, p);
       if substr(s, p + 1, 1) <> ':' then return mc.ap_err('argument.literal.incorrect', jsonb_build_array(':'), p); end if;
@@ -112,8 +137,8 @@ begin
   if same then
     return set_byte('\x00'::bytea, 0, itypes[1]) || proto.i32(n) || (select string_agg(x, '\x'::bytea order by o) from unnest(ipay) with ordinality t(x, o));
   end if;
-  return '\x0a'::bytea || proto.i32(n) || (select string_agg(case when itypes[o] = 10 then ipay[o] else set_byte('\x00'::bytea, 0, itypes[o]) || proto.nbt_text('') || ipay[o] || '\x00'::bytea end, '\x00'::bytea order by o)
-                                           from generate_series(1, n) o) ;
+  return '\x0a'::bytea || proto.i32(n) || (select string_agg(case when itypes[o] = 10 then ipay[o] else set_byte('\x00'::bytea, 0, itypes[o]) || proto.nbt_text('') || ipay[o] || '\x00'::bytea end, '\x'::bytea order by o)
+                                           from generate_series(1, n) o);
 end $$;
 
 -- one NBT field: type, name, payload

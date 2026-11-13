@@ -123,12 +123,12 @@ begin
         if exists (select 1 from mc.mining) then perform mc.mining_tick(cur_tick); end if;       -- (sql/891) a dig in progress ticks without a packet
         return next; return;
     end if;
-    for r in select m.seq as mseq, m.packet_id, m.conn_id, m.body, p.uuid, p.gamemode, p.x, p.y, p.z, p.held_slot, p.inv_state, p.yaw, p.pitch, p.sneaking
+    for r in select m.seq as mseq, m.packet_id, m.conn_id, m.body, p.uuid, p.gamemode, p.x, p.y, p.z, p.held_slot, p.inv_state, p.yaw, p.pitch, p.sneaking, p.dead
              from mc.play_in_work m join mc.player p on p.conn_id = m.conn_id
              where m.packet_id in (i_act, i_use) order by m.seq loop
         begin
             if r.packet_id = i_act then
-                continue when length(r.body) < 11;
+                continue when length(r.body) < 11 or r.dead;                                -- (recorded: a dead player's dig packets are not answered at all, not even acknowledged)
                 select val, nxt into act, o from proto.varint_read(r.body, 0);
                 select * into pos from proto.position_read(r.body, o);
                 sq := (select val from proto.varint_read(r.body, o + 9));

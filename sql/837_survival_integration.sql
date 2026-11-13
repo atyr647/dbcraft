@@ -43,8 +43,8 @@ declare cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 time
         mv record; ch record; vis record; ka record; n_in int; n_players int; n_out int; snap mc.surv_snap; n_misc boolean; n_chat boolean; s0 timestamptz; s1 timestamptz; s2 timestamptz; ms_surv float8;
 begin
   update mc.game_state set game_time = game_time + 1,
-         day_time = day_time + case when clock_paused then 0 else floor(clock_acc + clock_rate)::bigint end,                                       -- (the clock: `time pause` / `time rate`, sql/813)
-         clock_acc = case when clock_paused then clock_acc else (clock_acc + clock_rate) - floor(clock_acc + clock_rate) end returning game_time into cur;
+         day_time = day_time + case when clock_paused or not clock_advance then 0 else floor(clock_acc + clock_rate)::bigint end,                                       -- (the clock: `time pause` / `time rate`, sql/813)
+         clock_acc = case when clock_paused or not clock_advance then clock_acc else (clock_acc + clock_rate) - floor(clock_acc + clock_rate) end returning game_time into cur;
   perform mc.weather_tick(cur);                                    -- (weather, sql/894) the rain and thunder clock, level changes
   select count(*)::int into n_in from mc.play_in_work;
   select count(*)::int into n_players from mc.player where conn_id is not null;

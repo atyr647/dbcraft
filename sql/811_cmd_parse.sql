@@ -313,7 +313,7 @@ begin
       if blk is not null and not allowed ? pname then return mc.ap_err('argument.block.property.unknown', jsonb_build_array(blk, pname), pstart); end if;
       if props ? pname then return mc.ap_err('argument.block.property.duplicate', jsonb_build_array(pname, coalesce(blk, '#' || tg)), pstart); end if;
       p := mc.rd_skip_ws(s, p);
-      if p >= n or substr(s, p + 1, 1) <> '=' then return mc.ap_err('argument.block.property.novalue', jsonb_build_array(pname, coalesce(blk, '#' || tg)), pstart); end if;
+      if p >= n or substr(s, p + 1, 1) <> '=' then return mc.ap_err('argument.block.property.novalue', jsonb_build_array(pname, coalesce(blk, '#' || tg)), p); end if;
       p := mc.rd_skip_ws(s, p + 1); vstart := p;
       r := mc.rd_string(s, p); if r.ex_key is not null then return r; end if;
       pval := r.val #>> '{}'; p := r.pos;
@@ -480,7 +480,7 @@ begin
     e := mc.rd_unquoted_end(s, r.pos); unit := substr(s, r.pos + 1, e - r.pos);
     if unit not in ('', 'd', 's', 't') then return mc.ap_err('argument.time.invalid_unit', null, e); end if;
     ticks := round((r.val #>> '{}')::float8 * case unit when 'd' then 24000 when 's' then 20 else 1 end);
-    if ticks < mn then return mc.ap_err('argument.time.tick_count_too_low', jsonb_build_array(mn, ticks), cur); end if;
+    if ticks < mn then return mc.ap_err('argument.time.tick_count_too_low', jsonb_build_array(mn, ticks), e); end if;       -- (recorded: the cursor is after the number and unit)
     return mc.ap_ok(e, to_jsonb(ticks));
   when 'minecraft:resource' then
     e := mc.rd_end(s, cur, '[0-9a-z_.:/-]'); v := substr(s, cur + 1, e - cur);

@@ -16,8 +16,8 @@ import mcclient as m
 GROUPS = {
   "setblock": [("Surv", c) for c in (
     "setblock 0 -60 5 stone", "setblock 0 -60 5 stone", "setblock 0 -60 5 minecraft:oak_log[axis=x]", "setblock 0 -60 5 oak_log[axis=x] keep", "setblock 0 -60 6 oak_log keep",
-    "setblock 0 -60 5 air destroy", "setblock 0 -60 5 air destroy", "setblock 0 -60 5 stone replace", "setblock ~ ~ ~ glass", "setblock ~1 ~2 ~-3 oak_planks", "setblock ^ ^ ^3 dirt",
-    "setblock ^1 ^ ^3 dirt", "setblock 0 -60 7 oak_stairs[facing=north,half=top]", "setblock 0 -60 8 oak_door[half=lower]", "setblock 0 -60 9 chest",
+    "setblock 0 -60 5 air destroy", "setblock 0 -60 5 air destroy", "setblock 0 -60 5 stone replace", "setblock ~ ~ ~ glass", "setblock ~1 ~2 ~-3 oak_planks", "setblock ^ ^ ^3 stone",
+    "setblock ^1 ^ ^3 stone", "setblock 0 -60 7 oak_stairs[facing=north,half=top]", "setblock 0 -60 8 oak_door[half=lower]", "setblock 0 -60 9 chest",
     "setblock 0 -60 5 stone destroy", "setblock 0 -60 5 oak_planks destroy", "setblock 0 -60 5 stone strict", "setblock 0 -60 5 air",
     "setblock 0 -60 10 stone[foo=bar]", "setblock 0 -60 10 oak_log[axis=q]", "setblock 0 -60 10 oak_log[axis]", "setblock 0 -60 10 oak_log[axis=x", "setblock 0 -60 10 oak_log[axis=x,axis=y]",
     "setblock 0 -60 10 nonsense", "setblock 0 -60 10 Stone", "setblock 0 -60 10 #minecraft:logs", "setblock 0 -60 10 ", "setblock 0 -60", "setblock 0 -60 x stone",
@@ -32,7 +32,7 @@ GROUPS = {
     "fill 0 -60 12 3 -58 14 stone replace minecraft:nonsense", "fill 0 -60 12 3 -58 14 stone replace #minecraft:nonsense", "fill 0 -60 12 3 -58 14 stone replace oak_log[axis=q]",
     "fill 100000 0 0 100001 0 0 stone", "fill 0 -60 12 3 -58 stone", "fill 0 -60 12 3 -58 14 stone strict", "fill 3 -58 14 0 -60 12 glass replace stone", "fill 0 -60 12 0 -60 12 stone",
     "fill 0 -60 12 3 -58 14 oak_log[axis=x] replace stone", "fill 0 -60 12 3 -58 14 stone hollow", "fill 0 -60 12 3 -58 14 air hollow", "fill 0 -60 12 1 -60 12 stone replace air",
-    "fill ^ ^ ^2 ^1 ^1 ^3 dirt", "fill 0 -60 12 3 -58 14 stone replace #minecraft:logs[axis=x]", "fill 0 -61 12 3 -61 14 dirt replace grass_block", "fill 0 -61 12 3 -61 14 grass_block")],
+    "fill ^ ^ ^2 ^1 ^1 ^3 stone", "fill 0 -60 12 3 -58 14 stone replace #minecraft:logs[axis=x]", "fill 0 -60 12 3 -60 14 oak_fence", "fill 0 -60 13 1 -60 13 air destroy")],
   "spawn": [("Surv", c) for c in (
     "tp Surv 0.5 -60 0.5 45 10", "spawnpoint", "spawnpoint Surv", "spawnpoint Surv 5 -60 5", "setworldspawn", "setworldspawn 3 -60 3", "tp Surv 0.5 -60 0.5 0 0",
     "spawnpoint", "spawnpoint Surv", "spawnpoint Surv 5 -60 5", "spawnpoint @a 6 -60 6", "spawnpoint Surv ~ ~ ~", "spawnpoint Surv 5 -60 5 90", "spawnpoint Surv 5 -60 5 90 45",
@@ -85,6 +85,7 @@ def record(port, out, groups, dbcraft, host="127.0.0.1"):
             psql("select mc.fill('minecraft:overworld', -8, -60, -8, 40, -50, 40, 'minecraft:air'), mc.fill('minecraft:overworld', -8, -61, -8, 40, -61, 40, 'minecraft:grass_block[snowy=false]')")
         else:
             cmd("fill -8 -60 -8 40 -50 40 minecraft:air"); cmd("fill -8 -61 -8 40 -61 40 minecraft:grass_block")
+        if g == "time": cmd("gamerule advance_time false"); cmd("time resume"); cmd("time rate 1"); cmd("time set 1000")           # (a clock that does not move: the values are comparable)
         cmd("tp Surv 0.5 -60 0.5 0 0"); cmd("tp Obs 20.5 -60 20.5 0 0"); cmd("clear Surv"); cmd("weather clear"); cmd("setworldspawn 0 -60 0 0 0"); quiet(0.6, 4.0)
         for x in c.values():
             for _ in range(4): x.send("minecraft:client_tick_end"); time.sleep(0.05)
@@ -105,6 +106,7 @@ def record(port, out, groups, dbcraft, host="127.0.0.1"):
                     if e["name"] == "minecraft:set_time" and g != "time": continue
                     b = e["body"]
                     if e["name"] == "minecraft:block_update" and m.unposition(b)[1] <= -61: continue           # (random ticks of the grass layer: not under test)
+                    if e["name"] == "minecraft:level_event" and (m.unposition(b, 4)[1] <= -61 or abs(m.unposition(b, 4)[0]) > 40 or abs(m.unposition(b, 4)[2]) > 40): continue
                     if e["name"] == "minecraft:add_entity": b = b[m.parse_varint(b, 0)[1] + 16:]; b = m.parse_varint(b, 0)[0].to_bytes(2, "big")
                     step["got"].setdefault(n, []).append([e["name"].replace("minecraft:", ""), b.hex()])
             res.append(step)
@@ -114,10 +116,13 @@ def record(port, out, groups, dbcraft, host="127.0.0.1"):
     for x in c.values(): x.close()
 
 def drop_periodic(steps):
-    """the periodic set_time (every 20 ticks, no clock in it) lands in a window by chance: only the packets that carry a clock are compared"""
+    """the periodic set_time (every 20 ticks, no clock in it) lands in a window by chance: only the packets that carry a clock are compared, without the game time (it differs per server);
+    `time query gametime` says the game time: its number is masked"""
     for st in steps:
         for who in st["got"]:
-            st["got"][who] = [e for e in st["got"][who] if not (e[0] == "set_time" and e[1][16:18] == "00")]
+            st["got"][who] = [e for e in st["got"][who] if not (e[0] == "level_event" and (m.unposition(bytes.fromhex(e[1]), 4)[1] <= -61 or abs(m.unposition(bytes.fromhex(e[1]), 4)[0]) > 40 or abs(m.unposition(bytes.fromhex(e[1]), 4)[2]) > 40))]
+            st["got"][who] = [[e[0], "game-time" + e[1][16:]] if e[0] == "set_time" else e for e in st["got"][who] if not (e[0] == "set_time" and e[1][16:18] == "00")]
+            if st["cmd"] == "time query gametime": st["got"][who] = [[e[0], e[1][:46]] if e[0] == "system_chat" else e for e in st["got"][who]]
         st["got"] = {k: v for k, v in st["got"].items() if v}
     return steps
 

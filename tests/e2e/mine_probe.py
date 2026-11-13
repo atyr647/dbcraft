@@ -237,10 +237,11 @@ elif a.scenario == "misc":
     both("out of reach: abort while digging"); k0 = s.count(); start(X, Y, Z); wait_events(2, k0); abort(X + 7, Y, Z); quiet(0.6, 3.0); abort(X, Y, Z); quiet(0.4, 2.0)
     # --- adventure and spectator
     for gm in ("adventure", "spectator"):
-        cmd(s, "gamemode %s %s" % (gm, a.name)); quiet(0.6, 3.0)
+        cmd(s, "gamemode %s %s" % (gm, a.name)); quiet(0.6, 3.0); prepare("minecraft:stone", None)
         both("%s: start" % gm); start(); tickc(3); stop(); quiet(0.6, 3.0)
     # --- creative: the block goes at once; with a sword nothing happens (block_update restores it)
     cmd(s, "gamemode creative %s" % a.name); quiet(0.6, 3.0)
+    prepare("minecraft:stone", None)
     both("creative: start"); start(); quiet(0.6, 3.0)
     prepare("minecraft:stone", "minecraft:iron_sword")
     both("creative sword: start"); start(); quiet(0.6, 3.0)

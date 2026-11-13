@@ -132,6 +132,7 @@ begin
   v := args ->> 'value';
   if v = cur then perform mc.cmd_fail(me, mc.tc_translate_strs('commands.gamerule.not_set', array[rule, v])); return; end if;
   insert into mc.game_rule (name, value) values ('minecraft:' || rule, v) on conflict (name) do update set value = excluded.value;
+  if rule = 'advance_time' then update mc.game_state set clock_advance = (v = 'true'); end if;                  -- (the clock reads the column, not the rule table, every tick)
   if rule = 'reduced_debug_info' then
     insert into mc.play_out (conn_id, data) select conn_id, mc.pkt_entity_event(entity_id, case when v = 'true' then 22 else 23 end) from mc.player where conn_id is not null order by entity_id;
   end if;

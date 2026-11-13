@@ -88,7 +88,8 @@ end $$;
 -- advances it (sql/837).  The command forms (recorded from the real 26.3 server): `time <set|add|query|pause|resume|rate> ...` and the same with `of <clock>`; only the clock
 -- minecraft:overworld exists here.  A timeline (minecraft:day: period 24,000, moon: 192,000, villager_schedule: 24,000; early_game has none) reads the clock modulo its period; the
 -- number of periods passed is `repetition`.  The set_time packet a command sends carries the clock with partial tick 0 and rate 0 (as recorded; the periodic one carries no clock).
-alter table mc.game_state add column if not exists clock_paused boolean not null default false, add column if not exists clock_rate real not null default 1, add column if not exists clock_acc float8 not null default 0;
+alter table mc.game_state add column if not exists clock_paused boolean not null default false, add column if not exists clock_rate real not null default 1, add column if not exists clock_acc float8 not null default 0,
+  add column if not exists clock_advance boolean not null default true;       -- clock_advance: the game rule advance_time (kept by /gamerule, sql/814)
 
 -- the set_time packet of a command: the game time and the overworld clock (partial tick 0, rate 0: as the real server sent it after /time)
 create or replace function mc.cmd_sync_time() returns void language sql as $$

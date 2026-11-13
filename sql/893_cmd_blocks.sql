@@ -8,7 +8,7 @@
 --     when entity-mode is inline, the cell becomes air or its fluid); the command FAILS (commands.setblock.failed) when the cell already has that state.  Destroying air with air is a
 --     "success" that changes nothing.  Neighbours are notified unless `strict`.
 --   * /fill  the box may hold at most max_block_modifications (32768) positions (commands.fill.toobig, with the limit and the size); destroy breaks every block of the box (effect 2001,
---     loot) and then places the block everywhere; the count in the message is the number of positions whose state changed; none changed: commands.fill.failed.
+--     loot) and then places the block everywhere; the count in the message is the number of positions whose state changed (in destroy mode: every position processed); none: commands.fill.failed.
 -- Not modelled: block entity data (`block{...}` is said not to be supported), the neighbour updates of /fill (the dynamics engine reacts to the changes it sees), `strict`'s lack of
 -- shape updates (strict is accepted and acts like the default), the loaded-chunk test is "dbcraft has the chunk".
 
@@ -47,6 +47,15 @@ create or replace function mc.cmd_block_input(v jsonb) returns text language sql
 create or replace function mc.cmd_pred_text(v jsonb) returns text language sql immutable as $$
   select coalesce(v ->> 'block', '#' || (v ->> 'tag')) || case when v -> 'props' = '{}'::jsonb then '' else '[' || (select string_agg(key || '=' || (value #>> '{}'), ',' order by key) from jsonb_each(v -> 'props')) || ']' end $$;
 
+-- BlockInput.place -> Block.updateFromNeighbourShapes: the state about to be placed is run through updateShape for the six neighbours (west, east, north, south, down, up), so a
+-- fence placed next to a fence is connected and stairs get their shape; air coming out of it means the state as given
+create or replace function mc.update_from_neighbours(p_dim text, p_state text, x int, y int, z int) returns text language plpgsql stable as $$
+declare d text; st text := p_state;
+begin
+  foreach d in array array['west', 'east', 'north', 'south', 'down', 'up'] loop st := mc.update_shape(p_dim, st, x, y, z, d); end loop;
+  return case when mc.is_air(st) then p_state else st end;
+end $$;
+
 -- Level.destroyBlock(pos, true): the break effect to everybody within 64 blocks (not for fire), the block's loot (no tool), the cell becomes air (water for a waterlogged block).
 -- The broadcast of the tick must not send the effect again: an actor row for every connection suppresses it (sql/432).
 create or replace function mc.destroy_block(bx int, yy int, bz int) returns boolean language plpgsql as $$
@@ -57,7 +66,9 @@ begin
   perform mc.block_drops(null, bx, yy, bz, st, null, false);                 -- (recorded: /setblock destroy and /fill destroy drop whatever block_drops says)
   ns := case when st like '%waterlogged=true%' then 'minecraft:water[level=0]' when st like 'minecraft:water%' or st like 'minecraft:lava%' then st else 'minecraft:air' end;
   insert into mc.block_actor select dim, bx, yy, bz, c.conn_id from net.conn c where c.state = 'play' and not c.closing;
-  return mc.set_block(dim, bx, yy, bz, ns);
+  if not mc.set_block(dim, bx, yy, bz, ns) then return false; end if;
+  perform mc.shape_neighbours(dim, bx, yy, bz);                                -- (removeBlock: setBlock with flags 3: the neighbours' shapes follow)
+  return true;
 end $$;
 
 ------------------------------------------------------------------------------------------------ /setblock
@@ -76,7 +87,7 @@ begin
   if flag then
     -- (vanilla's setBlock without the destroy flag sends no break effect: the actor rows keep the broadcast from sending one)
     if mode <> 'destroy' then insert into mc.block_actor select dim, pos[1], pos[2], pos[3], c.conn_id from net.conn c where c.state = 'play' and not c.closing; end if;
-    ok := mc.set_block(dim, pos[1], pos[2], pos[3], new_state);
+    ok := mc.set_block(dim, pos[1], pos[2], pos[3], mc.update_from_neighbours(dim, new_state, pos[1], pos[2], pos[3]));
     if not ok then perform mc.cmd_fail(me, mc.tc_translate('commands.setblock.failed')); return; end if;
   end if;
   if not is_strict then perform mc.shape_neighbours(dim, pos[1], pos[2], pos[3]); end if;
@@ -91,7 +102,7 @@ begin
   a := mc.cmd_pos_loaded(me, args -> 'from'); if a is null then return; end if;
   b := mc.cmd_pos_loaded(me, args -> 'to'); if b is null then return; end if;
   cnt := (abs(a[1] - b[1]) + 1)::bigint * (abs(a[2] - b[2]) + 1) * (abs(a[3] - b[3]) + 1);
-  if cnt > lim then perform mc.cmd_fail(me, mc.tc_translate_json('commands.fill.toobig', jsonb_build_array(lim, cnt))); return; end if;
+  if cnt > lim then perform mc.cmd_fail(me, mc.tc_translate('commands.fill.toobig', array[mc.tc_arg_int(lim), mc.tc_arg_long(cnt)])); return; end if;
   -- the path: fill/from/to/block[/mode[/filter[/mode2]]]
   mode := coalesce(nullif(parts[5], ''), 'replace');
   if mode = 'strict' then is_strict := true; mode := 'replace'; end if;
@@ -104,7 +115,8 @@ begin
       continue when filt_states is not null and not (cur = any (filt_states));
       perform mc.destroy_block(wx, wy, wz);
       insert into mc.block_actor select dim, wx, wy, wz, c.conn_id from net.conn c where c.state = 'play' and not c.closing;
-      if mc.set_block(dim, wx, wy, wz, new_state) then n := n + 1; end if;
+      perform mc.set_block(dim, wx, wy, wz, mc.update_from_neighbours(dim, new_state, wx, wy, wz));
+      n := n + 1;                                                   -- (recorded: every position of the box counts, even when the block placed after the destruction is air)
     end loop; end loop; end loop;
   else
     n := mc.fill_mode(dim, a[1], a[2], a[3], b[1], b[2], b[3], new_state, mode, filt);
