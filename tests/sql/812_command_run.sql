@@ -61,8 +61,8 @@ select t.eq('the context shows at most ten characters before the cursor, with an
             encode(proto.cat(array[proto.nbt_comp('click_event', proto.nbt_str('action', 'suggest_command'), proto.nbt_str('command', '/give Bea stone 0')), proto.nbt_str('color', 'gray'),
               proto.nbt_list_comp('extra', array[proto.nbt_str('', '...'), proto.nbt_str('', 'Bea stone '), proto.cat(array[proto.nbt_str('color', 'red'), proto.nbt_byte('underlined', 1), proto.nbt_str('text', '0')]),
                 proto.cat(array[proto.nbt_str('color', 'red'), proto.nbt_byte('italic', 1), proto.nbt_str('translate', 'command.context.here')])]), proto.nbt_str('text', '')]), 'hex'));
-select t.cmd(1, 'fill 0 0 0 1 1 1 stone');
-select t.eq('a command of the graph that dbcraft does not implement is said so, not ignored', t.out(1), t.fail(proto.nbt_str('text', '/fill is not implemented in dbcraft')));
+select t.cmd(1, 'clone 0 0 0 1 1 1 2 2 2');
+select t.eq('a command of the graph that dbcraft does not implement is said so, not ignored', t.out(1), t.fail(proto.nbt_str('text', '/clone is not implemented in dbcraft')));
 select t.reset();
 
 ------------------------------------------------------------------------------------------------ /seed /me /msg /say

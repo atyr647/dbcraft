@@ -25,6 +25,7 @@ python3 tools/load_recipes.py
 python3 tools/load_dynamics.py
 python3 tools/load_light.py
 python3 tools/load_sounds.py
+python3 tools/load_mining.py
 psql -X -q -v ON_ERROR_STOP=1 <<'SQL'
 select mc.configure_dev_server('dbcraft e2e', 'creative');
 update mc.server_property set value = '2'        where key in ('view-distance', 'simulation-distance');

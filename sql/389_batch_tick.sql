@@ -88,7 +88,7 @@ begin
     t2 := clock_timestamp();
     -- 4, 5: block actions and their broadcast
     begin
-        if n_blocks or not f_skip then perform mc.apply_block_actions(cur); end if;
+        if n_blocks or not f_skip or mc.mining_active() then perform mc.apply_block_actions(cur); end if;
         if not f_skip or exists (select 1 from mc.block_event) or exists (select 1 from mc.pending_ack) or exists (select 1 from mc.block_actor) then
             perform mc.broadcast_block_events();
         end if;

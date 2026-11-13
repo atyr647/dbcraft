@@ -76,6 +76,11 @@ create or replace function proto.nbt_list_int(p_name text, p_items int[]) return
   select '\x09'::bytea || proto.nbt_text(p_name) || '\x03'::bytea || proto.i32(coalesce(array_length(p_items, 1), 0))
          || coalesce((select string_agg(proto.i32(x), '\x'::bytea order by o) from unnest(p_items) with ordinality t(x, o)), '\x'::bytea) $$;
 
+-- a list of floats (or doubles: p_double) as a named tag
+create or replace function proto.nbt_list_flt(p_name text, p_items float8[], p_double boolean) returns bytea language sql immutable parallel safe as $$
+  select '\x09'::bytea || proto.nbt_text(p_name) || (case when p_double then '\x06'::bytea else '\x05'::bytea end) || proto.i32(coalesce(array_length(p_items, 1), 0))
+         || coalesce((select string_agg(case when p_double then proto.f64(x) else proto.f32(x::real) end, '\x'::bytea order by o) from unnest(p_items) with ordinality t(x, o)), '\x'::bytea) $$;
+
 create or replace function proto.nbt_list_long(p_name text, p_items bigint[]) returns bytea language sql immutable parallel safe as $$
   select '\x09'::bytea || proto.nbt_text(p_name) || '\x04'::bytea || proto.i32(coalesce(array_length(p_items, 1), 0))
          || coalesce((select string_agg(proto.i64(x), '\x'::bytea order by o) from unnest(p_items) with ordinality t(x, o)), '\x'::bytea) $$;
@@ -112,7 +117,11 @@ end $$;
 -- A command that did not parse: the error as a red message, then the context line.  p_key starting with '!' is literal text (a dbcraft limitation, said so).
 create or replace function mc.cmd_report_error(p_me mc.player, p_input text, p_key text, p_args jsonb, p_cursor int) returns void language plpgsql as $$
 begin
-  perform mc.cmd_fail(p_me, case when left(p_key, 1) = '!' then proto.nbt_str('text', substr(p_key, 2)) else mc.tc_translate_json(p_key, p_args) end);
+  -- the range errors of a float / double argument carry the bound and the value as float / double tags (recorded: argument.float.low), not ints
+  perform mc.cmd_fail(p_me, case when left(p_key, 1) = '!' then proto.nbt_str('text', substr(p_key, 2))
+                                 when p_key ~ '^argument\.(float|double)\.(low|big)$' then
+                                   proto.nbt_list_flt('with', array(select jsonb_array_elements_text(p_args)::float8), p_key like 'argument.double.%') || proto.nbt_str('translate', p_key)
+                                 else mc.tc_translate_json(p_key, p_args) end);
   perform mc.cmd_fail(p_me, mc.cmd_context_fields(p_input, p_cursor));
 end $$;
 

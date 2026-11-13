@@ -108,6 +108,11 @@ if [ "$CHECK" = 1 ]; then
   if [ -s "$DBCRAFT_REPORTS/block_sounds.tsv" ]; then ok "block_sounds.tsv (block sounds)"; else todo "block_sounds.tsv (tools/gen_sounds.sh)"; fi
 elif have_reports; then tools/gen_sounds.sh >"$DBCRAFT_LOG/gen-sounds.log" 2>&1 && ok "block sound data in $DBCRAFT_REPORTS/block_sounds.tsv" || echo "    note     tools/gen_sounds.sh failed (see $DBCRAFT_LOG/gen-sounds.log): blocks make no sound"; fi
 
+# what digging needs (hardness, "requires the correct tool", the block loot tables), read from the jar by tools/java/MiningDump.java
+if [ "$CHECK" = 1 ]; then
+  if [ -s "$DBCRAFT_REPORTS/block_mining.tsv" ]; then ok "block_mining.tsv (mining)"; else todo "block_mining.tsv (tools/gen_mining.sh)"; fi
+elif have_reports; then tools/gen_mining.sh >"$DBCRAFT_LOG/gen-mining.log" 2>&1 && ok "mining data in $DBCRAFT_REPORTS/block_mining.tsv" || echo "    note     tools/gen_mining.sh failed (see $DBCRAFT_LOG/gen-mining.log): every block breaks at once and drops nothing"; fi
+
 # ------------------------------------------------------------------------------------------------------------------------------ 4. captures
 say "4/6 recorded capture of a real vanilla server (configuration data the database replays)"
 have_caps() { [ -s "$DBCRAFT_CAPTURES/play_nocomp.jsonl" ] && [ -s "$DBCRAFT_CAPTURES/play_op4.jsonl" ]; }

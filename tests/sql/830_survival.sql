@@ -483,8 +483,11 @@ select t.eq('a 4 block fall: floor(4 - 3 + 1e-6 ...) = 1 damage', (select floor(
 select t.food(0, 5, 20, 20, 0); update mc.player set x = 0.5, y = -60, z = 0.5, gamemode = 0 where conn_id = 1;
 select mc.set_block('minecraft:overworld', 1, -60, 0, 'minecraft:stone');
 select t.reset(); truncate mc.block_event, mc.block_actor;
-insert into mc.play_in_work (conn_id, packet_id, body) values (1, mc.sid('player_action'), proto.varint(3) || proto.position(1, -60, 0) || '\x01'::bytea || proto.varint(5));
+select mc.set_block('minecraft:overworld', 1, -60, 0, 'minecraft:dirt');                                -- (sql/891: a dig takes time: dirt by hand, 10 ticks between the start and the stop packet)
+insert into mc.play_in_work (conn_id, packet_id, body) values (1, mc.sid('player_action'), proto.varint(0) || proto.position(1, -60, 0) || '\x01'::bytea || proto.varint(5));
 select mc.apply_block_actions((select game_time from mc.game_state));
+insert into mc.play_in_work (conn_id, packet_id, body) values (1, mc.sid('player_action'), proto.varint(3) || proto.position(1, -60, 0) || '\x01'::bytea || proto.varint(6));
+select mc.apply_block_actions((select game_time + 10 from mc.game_state));
 select t.eq('mining a block costs 0.005 exhaustion', (select exhaustion from mc.player where conn_id = 1), 0.005::real);
 -- a player who left dead comes back alive at the world spawn with a fresh session, experience kept
 update mc.player set conn_id = null, entity_id = null where conn_id = 2;
