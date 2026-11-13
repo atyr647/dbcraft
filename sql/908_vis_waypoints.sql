@@ -131,12 +131,23 @@ create or replace function mc.wp_cand_missing(p_dset int[]) returns table(rcv in
   select r.entity_id, s.entity_id, null::smallint, null::real, null::tid
     from mc.player r join mc.player s on s.entity_id <> r.entity_id and s.conn_id is not null and s.wp_state is not null and (s.wp_state & 1) = 1
    where r.entity_id = any(coalesce(p_dset, '{}')) and not exists (select 1 from mc.wp x where x.rcv = r.entity_id and x.src = s.entity_id) $$;
--- entity phase: every pair of a player whose transmit state changed, with the connection it has
+-- entity phase: every pair of a player whose transmit state changed, with the connection it has.
+-- (A plpgsql function with its plan made once, and the connection probed by its primary key for each pair.  As a language sql function this was inlined into the pass and planned as a join of every
+-- player with every player under the filter "receiver or source changed" (41,000 pairs tested at 200 players) and a hash of the whole of mc.wp (40,000 rows): 14 of the 20 ms of a joiner's
+-- first locator pass.  Same rows: the pairs with a changed receiver, then the pairs with a changed source whose receiver did not change.)
 drop function if exists mc.wp_cand_state(int[]);
-create or replace function mc.wp_cand_state(p_sset int[]) returns table(rcv int, src int, ok smallint, oang real, tid tid) language sql stable rows 200 as $$
-  select r.entity_id, s.entity_id, w.kind, case when w.kind = 3 then w.ang end, w.ctid
-    from mc.player r join mc.player s on s.entity_id <> r.entity_id and s.conn_id is not null left join mc.wp w on w.rcv = r.entity_id and w.src = s.entity_id
-   where r.conn_id is not null and (r.entity_id = any(coalesce(p_sset, '{}')) or s.entity_id = any(coalesce(p_sset, '{}'))) $$;
+create or replace function mc.wp_cand_state(p_sset int[]) returns table(rcv int, src int, ok smallint, oang real, tid tid) language plpgsql stable rows 200 set plan_cache_mode = force_generic_plan as $$
+declare ss int[] := coalesce(p_sset, '{}');
+begin
+  return query
+    select x.r, x.s, w.kind, case when w.kind = 3 then w.ang end, w.ctid
+      from (select r.entity_id as r, s.entity_id as s from mc.player r join mc.player s on s.entity_id <> r.entity_id and s.conn_id is not null
+             where r.conn_id is not null and r.entity_id = any (ss)
+            union all
+            select r.entity_id, s.entity_id from mc.player s join mc.player r on r.entity_id <> s.entity_id and r.conn_id is not null
+             where s.conn_id is not null and s.entity_id = any (ss) and not (r.entity_id = any (ss))) x
+      left join lateral (select w1.kind, w1.ang, w1.ctid from mc.wp w1 where w1.rcv = x.r and w1.src = x.s limit 1) w on true;       -- (limit 1: the subquery is not pulled up into a hash join over the whole table; mc.wp is churned and the planner thinks it has 2,000 rows)
+end $$;
 
 -- one pass.  p_phase 1: movement (positions as applied this tick, the transmit state as of the last entity phase); p_phase 2: the entity phase (the state now, remembered).
 -- (join_collapse_limit = 1: the joins are planned in the order written; left to itself the planner crosses the player set with itself, N x N rows, to join them with the connections.)

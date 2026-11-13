@@ -52,7 +52,7 @@ begin
   update mc.server_property set value = '1' where key = 'dbcraft.pair-free';
   update mc.server_property set value = '8' where key = 'dbcraft.pair-max-wait-ticks';
   for i in 1 .. p_n + p_joiners loop
-    insert into mc.player (uuid, name, first_seen) values (md5('pd' || i)::uuid, 'pd' || i, now() - interval '1 day');
+    insert into mc.player (uuid, name, first_seen, x, z, chunk_x, chunk_z) select md5('pd' || i)::uuid, 'pd' || i, now() - interval '1 day', g.px, g.pz, floor(g.px / 16)::int, floor(g.pz / 16)::int from (select random() * side as px, random() * side as pz) g;       -- (a returning player: its row exists with its place; on_join keeps it)
   end loop;
   -- the settled population: joined with the budget off, a few ticks to settle
   for i in 1 .. p_n loop

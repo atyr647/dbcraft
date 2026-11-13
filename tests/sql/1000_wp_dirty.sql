@@ -91,7 +91,7 @@ begin
   if random() < p_chg * 4 then
     e := 2000 + (random() * 100000)::int;
     insert into mc.player (uuid, name, conn_id, entity_id, x, y, z, chunk_x, chunk_z, gamemode)
-    select gen_random_uuid(), 'j' || e, e, e, px, 64, pz, floor(px / 16)::int, floor(pz / 16)::int, case when random() < 0.2 then 3 else 1 end
+    select md5('wpd-join' || e::text)::uuid, 'j' || e, e, e, px, 64, pz, floor(px / 16)::int, floor(pz / 16)::int, case when random() < 0.2 then 3 else 1 end
       from (select (select avg(x) from mc.player) + random() * 400 - 200 as px, (select avg(z) from mc.player) + random() * 400 - 200 as pz) g
     on conflict do nothing;
     update mc.player set view_distance_req = t.wpd_vr(), last_move_tick = case when random() < 0.5 then p_cur end where entity_id = e;
@@ -185,7 +185,9 @@ select t.is_true('mutation: azimuth rows of a receiver that moved are not looked
 select t.is_true('mutation: the rows of a player the pass has not seen are not looked at -> noticed', t.wpd_detects('if p_fset is not null then', 'if false then'));
 select t.is_true('mutation: the connections a mover is missing are not made -> noticed', t.wpd_detects('r.entity_id = any(coalesce(p_dset, ''{}''))', 'false and r.entity_id = any(coalesce(p_dset, ''{}''))'));
 select t.is_true('mutation: the entity phase looks at the pairs of a changed player only as a receiver -> noticed',
-                 t.wpd_detects('(r.entity_id = any(coalesce(p_sset, ''{}'')) or s.entity_id = any(coalesce(p_sset, ''{}'')))', '(r.entity_id = any(coalesce(p_sset, ''{}'')))'));
+                 t.wpd_detects('s.conn_id is not null and s.entity_id = any (ss) and not (r.entity_id = any (ss))', 'false'));
+select t.is_true('mutation: the entity phase looks at the pairs of a changed player only as a source -> noticed',
+                 t.wpd_detects('where r.conn_id is not null and r.entity_id = any (ss)', 'where false'));
 select t.is_true('mutation: a block that changed by more than one is an update, not a remake -> noticed', t.wpd_detects('when ok = 1 and manh > 1 then ''remake''', 'when ok = 1 and manh > 1 then ''update'''));
 select t.is_true('mutation: the angle threshold is a degree, not half a degree -> noticed', t.wpd_detects('> 0.008726646::real then ''update''', '> 0.017453292::real then ''update'''));
 select t.is_true('mutation: a view distance change does not look at the chunk connections of the receiver -> noticed',
