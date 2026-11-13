@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compare mc.shortset_order (sql/850) with the real fastutil ShortOpenHashSet that vanilla 26.3 uses for the changed positions of a section.
-#   tests/bench/world/set_order.sh [DATABASE]          (libpq environment variables select the server; default database dbcraft)
+#   [FN=mc.shortset_order_sql|dbcraft_set.shortset_order] tests/bench/world/set_order.sh [DATABASE]      (libpq environment variables select the server; default database dbcraft; FN: the function to check)
 # Runs 100+ insertion sequences (random with duplicates, distinct, ascending from 0, the sizes around every rehash threshold 24/25, 48/49, ... 3072/3073, the /fill
 # orders of boxes and of a whole section) through Java and through the SQL function and reports the number of differences (expected: 0).  With --vectors it prints the
 # md5 values that tests/sql/851_section_updates.sql pins (so the test file can be regenerated).
@@ -12,9 +12,9 @@ cd "$(dirname "$0")/../../.."
 FASTUTIL=${FASTUTIL:-$(ls "$DBCRAFT_HOME"/vanilla/libraries/it/unimi/dsi/fastutil/*/fastutil-*.jar 2>/dev/null | head -1)}
 [ -f "$FASTUTIL" ] || { echo "fastutil jar not found (set FASTUTIL=...)" >&2; exit 2; }
 JAVA=${JAVA:-java}
-exec python3 - "${1:-dbcraft}" "$FASTUTIL" "$JAVA" "${2:-}" <<'PY'
+exec python3 - "${1:-dbcraft}" "$FASTUTIL" "$JAVA" "${2:-}" "${FN:-mc.shortset_order}" <<'PY'
 import random, subprocess, sys
-db, jar, java, mode = sys.argv[1:5]
+db, jar, java, mode, fn = sys.argv[1:6]
 rnd = random.Random(1234)
 cases = []
 for n in [1, 2, 3, 5, 24, 25, 26, 48, 49, 50, 96, 97, 192, 193, 384, 385, 768, 769, 1536, 1537, 3072, 3073, 4000, 4096]:
@@ -43,10 +43,10 @@ if mode == "--vectors":
     sys.exit(0)
 bad = 0
 for c, j in zip(cases, out):
-    r = subprocess.run(["psql", "-X", "-At", "-d", db, "-c", "select array_to_string(mc.shortset_order(array[%s]), ',')" % ",".join(map(str, c))], capture_output=True, text=True)
+    r = subprocess.run(["psql", "-X", "-At", "-d", db, "-c", "select array_to_string(%s(array[%s]), ',')" % (fn, ",".join(map(str, c)))], capture_output=True, text=True)
     if r.stdout.strip() != j:
         bad += 1
         print("DIFF n=%d first=%s %s" % (len(c), c[:5], r.stderr[:200]))
-print("%d sequences through fastutil and mc.shortset_order, %d differ" % (len(cases), bad))
+print("%d sequences through fastutil and %s, %d differ" % (len(cases), fn, bad))
 sys.exit(1 if bad else 0)
 PY
