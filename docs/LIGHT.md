@@ -73,6 +73,10 @@ that holds light keeps its `data` form when light is removed from it (vanilla's 
 The marks of a packet (`mc.light_marks`): a changed section, and every neighbouring section (also over edges and corners) that a changed cell touches at the section's border: what
 `aroundAndAtBlockPos` adds for a written cell.
 
+**Hooks on other code** (everything else is new files): a statement trigger on `mc.block_event` (`light_queue`, sql/228) that only copies rows; one `perform mc.light_step(cur)` in `mc.tick_core`
+(sql/837) and one guarded call in `mc.server_tick` (sql/430); the dispatcher `mc.compute_light` in sql/220 (the old function is `mc.compute_light_flat`); one call to `mc.light_chunks` in the noise
+generator (sql/855).  `set dbcraft.light_engine = 'off'` turns the engine off (the trigger stops queuing, the old model lights chunks).
+
 ## Evidence
 
 All of it is reproducible with the scripts named; the vanilla world and the recordings are Mojang data and stay out of git.
@@ -94,7 +98,7 @@ All of it is reproducible with the scripts named; the vanilla world and the reco
 2. **The real server after edits** (`tests/light/compare_edits.py`): a vanilla 26.3 server loads a copy of that world, the same world is in a dbcraft database, both get the same edits
    (RCON `/setblock` and `/fill` on vanilla with ticks frozen, `mc.set_block` / `mc.fill` and one `mc.light_step` on dbcraft); after every step a scripted client joins vanilla and records the 49
    chunks around the spawn; `tests/world_import/compare_chunks.py` compares light masks and arrays with dbcraft's packets.  The start and nine sets of edits: torches (also at a chunk border), glowstone
-   and a sea lantern, a 20-block shaft, a 43-block roof, a 16-block stone pillar and its removal, lava + a slab + stairs + leaves, torches and glowstone at a chunk border, a fill of 2,976 glass
+   and a sea lantern, a shaft (20 blocks removed), a roof (43 blocks placed), a 16-block stone pillar and its removal, lava + a slab + stairs + leaves, torches and glowstone at a chunk border, a fill of 2,976 glass
    blocks over three chunks.  **10 of 10 snapshots: all 49 chunks identical in every light mask and every array** (the first run found one chunk whose cached packet was not invalidated when it
    gained a light layer; fixed, see `mc.light_step`).
 3. **`light_update` packets** (`tests/light/e2e_light.sh`, `tests/e2e/light_probe.py`): one scripted client in a flat world, 15 edit steps in the chunks at, inside and outside the border of the
@@ -105,13 +109,13 @@ All of it is reproducible with the scripts named; the vanilla world and the reco
    around the surface) each followed by `mc.light_update` and then by a full `mc.light_region` of the 3 x 3 chunks around: no layer differs, no fallback needed in 190 of 190 (`tests/sql/221` repeats
    14 of them on noise terrain, and checks block light values by hand: a torch gives 14, 13, 12 ... 1 over 13 cells, across chunk borders, a roof gives 14 at its edge and 13 in the middle).
 5. **Flat worlds**: 49 of 49 recorded flat chunk packets still byte-identical (`tests/sql/240`), the engine and the straight-down model give the same rows for a flat area (`tests/sql/221`),
-   the whole SQL suite passes (3,586 checks before the last test adaptations; the final run is in the report).
+   the whole SQL suite passes (92 files, 3,684 checks, 3 jobs, 876 s wall).
 
 ## What is exact, what is approximate
 
 **Exact** (checked against the real server, see Evidence): sky and block light of imported vanilla terrain, cell for cell, including villages (shapes), caves, water, leaves, lava
 and glow lichen; the light after edits (torches, glowstone, sea lanterns, shafts, roofs, pillars put up and removed, lava, slabs, stairs, leaves, a 31 x 16 x 6 fill), array by
-array; the `light_update` packets of 14 of 15 edit steps (same chunks, same layers, same arrays), the 15th differing by a test-setup artefact described below.
+array; the `light_update` packets of 14 of 15 edit steps (same chunks, same layers, same arrays, same number of packets); the 15th differs in which sections are marked (below).
 
 **Approximate or not done:**
 
@@ -152,8 +156,8 @@ CPU time of the 4-core dev container, quiet machine, steady state (a long-lived 
 a section (one `translate()` per class for the 4-bit palettes that are 90% of the sections: 0.25 ms; 5- and 6-bit palettes unpack their entries: 3.7 ms), about 14 SQL statements per kind for the waves
 (2 ms each however little they do), 0.35 to 0.46 ms for the output array of every layer that holds light, and on vanilla terrain the 17 sections per chunk that lie within reach of a lava or lichen
 cell (1,352 of 7,064 sections have an emitter in the palette).  Ideas not done: keep the section masks in a table keyed by the section's bytes (a section is unpacked once), cut the 5- and 6-bit
-unpacking, merge the wave statements of the levels that have a front of a few sections, a cheaper plane spread.  The straight-down model is only 4 to 10 times cheaper because it reads one
-heightmap; it cannot see a cell of the chunk.
+unpacking, merge the wave statements of the levels that have a front of a few sections, a cheaper plane spread.  The straight-down model is 10 to 30 times cheaper because it reads one
+heightmap; it cannot see a cell of the chunk (water, leaves, an overhang, a lamp).
 
 ## Files
 
