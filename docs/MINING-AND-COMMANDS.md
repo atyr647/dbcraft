@@ -50,7 +50,19 @@ entity simulation off a broken block drops nothing.  The block loot tables of th
 
 ### Evidence
 
-MINING_EVIDENCE
+Comparison against the real vanilla 26.3 server, two scripted clients (a survival digger and an observer standing next to him), the packets each received reduced and compared in
+order (`tests/e2e/mine_probe.py`, `compare_mine.py`; `runmine.sh`-style: one run per server).
+
+| Scenario | Identical steps | What differs |
+|---|---|---|
+| `dig`: 40 block / tool cases, each stopped too early (refused, `block_update` restores) and at the accepted tick | **139 of 144** | 3 observer steps: the crack stage of a *delayed* destroy (see the quirk above) is `progress * (start tick + 1) & 255`, a function of how long the digger has been online, so two runs can never agree (they printed 6 / big, big / 2, 0 / big); 2 steps (`snow_block_shovel`, digger and observer): in the full sequence our grass cell below the block had already been turned to dirt by a random tick, so the "snowy" change vanilla sent was not there; the same case run alone is identical to vanilla |
+| `misc`: abort, a second START, a STOP elsewhere, change direction, out of reach, adventure / spectator / creative, a sword in creative, command block, unbreakable, falling and in water, a dead player | **34 of 40** | 5 steps are the probe's own `/setblock` followed by `/clear` / `/give`: vanilla broadcasts the block change before or after the slots depending on which tick the commands land in (a race of the recording, not of mining); 1 step: the observer of a respawned player that vanilla pairs only when it moves ([DIFFERENCES.md](DIFFERENCES.md) item 62) |
+| `drops` (`entity-mode inline`): 44 steps, the items that appear for each block / tool | **41 of 44** (drops identical in all 44) | the same `/setblock`-then-`/clear` ordering race in 3 steps |
+
+The SQL test `tests/sql/891_mining.sql` (59 checks) pins the 40 recorded dig times, the damage patches, hardness and loot cases.  Two things the first comparison found and fixed:
+the dig state of a player has to outlive the dig (vanilla keeps `destroyPos` and the start tick, so a `STOP` after an `ABORT` still acts on the old position), and a block's shape
+neighbours (grass under snow) change when it breaks.
+
 
 ### Not modelled / not verified
 
@@ -70,7 +82,12 @@ New command argument parsers in `mc.cmd_arg` (`sql/811`): `block_pos` (absolute 
 `parsing.int.expected`, `argument.block.id.invalid` with `minecraft:` for an empty id, `argument.block.property.*`, `argument.block.tag.disallowed`,
 `arguments.block.tag.unknown` ...).
 
-COMMAND_EVIDENCE
+Every command was run on both servers by `tests/e2e/cmd_blocks.py record` (205 steps in the groups `setblock`, `fill`, `spawn`, `title`, `weather`, `time`: the parse errors
+with their red context lines, the successes, the block changes; both operators receive and the packets of each step are compared as they arrive).  The first comparison (a stale recording) had 98 of 198 identical; what it found: wrong default rotation of spawn points, the SNBT escapes, the clock rules, fences placed by `/fill` not connecting, `time set N` on the time it already was.  Now: **201 of 205 identical**.  The four that differ are not the commands: a vanilla animal's `add_entity` that arrives inside two steps (the world's noise), the value of
+`time query gametime` (the two servers' clocks differ), and, in one run of 205, a block change of the previous step broadcast in the next step's window.
+
+`tests/sql/893_cmd_blocks.sql` (76 checks) is generated from the recordings: the key, arguments and cursor of each parse error, the component bytes of `/title` and `/tellraw`,
+the Java hash order of NBT keys, the weather levels.
 
 ### Notes
 
@@ -92,6 +109,17 @@ COMMAND_EVIDENCE
   hover_event, extra.  The codec's error texts are reproduced for the recorded cases (a number, a boolean, `{}`, `[]`, a compound without content, a bad colour, a non-numeric flag).
   `/title`: title, subtitle, actionbar, times, clear, reset; `/tellraw`.  Not done: `/dialog`, `/bossbar`, `/team`, text with `score` / `nbt` that resolve to something.
 
+### Not modelled / not verified (commands)
+
+* `/clone`, `/fillbiome`, `/place`, `/dialog`, `/bossbar`, `/team`, `/effect` and every other command still answer "not implemented".
+* `/fill` shape updates: one pass over the finished box when it holds at most 4,096 positions and the block has shape updates (fences, walls, panes, bars, stairs, snowy grass); bigger boxes keep
+  the placed states.  `strict` is accepted and acts like the default.  The neighbour *change* notifications of a fill (`neighborChanged`) are the dynamics engine's, not part of this work.
+* A block placed with `/setblock` whose `updateShape` only schedules a tick (leaves' `distance`) keeps the given state until the dynamics engine ticks it (vanilla showed the corrected
+  state in the first broadcast because the scheduled tick ran before it): the probes therefore place leaves with `distance=7`.
+* `time query gametime` and the clock total of `time add`: run-specific (compared in shape only); `time ... of <clock>` for a clock other than the overworld's.
+* The weather a player is told when joining during rain; `score` and `nbt` components that resolve to something (no scoreboards, no data storage).
+* Experience from ores, enchantments and effects in the dig speed (above).
+
 ## 3. The weather clock (`sql/894`)
 
 `ServerLevel.advanceWeatherCycle` and `MinecraftServer.setWeatherParameters` ported from the bytecode (`mc.weather_tick`, one line in `mc.tick_core`): the flags, the counters
@@ -101,7 +129,8 @@ immediate packet); no duration is a random one (12,000..180,000 clear; 12,000..2
 180,000 ticks).  A quirk of the real server, reproduced: when a `clear` period ends the weather turns to rain AND thunder (the pinned counters toggle the flags).  Not modelled: the
 weather a player is told when it joins during rain.
 
-WEATHER_EVIDENCE
+**Evidence**: `tests/e2e/weather_probe.py` records the game events and the levels for `/weather` with a duration, the clear-then-rain quirk and the natural counters: **12 of 12
+identical**.  Cost: the weather clock is one more line in `mc.tick_core` and about 35 microseconds per tick (2,000 calls of `mc.weather_tick` timed in a transaction).
 
 ## 4. Walls (`sql/890`)
 
@@ -110,7 +139,9 @@ or `tall` when the block above has a sturdy bottom face; the post (`up`) by `sho
 support", so a block above that covers part of a strip counts as covering the post only.  Also new in the shape updates: `snowy` of grass, podzol and mycelium follows the block above
 (found by the dig recording: breaking a snow block changed two cells).
 
-WALL_EVIDENCE
+**Evidence**: `tests/e2e/place_probe.py --only connect` against the recording of the real server: **32 of 32 identical** (7 walls, 11 fences, 7 panes, 7 bars; walls were 0 of 6
+before), see `compare_place.py`.  Not verified: walls against blocks whose collision shapes are only partly full (a slab or stairs above), and a wall next to a gate in every
+direction; the shape updates of `/fill` run as one pass over the finished box (up to 4,096 positions), the end state of the real per-placement updates, but not their packet order.
 
 ## Files
 
