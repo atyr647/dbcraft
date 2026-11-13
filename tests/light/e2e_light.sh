@@ -16,7 +16,8 @@ rm -rf "$D/van"; mkdir -p "$D/van"; cp "$JAR" "$D/van/server.jar"; echo eula=tru
 printf '%s\n' online-mode=false server-port=$MC 'level-type=minecraft\:flat' view-distance=2 simulation-distance=2 network-compression-threshold=-1 spawn-protection=0 enable-rcon=true \
   rcon.port=$RC rcon.password=lt-light motd=lt max-players=4 gamemode=creative difficulty=peaceful spawn-monsters=false spawn-animals=false spawn-npcs=false generate-structures=false \
   level-name=world white-list=false enforce-whitelist=false max-tick-time=-1 pause-when-empty-seconds=-1 > "$D/van/server.properties"
-( cd "$D/van" && nohup "$JAVA" -Xms1G -Xmx2G -jar server.jar nogui > server.log 2>&1 & echo $! > "$D/van/pid" )
+( cd "$D/van" && exec "$JAVA" -Xms1G -Xmx2G -jar server.jar nogui ) > "$D/van/server.log" 2>&1 &
+echo $! > "$D/van/pid"
 for i in $(seq 1 120); do grep -q "Done (" "$D/van/server.log" 2>/dev/null && break; sleep 1; done
 python3 tools/capture_vanilla.py --port $MC --seconds 3 --name Warm --out "$D/warm.jsonl" > /dev/null          # generates the area around the spawn
 python3 tests/e2e/light_probe.py --mode vanilla --port $MC --rcon $RC --rcon-pw lt-light --out "$D/vanilla_light.json" > "$D/vanilla_light.log" 2>&1

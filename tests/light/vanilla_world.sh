@@ -15,7 +15,8 @@ rm -rf "$D"; mkdir -p "$D"; cp "$JAR" "$D/server.jar"; echo eula=true > "$D/eula
 printf '%s\n' online-mode=false server-port=$MC 'level-type=minecraft\:normal' level-seed=7041 view-distance=6 simulation-distance=2 network-compression-threshold=-1 spawn-protection=0 \
   enable-rcon=true rcon.port=$RC rcon.password=lt-light motd=lt max-players=4 gamemode=creative difficulty=peaceful spawn-monsters=false spawn-animals=false spawn-npcs=false \
   generate-structures=true level-name=world white-list=false enforce-whitelist=false max-tick-time=-1 pause-when-empty-seconds=-1 > "$D/server.properties"
-( cd "$D" && nohup "$JAVA" -Xms1G -Xmx2G -jar server.jar nogui > server.log 2>&1 & echo $! > pid )
+( cd "$D" && exec "$JAVA" -Xms1G -Xmx2G -jar server.jar nogui ) > "$D/server.log" 2>&1 &
+echo $! > "$D/pid"
 for i in $(seq 1 120); do grep -q "Done (" "$D/server.log" 2>/dev/null && break; sleep 1; done
 # four boxes of 128 / 256 chunks (the limit of /forceload is 256 chunks per command): x -256 .. 255, z -128 .. 127
 for box in "-128 -128 127 127" "128 -128 255 127" "-256 -128 -129 127"; do python3 tools/entity/rcon.py cmd "forceload add $box"; done

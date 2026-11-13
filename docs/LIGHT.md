@@ -67,7 +67,7 @@ that holds light keeps its `data` form when light is removed from it (vanilla's 
 | `mc.compute_light(dim, cx, cz)` (`sql/220`) | the engine for one chunk, or the straight-down model where `mc.light_flat_ok` proves they agree (the chunk and its neighbours have one constant surface height, full sections below, nothing above, only air and opaque non-emitting palette states: every flat world) |
 | `mc.light_chunks(dim, cxs, czs)` (`sql/226`) | light of freshly created chunks in one region; the noise generator (`sql/855`) calls it for each batch.  Existing neighbours that were lit while the new chunks were missing are lit again and get a new version |
 | trigger `light_queue` on `mc.block_event` (`sql/228`) | every block change goes into `mc.light_dirty` with an *effect* (1 sky, 2 block: `mc.light_effect` compares dampening, emission and shapes of the old and new state; vanilla's `hasDifferentLightProperties`).  No change in `mc.set_block`, `fill`, the dynamics or the importer |
-| `mc.light_step(tick)` (`sql/228`), one line in `mc.tick_core` (`sql/837`) | empties the queue: cells -> `mc.light_update` (fills of more than 64 cells and whole sections: `mc.light_region` of the chunks around), new `mc.chunk.version` for chunks whose light changed, `light_update` packets for the connections for which the chunk is on the border of their view (`net.conn.view_cx/cz`, radius `view-distance + 1`) |
+| `mc.light_step(tick)` (`sql/228`), one line in `mc.tick_core` (`sql/837`, after the dynamics) and one in `mc.server_tick` (`sql/430`, after the players' block actions, before the block packets are broadcast) | empties the queue: cells -> `mc.light_update` (fills of more than 64 cells and whole sections: `mc.light_region` of the chunks around), new `mc.chunk.version` for chunks whose light changed, `light_update` packets for the connections for which the chunk is on the border of their view (`net.conn.view_cx/cz`, radius `view-distance + 1`) |
 | `mc.light_at(dim, x, y, z, 'sky' or 'block')` | the stored light of one cell |
 
 The marks of a packet (`mc.light_marks`): a changed section, and every neighbouring section (also over edges and corners) that a changed cell touches at the section's border: what
@@ -75,7 +75,37 @@ The marks of a packet (`mc.light_marks`): a changed section, and every neighbour
 
 ## Evidence
 
-*(numbers filled in from the runs listed in the last section)*
+All of it is reproducible with the scripts named; the vanilla world and the recordings are Mojang data and stay out of git.
+
+1. **A world vanilla generated and saved** (`tests/light/vanilla_world.sh`: seed 7041, 721 full chunks in 4 region files: swamp, ocean, grass land, hills, caves with lava and glow lichen,
+   a village).  Imported with `tools/world_import.py` (the light rows come from the files), every chunk lit again from its blocks by `mc.light_region`, compared layer by layer with the file's
+   light (`tests/light/compare_import.sql`):
+
+   | chunks (all their neighbours present, within 1 / 2 / 3 chunks) | layers | sky arrays that differ | block arrays that differ | layer sets that differ |
+   |---|---|---|---|---|
+   | 612 | 7,438 | **0** | 10 | 0 |
+   | 512 | 6,195 | **0** | 9 | 0 |
+   | 420 | 5,064 | **0** | 6 | 0 |
+
+   The block arrays that differ are all of one kind: vanilla's file holds an allocated array of zeros (`data`, where this engine writes `empty`): the same light (see "approximate").  Cell for
+   cell, every value of sky and block light of all 612 chunks equals vanilla's, villages (slabs, stairs, paths, farmland: the shapes), caves, lava, glow lichen, water and leaves included.
+   (Chunks at the edge of what vanilla generated are not comparable: it lit them before the features of the chunks around them were finished, which the saved light shows; the older capture of
+   `tests/sql/250` is such a world and its report is informational for that reason.)
+2. **The real server after edits** (`tests/light/compare_edits.py`): a vanilla 26.3 server loads a copy of that world, the same world is in a dbcraft database, both get the same edits
+   (RCON `/setblock` and `/fill` on vanilla with ticks frozen, `mc.set_block` / `mc.fill` and one `mc.light_step` on dbcraft); after every step a scripted client joins vanilla and records the 49
+   chunks around the spawn; `tests/world_import/compare_chunks.py` compares light masks and arrays with dbcraft's packets.  The start and nine sets of edits: torches (also at a chunk border), glowstone
+   and a sea lantern, a 20-block shaft, a 43-block roof, a 16-block stone pillar and its removal, lava + a slab + stairs + leaves, torches and glowstone at a chunk border, a fill of 2,976 glass
+   blocks over three chunks.  **10 of 10 snapshots: all 49 chunks identical in every light mask and every array** (the first run found one chunk whose cached packet was not invalidated when it
+   gained a light layer; fixed, see `mc.light_step`).
+3. **`light_update` packets** (`tests/light/e2e_light.sh`, `tests/e2e/light_probe.py`): one scripted client in a flat world, 15 edit steps in the chunks at, inside and outside the border of the
+   tracked square, RCON on vanilla and SQL on dbcraft through the gateway; per step the `light_update` packets of both servers compared as byte strings.  **14 of the 15 steps are identical** (same chunks, same layers, same arrays, same number of packets), also in a fresh vanilla world
+   (the client is teleported to chunk (0, 0) first: a fresh world spreads its player); the 15th, a slab placed in a cell that a glowstone lights from 9 cells away, differs in the marks: vanilla marks the
+   block layer of two chunks whose light did not change (its decrease wave zeroed cells that the increase wave then lit again to the same value), this engine marks what changed.
+4. **Incremental against full** (self-consistency, no vanilla): on the imported terrain 190 random edits (stone, torch, glowstone, water, leaves, glass, lava, slabs, stairs, dirt, air at heights
+   around the surface) each followed by `mc.light_update` and then by a full `mc.light_region` of the 3 x 3 chunks around: no layer differs, no fallback needed in 190 of 190 (`tests/sql/221` repeats
+   14 of them on noise terrain, and checks block light values by hand: a torch gives 14, 13, 12 ... 1 over 13 cells, across chunk borders, a roof gives 14 at its edge and 13 in the middle).
+5. **Flat worlds**: 49 of 49 recorded flat chunk packets still byte-identical (`tests/sql/240`), the engine and the straight-down model give the same rows for a flat area (`tests/sql/221`),
+   the whole SQL suite passes (3,586 checks before the last test adaptations; the final run is in the report).
 
 ## What is exact, what is approximate
 
@@ -88,11 +118,15 @@ array; the `light_update` packets of 14 of 15 edit steps (same chunks, same laye
 * **All-zero `data` arrays.**  Vanilla sometimes holds a layer as an allocated array of zeros (light that was there during generation and was cleared; light removed by an
   edit) and sends it as `data`; a layer computed from the blocks alone cannot know that and is `empty` (6 of 5,064 layers in the imported comparison).  After an edit the layer's
   stored form is kept, which is vanilla's behaviour.  Both forms mean the same light.
-* **Which sections a `light_update` marks.**  Vanilla marks every section where a cell was *written*, including cells that its decrease wave set to 0 and the increase wave set
-  back to the same value; this engine marks sections with a cell whose value changed (and the neighbours those touch).  They agree in the 15 recorded scenarios; a removal that
-  clears and relights equal values (two torches whose light overlaps) can mark one section more in vanilla.  Not recorded.
-* **Timing.**  The step runs once per tick from `mc.tick_core`: the light of a block change made while the tick's packets are handled (player breaks and places) is computed in the
-  next tick and its `light_update` sent then; vanilla's engine is asynchronous and the packet comes in the same or the next tick.  The comparison above is per edit, not per tick.
+* **Which sections a `light_update` marks.**  Vanilla marks every section where a cell was *written*, including cells that its decrease wave set to 0 and the increase wave set back to the
+  same value (a block placed or removed in a cell that has light: `checkNode` zeroes the cell and every cell downhill of it, then lights them again); this engine marks the sections of cells whose
+  value changed (and the neighbours those touch at their border).  They agree in 14 of the 15 recorded steps and in the packets of every edit that only adds light or only removes it where no other
+  source is near; the 15th step above is the case that differs: a light removed or blocked where another source keeps most of the cells lit makes vanilla mark one or two sections more.  Marks are
+  what the packet carries, not what the light is: the arrays in the packets that both servers send are equal.  Closing this means computing vanilla's decrease region (the cells reached from the
+  changed cell by steps to a strictly lower level) with the same bit-set waves; not done.
+* **Timing.**  The step runs after the dynamics (`mc.tick_core`) and again after the players' block actions, before the block packets: a `light_update` leaves in the tick of the change, ahead of
+  the block packets of that tick.  Vanilla's engine is asynchronous: in the 14 recorded steps with both packets the light packet came in the same tick 12 times (0 to 16 ms after the block packet)
+  and in the next tick twice (42 and 60 ms); the order of the packets within a tick is not fixed there either (recorded both ways).  The comparison is per step, not per tick.
 * **Chunks next to missing chunks.**  Vanilla only completes a chunk whose neighbours exist.  Here a chunk is lit with the neighbours that exist; when a neighbour is created later the
   chunk is lit again and its version bumped (a new send is right), but a client that already holds it gets no `light_update` for that.  Imported worlds and flat worlds do not hit this.
 * **Layers created or removed** (a first block in an empty section, the last block removed) light the three chunks again and vanilla's extra `light_update` marks for the new layers are not sent.
@@ -102,7 +136,24 @@ array; the `light_update` packets of 14 of 15 edit steps (same chunks, same laye
 
 ## Costs
 
-*(measured, filled in below)*
+CPU time of the 4-core dev container, quiet machine, steady state (a long-lived session: the first call of a session also plans about 25 statements).
+
+| | straight-down model (before) | light engine |
+|---|---|---|
+| a flat world (every flat chunk) | 0.15 to 0.3 ms | the same (`mc.light_flat_ok` proves the model exact: 0.05 ms more); flat generation copies the template as before |
+| noise terrain, 256 chunks in one batch (the generator, the join) | 0.23 ms per chunk | **2.2 to 2.8 ms** per chunk (about 10 times) |
+| noise terrain, generation with light and packet (16 x 16 chunks) | 2.6 to 3.0 ms per chunk | 4.6 ms per chunk |
+| one chunk at a time (`mc.compute_light`: the chunk and its 8 neighbours are read) | 0.2 ms | 5.9 ms |
+| vanilla-like terrain (caves, lava, lichen, village), 612 chunks in one region | 0.36 to 0.42 ms per chunk | 13.7 ms per chunk |
+| an edit (`mc.light_step`, one changed cell, noise terrain, steady state) | (no update existed) | 41 ms (a torch: block light only), 52 to 56 ms (stone placed or removed: sky and block); 70 ms when a section turns non-empty (3 x 3 chunks lit again) |
+| a fill of 2,976 blocks over 3 chunks | | 1.1 to 1.5 s (the chunks around lit again) |
+
+**The target "no more than 2 to 3 times the old model per chunk" is met for flat worlds and not for terrain**: 10 times on noise terrain, 34 times on vanilla-like terrain.  Where it goes: the masks of
+a section (one `translate()` per class for the 4-bit palettes that are 90% of the sections: 0.25 ms; 5- and 6-bit palettes unpack their entries: 3.7 ms), about 14 SQL statements per kind for the waves
+(2 ms each however little they do), 0.35 to 0.46 ms for the output array of every layer that holds light, and on vanilla terrain the 17 sections per chunk that lie within reach of a lava or lichen
+cell (1,352 of 7,064 sections have an emitter in the palette).  Ideas not done: keep the section masks in a table keyed by the section's bytes (a section is unpacked once), cut the 5- and 6-bit
+unpacking, merge the wave statements of the levels that have a front of a few sections, a cheaper plane spread.  The straight-down model is only 4 to 10 times cheaper because it reads one
+heightmap; it cannot see a cell of the chunk.
 
 ## Files
 

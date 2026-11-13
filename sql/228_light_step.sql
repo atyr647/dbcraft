@@ -33,7 +33,7 @@ create or replace function mc.light_effect(p_old text, p_new text) returns small
 
 create or replace function mc.light_queue() returns trigger language plpgsql as $$
 begin
-    if not exists (select 1 from mc.light_state limit 1) then return null; end if;
+    if not mc.light_ready() then return null; end if;                          -- no data, or dbcraft.light_engine = 'off': nothing consumes the queue
     insert into mc.light_dirty (dimension, x, y, z, kind, cells, effect)
     select n.dimension, n.x, n.y, n.z, n.kind, n.cells, case when n.kind = 'block' then mc.light_effect(n.old_state, n.new_state) else 3 end
       from new_events n;
@@ -120,6 +120,7 @@ declare
     pid      int;
 begin
     if not exists (select 1 from mc.light_dirty) then return 0; end if;
+    if not mc.light_ready() then delete from mc.light_dirty; return 0; end if;
     create temp table if not exists lw_all (cx int not null, cz int not null, idx int not null, sky boolean not null, blk boolean not null, cs bit(4096), cb bit(4096)) on commit delete rows;
     create temp table if not exists lw_allc (cx int not null, cz int not null) on commit delete rows;                -- chunks whose rows changed in any way (also new layers)
     delete from lw_all; delete from lw_allc;

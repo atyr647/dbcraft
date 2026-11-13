@@ -10,7 +10,7 @@ mc.refresh_visibility/0 | 468_crowd_visibility.sql | 468: only the pairs whose i
 mc.entity_type_id/1 | 433_tick_perf_ids.sql | constant-folded reference ids (restart the gateway after reloading ref.*)
 mc.pid/1 | 433_tick_perf_ids.sql | constant-folded reference ids
 mc.sid/1 | 433_tick_perf_ids.sql | constant-folded reference ids
-mc.server_tick/0 | 430_tick_perf.sql | tick-performance rewrite of the integration tick
+mc.server_tick/0 | 430_tick_perf.sql | tick-performance rewrite of the integration tick; one more line (sql/228) runs mc.light_step between the players' block actions and the block broadcast
 mc.tick/0 | 430_tick_perf.sql | tick-performance rewrite of the game tick
 net.deflate_frame/2 | 440_deflate.sql | compression of frames at or above the threshold
 net.h_login/3 | 601_online_login.sql | login checks (whitelist, bans, capacity) come from the game module (sql/400); sql/601 adds the online-mode branch (encryption request) to that same body

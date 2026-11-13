@@ -28,7 +28,7 @@ STEPS = [
     ("a hole in the ground", "fill", (57, -63, -24, 57, -61, -24, "minecraft:air")),
     ("a roof of 5 x 5", "fill", (54, -57, 14, 58, -57, 18, "minecraft:stone")),
     ("the roof removed", "fill", (54, -57, 14, 58, -57, 18, "minecraft:air")),
-    ("a slab and a torch under it", "batch", [(56, -58, 30, SLAB), (56, -59, 30, "minecraft:torch")]),
+    ("a slab, then a torch under it (two ticks)", "seq", [(56, -58, 30, SLAB), (56, -59, 30, "minecraft:torch")]),
     ("inside the tracked square: a torch in chunk 2", "set", (40, -60, 8, "minecraft:torch")),
     ("outside: a glowstone in chunk 4", "set", (72, -60, 8, "minecraft:glowstone")),
     ("negative side: a torch in chunk -3", "set", (-40, -60, -40, "minecraft:torch")),
@@ -68,6 +68,9 @@ def main():
     print("client at", c.pos)
     if a.mode == "vanilla":
         print(rc.cmd("gamerule random_tick_speed 0"))
+        # a fresh vanilla world spreads its first player over the spawn area; the tracked square must be the one around chunk (0, 0), where dbcraft's player stands
+        print(rc.cmd(f"tp {a.name} 8.5 -60 8.5"))
+        time.sleep(4.0)
     out = []
     for label, kind, args in STEPS:
         k = c.count(); c.mark(label)
@@ -77,8 +80,17 @@ def main():
                 x, y, z, b = args; resp = rc.cmd(f"setblock {x} {y} {z} {b}")
             elif kind == "fill":
                 x1, y1, z1, x2, y2, z2, b = args; resp = rc.cmd(f"fill {x1} {y1} {z1} {x2} {y2} {z2} {b}")
-            else:
-                resp = " ".join(rc.cmd(f"setblock {x} {y} {z} {b}") for (x, y, z, b) in args)
+            else:                                            # 'seq': one command after the other, a few ticks apart
+                outs = []
+                for (x, y, z, b) in args:
+                    outs.append(rc.cmd(f"setblock {x} {y} {z} {b}")); time.sleep(0.3)
+                resp = " ".join(outs)
+        elif kind == "seq":
+            outs = []
+            for (x, y, z, b) in args:
+                r = subprocess.run(a.psql.split() + ["-c", sql_for("set", (x, y, z, b))], capture_output=True, text=True)
+                outs.append((r.stdout + r.stderr).strip()); time.sleep(0.3)
+            resp = " ".join(outs)
         else:
             r = subprocess.run(a.psql.split() + ["-c", sql_for(kind, args)], capture_output=True, text=True)
             resp = (r.stdout + r.stderr).strip()
