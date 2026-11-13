@@ -317,5 +317,5 @@ begin
   end loop;
   key := case what when 'clear' then 'commands.title.cleared' when 'reset' then 'commands.title.reset' when 'times' then 'commands.title.times' else 'commands.title.show.' || what end;
   if cardinality(tgts) = 1 then perform mc.cmd_success(me, mc.tc_translate(key || '.single', array[mc.tc_player(tgts[1].uuid, tgts[1].name)]));
-  else perform mc.cmd_success(me, mc.tc_translate(key || '.multiple', array[mc.tc_arg_int(cardinality(tgts))])); end if;
+  else perform mc.cmd_success(me, mc.tc_translate_json(key || '.multiple', jsonb_build_array(cardinality(tgts)))); end if;
 end $$;

@@ -91,7 +91,7 @@ ap.add_argument("--only", default="", help="comma separated case names")
 a = ap.parse_args()
 os.makedirs(os.path.dirname(a.out), exist_ok=True)
 
-X, Y, Z = 2, -60, 0                            # the block that is dug
+X, Y, Z = (4 if a.scenario == "drops" else 2), -60, 0       # the block that is dug (4 blocks away for the drops: nobody picks them up)
 def cmd(c, text): c.send("minecraft:chat_command", m.string(text))
 def action(act, x, y, z, face, seq): return m.varint(act) + m.position(x, y, z) + bytes([face]) + m.varint(seq)
 def sneak_tick(c): c.send("minecraft:client_tick_end"); c.send("minecraft:move_player_status_only", b"\x01")
@@ -262,6 +262,30 @@ elif a.scenario == "misc":
     both("dirt, off the ground"); w = None
     k0 = s.count(); start(); wait_events(3, k0); stop(); quiet(0.5, 3.0); abort(); quiet(0.4, 2.0)
     cmd(s, "tp %s 0.5 -60 0.5" % a.name); quiet(0.8, 3.0); tickc(4)
+    # --- a dead player's dig packets
+    prepare("minecraft:dirt", None)
+    cmd(s, "kill %s" % a.name); quiet(1.5, 5.0)
+    both("dead: start, stop"); start(); tickc(2); stop(); quiet(0.6, 3.0)
+    s.send("minecraft:client_command", m.varint(0)); quiet(1.0, 4.0)
+    both("end")
+elif a.scenario == "drops":
+    # blocks broken with and without the correct tool, with block_drops on: the item entities that appear (type and stack; positions and velocities are random).  dbcraft: dbcraft.entity-mode = inline
+    cmd(s, "gamerule block_drops true"); quiet(0.5, 2.0)
+    DROPS = [("stone_pick", "minecraft:stone", "minecraft:wooden_pickaxe"), ("stone_hand", "minecraft:stone", None), ("dirt_hand", "minecraft:dirt", None),
+             ("grass_hand", "minecraft:grass_block[snowy=false]", None), ("log_hand", "minecraft:oak_log[axis=y]", None), ("iron_ore_wood", "minecraft:iron_ore", "minecraft:wooden_pickaxe"),
+             ("iron_ore_stone", "minecraft:iron_ore", "minecraft:stone_pickaxe"), ("coal_ore_wood", "minecraft:coal_ore", "minecraft:wooden_pickaxe"), ("glass_pick", "minecraft:glass", "minecraft:iron_pickaxe"),
+             ("snow_block_shovel", "minecraft:snow_block", "minecraft:iron_shovel"), ("snow_block_hand", "minecraft:snow_block", None), ("hay_hoe", "minecraft:hay_block[axis=y]", "minecraft:iron_hoe"),
+             ("wool_hand", "minecraft:white_wool", None), ("double_slab", "minecraft:oak_slab[type=double,waterlogged=false]", None), ("single_slab", "minecraft:oak_slab[type=bottom,waterlogged=false]", None),
+             ("obsidian_iron", "minecraft:obsidian", "minecraft:iron_pickaxe"), ("bedrock_creative", "minecraft:bedrock", None), ("furnace_pick", "minecraft:furnace[facing=north,lit=false]", "minecraft:iron_pickaxe"),
+             ("cobweb_sword", "minecraft:cobweb", "minecraft:iron_sword"), ("cobweb_hand", "minecraft:cobweb", None), ("ladder_hand", "minecraft:ladder[facing=north,waterlogged=false]", None),
+             ("oak_door", "minecraft:oak_door[facing=north,half=lower,hinge=left,open=false,powered=false]", None)]
+    for nm, blk, tool in DROPS:
+        if nm == "bedrock_creative": continue
+        prepare(blk, tool); sp, correct = tool_speed_correct(tool, blk.split("[")[0]); w = plan_w(blk.split("[")[0], sp, correct)
+        both("drop %s" % nm); k0 = s.count(); start()
+        if w: wait_events(w, k0); stop()
+        quiet(1.0, 3.0)
+    both("end")
 elif a.scenario == "pending":
     pass
 else:

@@ -1,7 +1,7 @@
 -- Mining, part 3: what a broken block drops (docs/MINING-AND-COMMANDS.md).  Block.dropResources: the block's loot table (ref.block_loot, the jar's data/minecraft/loot_table/blocks) is
 -- rolled with the block's state and the player's tool, and every resulting stack is spawned as an item entity at the block (Block.popResource).  Items are ENTITIES in vanilla, so
 -- this only happens with dbcraft.entity-mode = inline (like the items a closed chest or a death would drop, sql/863 / 865); with the entity simulation off the blocks drop nothing.
--- The game rule block_drops is honoured.
+-- The game rule block_drops is honoured by player mining (recorded: nothing drops with it off), not by /setblock destroy and /fill destroy (which drop anyway, recorded).
 --
 -- The interpreter covers the constructs the 1,201 block tables of 26.3 use:
 --   entries      item, alternatives (the first child whose conditions hold), dynamic (shulker box contents: nothing)
@@ -190,10 +190,10 @@ begin
 end $$;
 
 -- Block.dropResources -> Block.popResource: an item entity at the block's centre (+- 0.25), pickup delay 10 ticks, the velocity ItemEntity's constructor gives
-create or replace function mc.block_drops(p mc.player, bx int, yy int, bz int, p_state text, p_tool text) returns void language plpgsql as $$
+create or replace function mc.block_drops(p mc.player, bx int, yy int, bz int, p_state text, p_tool text, p_rule boolean default true) returns void language plpgsql as $$
 declare l jsonb; d record; left_ int; chunk int;
 begin
-  if mc.entity_mode() <> 'inline' or not mc.gamerule_bool('block_drops') then return; end if;
+  if mc.entity_mode() <> 'inline' or (p_rule and not mc.gamerule_bool('block_drops')) then return; end if;
   select loot into l from ref.block_loot where block = split_part(p_state, '[', 1);
   if l is null then return; end if;
   for d in select * from mc.loot_roll(l, p_state, p_tool, bx, yy, bz) loop

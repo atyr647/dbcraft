@@ -54,7 +54,7 @@ declare dim text := 'minecraft:overworld'; st text := mc.get_block(dim, bx, yy, 
 begin
   if st is null or mc.is_air(st) then return false; end if;
   if split_part(st, '[', 1) not in ('minecraft:fire', 'minecraft:soul_fire') then perform mc.level_event_near(2001, bx, yy, bz, mc.block_state_id(st)); end if;
-  perform mc.block_drops(null, bx, yy, bz, st, null);
+  perform mc.block_drops(null, bx, yy, bz, st, null, false);                 -- (recorded: /setblock destroy and /fill destroy drop whatever block_drops says)
   ns := case when st like '%waterlogged=true%' then 'minecraft:water[level=0]' when st like 'minecraft:water%' or st like 'minecraft:lava%' then st else 'minecraft:air' end;
   insert into mc.block_actor select dim, bx, yy, bz, c.conn_id from net.conn c where c.state = 'play' and not c.closing;
   return mc.set_block(dim, bx, yy, bz, ns);
@@ -80,7 +80,7 @@ begin
     if not ok then perform mc.cmd_fail(me, mc.tc_translate('commands.setblock.failed')); return; end if;
   end if;
   if not is_strict then perform mc.shape_neighbours(dim, pos[1], pos[2], pos[3]); end if;
-  perform mc.cmd_success(me, mc.tc_translate('commands.setblock.success', array[mc.tc_arg_int(pos[1]), mc.tc_arg_int(pos[2]), mc.tc_arg_int(pos[3])]));
+  perform mc.cmd_success(me, mc.tc_translate_json('commands.setblock.success', jsonb_build_array(pos[1], pos[2], pos[3])));
 end $$;
 
 ------------------------------------------------------------------------------------------------ /fill
@@ -91,7 +91,7 @@ begin
   a := mc.cmd_pos_loaded(me, args -> 'from'); if a is null then return; end if;
   b := mc.cmd_pos_loaded(me, args -> 'to'); if b is null then return; end if;
   cnt := (abs(a[1] - b[1]) + 1)::bigint * (abs(a[2] - b[2]) + 1) * (abs(a[3] - b[3]) + 1);
-  if cnt > lim then perform mc.cmd_fail(me, mc.tc_translate('commands.fill.toobig', array[mc.tc_arg_int(lim), mc.tc_arg_int(cnt::int)])); return; end if;
+  if cnt > lim then perform mc.cmd_fail(me, mc.tc_translate_json('commands.fill.toobig', jsonb_build_array(lim, cnt))); return; end if;
   -- the path: fill/from/to/block[/mode[/filter[/mode2]]]
   mode := coalesce(nullif(parts[5], ''), 'replace');
   if mode = 'strict' then is_strict := true; mode := 'replace'; end if;
@@ -110,5 +110,5 @@ begin
     n := mc.fill_mode(dim, a[1], a[2], a[3], b[1], b[2], b[3], new_state, mode, filt);
   end if;
   if n = 0 then perform mc.cmd_fail(me, mc.tc_translate('commands.fill.failed')); return; end if;
-  perform mc.cmd_success(me, mc.tc_translate('commands.fill.success', array[mc.tc_arg_int(n)]));
+  perform mc.cmd_success(me, mc.tc_translate_json('commands.fill.success', jsonb_build_array(n)));
 end $$;

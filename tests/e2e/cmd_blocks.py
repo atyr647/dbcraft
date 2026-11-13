@@ -82,9 +82,9 @@ def record(port, out, groups, dbcraft, host="127.0.0.1"):
     for g in groups:
         # set-up: a clean area, both players at known places, same weather / time / spawn
         if dbcraft:
-            psql("select mc.fill('minecraft:overworld', -8, -60, -8, 40, -40, 40, 'minecraft:air'), mc.fill('minecraft:overworld', -8, -61, -8, 40, -61, 40, 'minecraft:grass_block[snowy=false]')")
+            psql("select mc.fill('minecraft:overworld', -8, -60, -8, 40, -50, 40, 'minecraft:air'), mc.fill('minecraft:overworld', -8, -61, -8, 40, -61, 40, 'minecraft:grass_block[snowy=false]')")
         else:
-            cmd("fill -8 -60 -8 40 -40 40 minecraft:air"); cmd("fill -8 -61 -8 40 -61 40 minecraft:grass_block")
+            cmd("fill -8 -60 -8 40 -50 40 minecraft:air"); cmd("fill -8 -61 -8 40 -61 40 minecraft:grass_block")
         cmd("tp Surv 0.5 -60 0.5 0 0"); cmd("tp Obs 20.5 -60 20.5 0 0"); cmd("clear Surv"); cmd("weather clear"); cmd("setworldspawn 0 -60 0 0 0"); quiet(0.6, 4.0)
         for x in c.values():
             for _ in range(4): x.send("minecraft:client_tick_end"); time.sleep(0.05)
@@ -113,8 +113,16 @@ def record(port, out, groups, dbcraft, host="127.0.0.1"):
     print("recorded %d steps: %s" % (len(res), out))
     for x in c.values(): x.close()
 
+def drop_periodic(steps):
+    """the periodic set_time (every 20 ticks, no clock in it) lands in a window by chance: only the packets that carry a clock are compared"""
+    for st in steps:
+        for who in st["got"]:
+            st["got"][who] = [e for e in st["got"][who] if not (e[0] == "set_time" and e[1][16:18] == "00")]
+        st["got"] = {k: v for k, v in st["got"].items() if v}
+    return steps
+
 def compare(a, b, only):
-    va, vb = json.load(open(a)), json.load(open(b)); bad = 0; n = 0
+    va, vb = drop_periodic(json.load(open(a))), drop_periodic(json.load(open(b))); bad = 0; n = 0
     key = lambda s: (s["group"], s["cmd"], s["who"])
     mb = {}
     for y in vb: mb.setdefault(key(y), []).append(y)

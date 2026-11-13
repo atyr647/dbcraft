@@ -25,6 +25,11 @@
 -- potion effects (haste, mining fatigue: no effects exist), attributes other than their defaults, spawn protection, the world border, the `player_loaded` gate, block entities'
 -- own destroy rules (beds, doors' other half are the block-support rules of sql/886), experience from ores, piglin anger.
 
+-- packets that go out after the tick's block updates and before the acknowledgements (vanilla: the inventory menu's broadcast of a changed slot comes after the chunk broadcast)
+create unlogged table if not exists mc.mining_out (seq bigint generated always as identity, conn_id int not null, data bytea not null);
+create or replace function mc.mining_out_flush() returns void language sql as $$
+  with o as (delete from mc.mining_out returning seq, conn_id, data) insert into mc.play_out (conn_id, data) select conn_id, data from o order by seq $$;
+
 create unlogged table if not exists mc.mining (
     uuid        uuid primary key,
     destroying  boolean not null default false,        -- ServerPlayerGameMode.isDestroyingBlock
@@ -132,13 +137,13 @@ begin
   if nd >= mx then                                                    -- broken
     perform mc.set_slot(p_uuid, v_slot, null, 0);
     update mc.player set inv_state = inv_state + 1 where uuid = p_uuid returning inv_state into v_state;
-    insert into mc.play_out (conn_id, data) values (p.conn_id, mc.pkt_cs(0, v_state, v_slot, mc.s_empty()));
+    insert into mc.mining_out (conn_id, data) values (p.conn_id, mc.pkt_cs(0, v_state, v_slot, mc.s_empty()));
     insert into mc.play_out (conn_id, data)
       select c.conn_id, mc.pkt_entity_event(p.entity_id, 47) from (select p.conn_id union select v.viewer_conn from mc.visible v where v.target_eid = p.entity_id) c order by c.conn_id;
   else
     perform mc.set_slot(p_uuid, v_slot, s.item, s.count, case when mc.damage_patch(nd) is null then null else jsonb_build_object('raw_hex', mc.damage_patch(nd)) end);
     update mc.player set inv_state = inv_state + 1 where uuid = p_uuid returning inv_state into v_state;
-    insert into mc.play_out (conn_id, data) values (p.conn_id, mc.pkt_cs(0, v_state, v_slot, mc.s_mk(s.item, s.count, mc.damage_patch(nd))));
+    insert into mc.mining_out (conn_id, data) values (p.conn_id, mc.pkt_cs(0, v_state, v_slot, mc.s_mk(s.item, s.count, mc.damage_patch(nd))));
   end if;
 end $$;
 

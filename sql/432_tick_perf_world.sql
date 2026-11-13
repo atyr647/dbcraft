@@ -224,7 +224,7 @@ declare r int := mc.prop_int('view-distance') + 1; i_bu int := mc.pid('block_upd
         m_cx int[] := '{}'; m_cz int[] := '{}'; m_pkt bytea[] := '{}'; mn int := 0;     -- the packets of multi-position sections: chunk, bytes
 begin
     -- (idle early return: no recorded block change, section change or pending acknowledgement)
-    if not exists (select 1 from mc.block_event) and not exists (select 1 from mc.pending_ack) then return 0; end if;
+    if not exists (select 1 from mc.block_event) and not exists (select 1 from mc.pending_ack) and not exists (select 1 from mc.mining_out) then return 0; end if;
     -- The per-tick sets live in arrays, not in temp tables (sql/437), and the queue is consumed with DELETE ... RETURNING instead of TRUNCATE.
     with ev as (delete from mc.block_event returning id, kind, dimension, x, y, z, old_state, new_state, cells, pkt)
     select array_agg(id), array_agg(kind), array_agg(dimension), array_agg(x), array_agg(y), array_agg(z), array_agg(old_state), array_agg(new_state), array_agg(cells), array_agg(pkt)
@@ -330,6 +330,8 @@ begin
         end if;
     end if;
 
+    -- (sql/891) the slots a dig changed (the tool's damage): the inventory menu sends them after the chunk broadcast, before the acknowledgement
+    if exists (select 1 from mc.mining_out) then perform mc.mining_out_flush(); end if;
     -- the acknowledgement: only the latest sequence of each connection this tick, after its block updates
     with a as (delete from mc.pending_ack returning conn_id, sequence)
     insert into mc.play_out (conn_id, data) select conn_id, proto.frame(i_ack, proto.varint(max(sequence))) from a group by conn_id;

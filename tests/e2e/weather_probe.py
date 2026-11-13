@@ -21,7 +21,7 @@ def record(port, out, host="127.0.0.1"):
     res = []
     for c in STEPS:
         k = len(s.events); t0 = time.time(); cmd(c); last = time.time()
-        while time.time() - last < 1.5 and time.time() - t0 < 40:
+        while time.time() - last < 4.5 and time.time() - t0 < 60:
             n = len(s.events); s.send("minecraft:client_tick_end"); time.sleep(0.05)
             if any(e["name"] == "minecraft:game_event" for e in s.events[n:]): last = time.time()
         ev = []

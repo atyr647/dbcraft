@@ -284,7 +284,7 @@ end $$;
 create or replace function mc.rd_resloc(s text, cur int) returns mc.cmd_ap language plpgsql immutable as $$
 declare e int := mc.rd_end(s, cur, '[0-9a-z_:/.-]'); v text := substr(s, cur + 1, e - cur);
 begin
-  if v = '' or v !~ '^([a-z0-9_.-]+:)?[a-z0-9_./-]+$' then return mc.ap_err('argument.id.invalid', null, cur); end if;
+  if v !~ '^([a-z0-9_.-]*:)?[a-z0-9_./-]*$' then return mc.ap_err('argument.id.invalid', null, cur); end if;
   return mc.ap_ok(e, to_jsonb(case when v like '%:%' then v else 'minecraft:' || v end));
 end $$;
 

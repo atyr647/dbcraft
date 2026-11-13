@@ -14,7 +14,8 @@
 --   standing signs, banners, skulls   rotation 0-15 from the yaw; wall versions via the nearest looking directions
 --   torches, lanterns, ladders, levers, buttons   the nearest looking directions with canSurvive (sturdy faces)
 --   fences, glass panes, iron bars   the connections to the four neighbours
--- Doors and beds (two blocks), walls (tall / low), vines and multiface blocks, snow layers, candles, leaves (persistent), tall plants, rails keep their default state.
+-- walls: connections, low / tall sides and the post (mc.wall_state: shapes above only as full / centre support)
+-- Doors and beds (two blocks), vines and multiface blocks, snow layers, candles, leaves (persistent), tall plants, rails keep their default state.
 
 create or replace function mc.cl(ch text, cls text) returns boolean language sql immutable as $$ select position('>' || cls || '>' in '>' || ch || '>') > 0 $$;
 
@@ -175,9 +176,35 @@ begin
     same := mc.cl(ch, 'FenceBlock') and ((split_part(nbs, '[', 1) = 'minecraft:nether_brick_fence') = (own_block = 'minecraft:nether_brick_fence'));
     return (not exc and solid_side) or same
            or (mc.cl(ch, 'FenceGateBlock') and mc.dir_axis(mc.st_get(nbs, 'facing')) = mc.dir_axis(mc.dir_cw(d)));
+  elsif kind = 'wall' then   -- WallBlock.connectsTo: another wall, a solid side (not leaves, barriers, pumpkins ...), bars or panes, a fence gate that faces along the wall
+    return mc.cl(ch, 'WallBlock') or (not exc and solid_side) or mc.cl(ch, 'IronBarsBlock')
+           or (mc.cl(ch, 'FenceGateBlock') and mc.dir_axis(mc.st_get(nbs, 'facing')) = mc.dir_axis(mc.dir_cw(d)));
   else   -- IronBarsBlock.attachsTo: a solid side, another pane or bars, a wall
     return (not exc and solid_side) or mc.cl(ch, 'IronBarsBlock') or mc.cl(ch, 'WallBlock');
   end if;
+end $$;
+
+-- WallBlock.updateShape / getStateForPlacement (read from the 26.3 bytecode): each side connects (connectsTo) as LOW, or TALL when the block above has a sturdy bottom face (the collision
+-- shape above covers the test strip of that side; here: a full face), and the post (up) stands when the wall above has one, when the sides are not a straight line, or, without a straight
+-- TALL line, when the block above is in the tag wall_post_override or covers the post (here: has a centre-sturdy bottom face).  The shapes of the blocks above are not modelled further
+-- than those two support types, so a block above that covers only part of a strip (a wall's own arm, a fence's post) counts as covering the post and not the strip.
+create or replace function mc.wall_state(p_dim text, p_st text, x int, y int, z int) returns text language plpgsql stable as $$
+declare st text := p_st; above text := coalesce(mc.get_block(p_dim, x, y + 1, z), 'minecraft:air'); af boolean := mc.face_sturdy(above, 'down', 'f'); ac boolean := mc.face_sturdy(above, 'down', 'c');
+        d text; side text; nn boolean; sn boolean; en boolean; wn boolean; up boolean; above_wall_up boolean; line boolean;
+begin
+  foreach d in array array['north', 'east', 'south', 'west'] loop
+    side := case when mc.connects(p_dim, 'wall', null, x, y, z, d) then case when af then 'tall' else 'low' end else 'none' end;
+    st := mc.st_set(st, d, side);
+  end loop;
+  above_wall_up := coalesce((select s.chain like '%WallBlock%' from mc.dyn_state s where s.name = above), false) and mc.st_get(above, 'up') = 'true';
+  nn := mc.st_get(st, 'north') = 'none'; sn := mc.st_get(st, 'south') = 'none'; en := mc.st_get(st, 'east') = 'none'; wn := mc.st_get(st, 'west') = 'none';
+  if above_wall_up then up := true;
+  elsif (nn and sn and wn and en) or nn <> sn or wn <> en then up := true;
+  else
+    line := (mc.st_get(st, 'north') = 'tall' and mc.st_get(st, 'south') = 'tall') or (mc.st_get(st, 'east') = 'tall' and mc.st_get(st, 'west') = 'tall');
+    up := not line and (ac or exists (select 1 from ref.dp_tag_member t where t.registry = 'minecraft:block' and t.tag = 'minecraft:wall_post_override' and t.member = split_part(above, '[', 1)));
+  end if;
+  return mc.st_set(st, 'up', case when up then 'true' else 'false' end);
 end $$;
 
 -- ChestBlock: the neighbouring chest a new one pairs with (candidatePartnerFacing)
@@ -300,6 +327,8 @@ begin
       st := mc.st_set(st, d, case when mc.connects(p_dim, 'pane', own, tx, ty, tz, d) then 'true' else 'false' end);
     end loop;
     return st;
+  elsif mc.cl(ch, 'WallBlock') then
+    return mc.wall_state(p_dim, mc.st_set(st, 'waterlogged', case when wl then 'true' else 'false' end), tx, ty, tz);
   end if;
   return st;
 end $$;
@@ -383,6 +412,10 @@ begin
     return case when mc.dir_horizontal(d) then mc.st_set(st, d, case when mc.connects(p_dim, 'fence', own, x, y, z, d) then 'true' else 'false' end) else st end;
   elsif mc.cl(ch, 'IronBarsBlock') then
     return case when mc.dir_horizontal(d) then mc.st_set(st, d, case when mc.connects(p_dim, 'pane', own, x, y, z, d) then 'true' else 'false' end) else st end;
+  elsif mc.cl(ch, 'WallBlock') then
+    return case when d = 'down' then st else mc.wall_state(p_dim, st, x, y, z) end;
+  elsif mc.cl(ch, 'SnowyBlock') then      -- grass block, podzol, mycelium: snowy follows the block above (recorded: breaking a snow block under which grass lay changed both cells)
+    return case when d = 'up' then mc.st_set(st, 'snowy', case when split_part(ns, '[', 1) in ('minecraft:snow', 'minecraft:snow_block', 'minecraft:powder_snow') then 'true' else 'false' end) else st end;
   elsif mc.cl(ch, 'StairBlock') then
     return case when mc.dir_horizontal(d) then mc.st_set(st, 'shape', mc.stairs_shape(p_dim, st, x, y, z)) else st end;
   elsif mc.cl(ch, 'FenceGateBlock') then

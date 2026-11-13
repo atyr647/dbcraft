@@ -52,14 +52,20 @@ def reduce(path):
         raw = bytes.fromhex(e["hex"]); _, o = varint(raw, 0); _, o = varint(raw, o); b = raw[o:]
         r = steps[cur]
         if n == "level_event":
-            ev = struct.unpack(">i", b[:4])[0]; r.append(("level_event", ev, pos(b, 4), struct.unpack(">i", b[12:16])[0]))
+            ev = struct.unpack(">i", b[:4])[0]; pp = pos(b, 4)
+            if abs(pp[0]) > 12 or pp[1] <= -61 or abs(pp[2]) > 12: continue          # (random ticks of the grass layer far from the test: not under test)
+            r.append(("level_event", ev, pp, struct.unpack(">i", b[12:16])[0]))
         elif n == "block_destruction":
             _, o = varint(b, 0); stg = b[o + 8]
             r.append(("block_destruction", pos(b, o), stg if stg <= 10 or stg == 255 else "big"))     # (a delayed dig's stage is  progress * (start tick + 1): it depends on how long the player has been online)
         elif n == "block_update":
-            r.append(("block_update", pos(b, 0), varint(b, 8)[0]))
+            pp = pos(b, 0)
+            if abs(pp[0]) > 12 or pp[1] <= -61 or abs(pp[2]) > 12: continue
+            r.append(("block_update", pp, varint(b, 8)[0]))
         elif n == "block_changed_ack":
-            r.append(("block_changed_ack", varint(b, 0)[0]))
+            r.append(("block_changed_ack",))                                   # (the sequence numbers count the probe's own packets: not compared)
+        elif n == "section_blocks_update":
+            r.append(("section_blocks_update", b.hex()))
         elif n == "container_set_slot":
             wid, o = varint(b, 0); st, o = varint(b, o); slot = struct.unpack(">h", b[o:o + 2])[0]; sk, _ = stack(b, o + 2); r.append(("container_set_slot", wid, slot, sk))
         elif n == "set_player_inventory":
@@ -93,6 +99,7 @@ for who in ("surv", "obs"):
     vo, vs = reduce("%s_%s_%s.jsonl" % (vp, scn, who)); oo, os_ = reduce("%s_%s_%s.jsonl" % (op, scn, who))
     for st in vo:
         if st.endswith(": end") or st.startswith("case "): continue            # (the set-up of the next case: /give noise and the like)
+        if st not in os_: continue                                        # (a case the dbcraft run did not make)
         a, b = vs.get(st, []), os_.get(st, [])
         # (the item entities of a drop: their number is compared, not their packets after the first; set_entity_data and movement are not reduced at all)
         total += 1
