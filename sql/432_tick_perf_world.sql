@@ -118,7 +118,10 @@ declare
 begin
     breaks := 0; places := 0; refused := 0;
     -- (idle early return, the only change to this copy: no block packet this tick, nothing to do; saves planning and cursor setup every tick)
-    if not exists (select 1 from mc.play_in_work m where m.packet_id in (i_act, i_use)) then return next; return; end if;
+    if not exists (select 1 from mc.play_in_work m where m.packet_id in (i_act, i_use)) then
+        if exists (select 1 from mc.mining) then perform mc.mining_tick(cur_tick); end if;       -- (sql/891) a dig in progress ticks without a packet
+        return next; return;
+    end if;
     for r in select m.seq as mseq, m.packet_id, m.conn_id, m.body, p.uuid, p.gamemode, p.x, p.y, p.z, p.held_slot, p.inv_state, p.yaw, p.pitch, p.sneaking
              from mc.play_in_work m join mc.player p on p.conn_id = m.conn_id
              where m.packet_id in (i_act, i_use) order by m.seq loop
@@ -128,19 +131,10 @@ begin
                 select val, nxt into act, o from proto.varint_read(r.body, 0);
                 select * into pos from proto.position_read(r.body, o);
                 sq := (select val from proto.varint_read(r.body, o + 9));
-                if act in (0, 2, 3) and sq is not null then insert into mc.pending_ack (conn_id, sequence) values (r.conn_id, sq); end if;
-                continue when not ((act = 0 and r.gamemode = 1) or (act = 3 and r.gamemode = 0));
-                cur := mc.get_block(dim, pos.x, pos.y, pos.z);
-                continue when cur is null or mc.is_air(cur);
-                if not mc.in_block_reach(r.x, r.y, r.z, pos.x, pos.y, pos.z, r.gamemode) or (r.gamemode = 0 and mc.unbreakable(cur)) then
-                    perform mc.queue_block_update(r.conn_id, pos.x, pos.y, pos.z, cur);
-                    refused := refused + 1;
-                else
-                    perform mc.set_block(dim, pos.x, pos.y, pos.z, 'minecraft:air');
-                    perform mc.shape_neighbours(dim, pos.x, pos.y, pos.z);                                  -- (sql/890) a fence next to it no longer connects
-                    insert into mc.block_actor values (dim, pos.x, pos.y, pos.z, r.conn_id);
-                    breaks := breaks + 1;
-                    if r.gamemode = 0 then update mc.player set exhaustion = least(exhaustion + 0.005::real, 40::real) where conn_id = r.conn_id; end if;      -- (survival, sql/830) Block.playerDestroy: causeFoodExhaustion(0.005)
+                if act in (0, 1, 2, 3) and sq is not null then insert into mc.pending_ack (conn_id, sequence) values (r.conn_id, sq); end if;
+                -- (sql/891) the digging protocol: ServerPlayerGameMode.handleBlockBreakAction for start / change direction / abort / stop; creative breaks at once, survival needs its time
+                if act in (0, 1, 2, 3) then
+                    if mc.mining_action(r.uuid, act, pos.x, pos.y, pos.z, get_byte(r.body, o + 8), cur_tick) = 1 then breaks := breaks + 1; end if;
                 end if;
             else
                 continue when length(r.body) < 19;
@@ -210,6 +204,7 @@ begin
         end;
     end loop;
     delete from mc.play_in_work where packet_id in (i_act, i_use);
+    if exists (select 1 from mc.mining) then perform mc.mining_tick(cur_tick); end if;           -- (sql/891) ServerPlayerGameMode.tick: after the packets of the tick
     return next;
 end $$;
 
