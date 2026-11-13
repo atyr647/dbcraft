@@ -21,12 +21,20 @@ begin
   delete from mc.visible v where v.target_eid = any (e);
 end $$;
 
+-- a player's own spawn point (/spawnpoint, sql/895) and the pitch of the world spawn (/setworldspawn); here because the respawn below declares the row type
+create table if not exists mc.player_spawn (uuid uuid primary key, dimension text not null default 'minecraft:overworld', x int not null, y int not null, z int not null,
+                                            yaw real not null default 0, pitch real not null default 0);
+alter table mc.game_state add column if not exists spawn_pitch real not null default 0;
+
 create or replace function mc.respawn_player(p_uuid uuid, p_cur bigint) returns void language plpgsql as $$
 declare p mc.player; gs mc.game_state; w mc.world; tid int; keep boolean := mc.rule_bool('keep_inventory', false); op int; diff int := mc.difficulty(); r int := mc.prop_int('view-distance') + 1;
-        sx int; sy int; sz int; nch int; chunks bytea;
+        sx int; sy int; sz int; nch int; chunks bytea; ps mc.player_spawn; rx float8; ry float8; rz float8; ryaw real; rpitch real;
 begin
   select * into p from mc.player where uuid = p_uuid and dead and conn_id is not null; if not found then return; end if;
   select * into gs from mc.game_state; select * into w from mc.world limit 1;
+  select * into ps from mc.player_spawn where uuid = p_uuid;                                   -- (sql/895) /spawnpoint: the player's own spawn point
+  rx := case when ps.uuid is null then gs.spawn_x else ps.x + 0.5 end; ry := case when ps.uuid is null then gs.spawn_y else ps.y end; rz := case when ps.uuid is null then gs.spawn_z else ps.z + 0.5 end;
+  ryaw := case when ps.uuid is null then gs.spawn_yaw else ps.yaw end; rpitch := case when ps.uuid is null then 0 else ps.pitch end;
   tid := p.teleport_id + 1; op := mc.permission_level(p.uuid); sx := floor(gs.spawn_x)::int; sy := floor(gs.spawn_y)::int; sz := floor(gs.spawn_z)::int;
   -- viewers who still see the corpse forget it; the new player is announced by the next visibility pass, which also tells the respawned client about everybody
   insert into mc.play_out (conn_id, data) select v.viewer_conn, mc.pkt_remove_entities(array[p.entity_id]) from mc.visible v where v.target_eid = p.entity_id;
@@ -36,8 +44,8 @@ begin
          last_hurt = 0, cb_tick = null, cb_fall = 0, cb_type = null, use_slot = null, use_until = null, pend_slot = null, sprinting = false,
          xp_level = case when keep then xp_level else 0 end, xp_progress = case when keep then xp_progress else 0 end, xp_total = case when keep then xp_total else 0 end,
          xp_score = case when keep then xp_score else 0 end,
-         x = gs.spawn_x, y = gs.spawn_y, z = gs.spawn_z, yaw = gs.spawn_yaw, pitch = 0, on_ground = true, chunk_x = floor(gs.spawn_x / 16)::int, chunk_z = floor(gs.spawn_z / 16)::int,
-         sent_qx = mc.quant(gs.spawn_x), sent_qy = mc.quant(gs.spawn_y), sent_qz = mc.quant(gs.spawn_z), sent_yaw = gs.spawn_yaw, sent_pitch = 0, last_sent_tick = p_cur,
+         x = rx, y = ry, z = rz, yaw = ryaw, pitch = rpitch, on_ground = true, chunk_x = floor(rx / 16)::int, chunk_z = floor(rz / 16)::int,
+         sent_qx = mc.quant(rx), sent_qy = mc.quant(ry), sent_qz = mc.quant(rz), sent_yaw = ryaw, sent_pitch = rpitch, last_sent_tick = p_cur,
          vis_dirty = true, vis_ocx = null, vis_ocz = null, teleport_id = tid, awaiting_teleport = tid, inv_state = 1,
          sent_health = 20, sent_food = 20, sent_sat_zero = false, sent_eh = 20, sent_using = false, sent_score = case when keep then xp_score else 0 end,
          sent_xp_total = case when keep then xp_total else 0 end
@@ -52,13 +60,13 @@ begin
        mc.pkt_player_abilities(mc.gamemode_abilities(p.gamemode))
     || mc.pkt_respawn(p.gamemode, coalesce(w.seed, 0), p.death_x::int, p.death_y::int, p.death_z::int)
     || mc.pkt_player_position(tid, p.x, p.y, p.z, 0, 0, 0, p.yaw, p.pitch, 0)
-    || mc.cb('set_default_spawn_position', proto.string('minecraft:overworld') || proto.position(sx, sy, sz) || proto.f32(gs.spawn_yaw) || proto.f32(0))
+    || mc.cb('set_default_spawn_position', proto.string('minecraft:overworld') || proto.position(sx, sy, sz) || proto.f32(gs.spawn_yaw) || proto.f32(coalesce(gs.spawn_pitch, 0)))
     || mc.pkt_change_difficulty(diff, false)
     || mc.pkt_set_experience(p.xp_progress, p.xp_level, p.xp_total)
     || mc.cb('post_effects', proto.varint(0))
     || mc.cb('initialize_border', proto.f64(0) || proto.f64(0) || proto.f64(5.9999968e7) || proto.f64(5.9999968e7) || proto.varlong(0) || proto.varint(29999984) || proto.varint(5) || proto.varint(300))
     || mc.pkt_set_time(gs.game_time, array[1, 0], array[gs.day_time, gs.day_time])
-    || mc.cb('set_default_spawn_position', proto.string('minecraft:overworld') || proto.position(sx, sy, sz) || proto.f32(gs.spawn_yaw) || proto.f32(0))
+    || mc.cb('set_default_spawn_position', proto.string('minecraft:overworld') || proto.position(sx, sy, sz) || proto.f32(gs.spawn_yaw) || proto.f32(coalesce(gs.spawn_pitch, 0)))
     || mc.pkt_game_event(13, 0)
     || mc.cb('ticking_state', proto.f32(20) || proto.bool(false)) || mc.cb('ticking_step', proto.varint(0))
     || mc.pkt_entity_event(p.entity_id, 24 + op)

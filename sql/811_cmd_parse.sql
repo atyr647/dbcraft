@@ -451,6 +451,8 @@ begin
       end if;
     end loop;
     return mc.ap_ok(p, to_jsonb(coords));
+  when 'minecraft:component' then
+    return mc.rd_component(s, cur);
   when 'minecraft:block_pos' then
     return mc.rd_blockpos(s, cur);
   when 'minecraft:block_state' then

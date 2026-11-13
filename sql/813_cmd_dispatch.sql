@@ -84,54 +84,87 @@ begin
 end $$;
 
 ------------------------------------------------------------------------------------------------ /time
+-- The clock: mc.game_state.day_time (the overworld clock), paused / rate / the fraction of a tick not yet advanced (a rate of 2 adds 2 a tick, 0.5 one every other tick).  tick_core
+-- advances it (sql/837).  The command forms (recorded from the real 26.3 server): `time <set|add|query|pause|resume|rate> ...` and the same with `of <clock>`; only the clock
+-- minecraft:overworld exists here.  A timeline (minecraft:day: period 24,000, moon: 192,000, villager_schedule: 24,000; early_game has none) reads the clock modulo its period; the
+-- number of periods passed is `repetition`.  The set_time packet a command sends carries the clock with partial tick 0 and rate 0 (as recorded; the periodic one carries no clock).
+alter table mc.game_state add column if not exists clock_paused boolean not null default false, add column if not exists clock_rate real not null default 1, add column if not exists clock_acc float8 not null default 0;
+
+-- the set_time packet of a command: the game time and the overworld clock (partial tick 0, rate 0: as the real server sent it after /time)
+create or replace function mc.cmd_sync_time() returns void language sql as $$
+  insert into mc.play_out (conn_id, data)
+  select p.conn_id, mc.cb('set_time', proto.i64(g.game_time) || proto.varint(1) || proto.varint(0) || proto.varlong(g.day_time) || proto.f32(0) || proto.f32(0))
+    from mc.player p, mc.game_state g where p.conn_id is not null order by p.entity_id $$;
+
 create or replace function mc.cmd_run_time(me mc.player, lvl int, input text, sig text, args jsonb) returns void language plpgsql as $$
-declare v bigint; marker text; day bigint; cur bigint; markers jsonb := '{"minecraft:day":1000,"minecraft:noon":6000,"minecraft:night":13000,"minecraft:midnight":18000}';
+declare v bigint; marker text; day bigint; cur bigint; markers jsonb := '{"minecraft:day":1000,"minecraft:noon":6000,"minecraft:night":13000,"minecraft:midnight":18000,"minecraft:wake_up_from_sleep":0,"minecraft:roll_village_siege":18000}';
+        clk text := coalesce(args ->> 'clock', 'minecraft:overworld'); tl text; period bigint; g mc.game_state; clock_arg bytea := mc.tc_arg_str('minecraft:overworld');
 begin
+  sig := regexp_replace(sig, '^time/of/clock/', 'time/');
+  if clk <> 'minecraft:overworld' then perform mc.cmd_fail(me, proto.nbt_str('text', '/time of ' || clk || ' is not implemented in dbcraft: only minecraft:overworld')); return; end if;
+  select * into g from mc.game_state; cur := g.day_time;
   if sig = 'time/query/gametime' then
-    perform mc.cmd_success(me, proto.cat(array[proto.nbt_list_long('with', array[(select game_time from mc.game_state)]), proto.nbt_str('translate', 'commands.time.query.gametime')]), false);
+    perform mc.cmd_success(me, proto.cat(array[proto.nbt_list_long('with', array[g.game_time]), proto.nbt_str('translate', 'commands.time.query.gametime')]), false);
     return;
   elsif sig = 'time/query/time' then
-    perform mc.cmd_success(me, mc.tc_translate('commands.time.query.absolute', array[mc.tc_arg_str('minecraft:overworld'), mc.tc_arg_long((select day_time from mc.game_state))]), false);   -- (verified: the ticks are a long)
+    perform mc.cmd_success(me, mc.tc_translate('commands.time.query.absolute', array[clock_arg, mc.tc_arg_long(cur)]), false);   -- (verified: the ticks are a long)
+    return;
+  elsif sig like 'time/query/timeline%' then
+    tl := args ->> 'timeline';
+    period := case tl when 'minecraft:day' then 24000 when 'minecraft:moon' then 192000 when 'minecraft:villager_schedule' then 24000 end;      -- (the jar's timelines; early_game has no period)
+    if sig = 'time/query/timeline/repetition' then
+      perform mc.cmd_success(me, mc.tc_translate('commands.time.query.timeline.repetitions', array[mc.tc_arg_str(tl), mc.tc_arg_long(case when period is null then 0 else cur / period end)]), false);
+    else
+      perform mc.cmd_success(me, mc.tc_translate('commands.time.query.timeline', array[mc.tc_arg_str(tl), mc.tc_arg_long(case when period is null then cur else cur % period end)]), false);
+    end if;
+    return;
+  elsif sig = 'time/pause' or sig = 'time/resume' then
+    if g.clock_paused = (sig = 'time/pause') then
+      perform mc.cmd_fail(me, mc.tc_translate_strs(case when sig = 'time/pause' then 'commands.time.pause.already_paused' else 'commands.time.pause.already_running' end, array['minecraft:overworld']));
+      return;
+    end if;
+    update mc.game_state set clock_paused = (sig = 'time/pause');
+    perform mc.cmd_sync_time();
+    perform mc.cmd_success(me, mc.tc_translate_strs(case when sig = 'time/pause' then 'commands.time.pause' else 'commands.time.resume' end, array['minecraft:overworld']));
+    return;
+  elsif sig = 'time/rate/rate' then
+    update mc.game_state set clock_rate = (args ->> 'rate')::real, clock_acc = 0;
+    perform mc.cmd_sync_time();
+    perform mc.cmd_success(me, mc.tc_translate('commands.time.rate', array[clock_arg, proto.nbt_float('', (args ->> 'rate')::real)]));
     return;
   elsif sig = 'time/set/timemarker' then
     marker := args ->> 'timemarker';
     if not markers ? marker then
       perform mc.cmd_fail(me, mc.tc_translate_strs('commands.time.no_time_marker_found', array[marker, 'minecraft:overworld'])); return;
     end if;
-    day := (markers ->> marker)::bigint; select day_time into cur from mc.game_state;
-    -- the next time the marker occurs (verified: /time set day, noon, midnight, night answered with the next occurrence after the clock's total)
-    update mc.game_state set day_time = cur - cur % 24000 + day + case when cur % 24000 >= day then 24000 else 0 end;
+    day := (markers ->> marker)::bigint;
+    -- the next time the marker occurs (verified: /time set day, noon, midnight, night answered with the next occurrence after the clock's total); sitting exactly on it is said
+    update mc.game_state set day_time = cur - cur % 24000 + day + case when cur % 24000 > day then 24000 else 0 end;
+    perform mc.cmd_sync_time();
+    if cur % 24000 = day then perform mc.cmd_fail(me, mc.tc_translate_strs('commands.time.set.already_at_time_marker', array['minecraft:overworld', marker])); return; end if;
+    perform mc.cmd_success(me, mc.tc_translate_strs('commands.time.set.time_marker', array['minecraft:overworld', marker]));     -- (verified)
+    return;
   elsif sig in ('time/set/time', 'time/add/time') then
     v := (args ->> 'time')::bigint;
     update mc.game_state set day_time = case when sig = 'time/set/time' then v else day_time + v end;
-  else
-    perform mc.cmd_fail(me, proto.nbt_str('text', '/' || replace(sig, '/', ' ') || ' is not implemented in dbcraft')); return;
-  end if;
-  insert into mc.play_out (conn_id, data) select conn_id, mc.pkt_set_time((select game_time from mc.game_state), array[0], array[(select day_time from mc.game_state)])
-    from mc.player where conn_id is not null order by entity_id;
-  if sig = 'time/set/timemarker' then
-    perform mc.cmd_success(me, mc.tc_translate_strs('commands.time.set.time_marker', array['minecraft:overworld', marker]));     -- (verified)
-  else
+    perform mc.cmd_sync_time();
     -- (verified) `time set N`: the ticks are an int; `time add N`: a long (the clock total)
-    perform mc.cmd_success(me, mc.tc_translate('commands.time.set.absolute', array[mc.tc_arg_str('minecraft:overworld'),
+    perform mc.cmd_success(me, mc.tc_translate('commands.time.set.absolute', array[clock_arg,
       case when sig = 'time/set/time' then mc.tc_arg_int((select day_time from mc.game_state)::int) else mc.tc_arg_long((select day_time from mc.game_state)) end]));
+    return;
   end if;
+  perform mc.cmd_fail(me, proto.nbt_str('text', '/' || replace(sig, '/', ' ') || ' is not implemented in dbcraft'));
 end $$;
 
 ------------------------------------------------------------------------------------------------ /weather
 create or replace function mc.cmd_run_weather(me mc.player, lvl int, input text, sig text, args jsonb) returns void language plpgsql as $$
-declare kind text := split_part(sig, '/', 2);
+declare kind text := split_part(sig, '/', 2); dur int := coalesce((args ->> 'duration')::int, -1);
 begin
-  -- events only when the weather changes (the real server sent none for "weather clear" on a clear world).  The duration is accepted and ignored: dbcraft has no
-  -- weather timer, so rain and thunder last until the next /weather.
-  if (select raining <> (kind <> 'clear') or thundering <> (kind = 'thunder') from mc.game_state) then
-    insert into mc.play_out (conn_id, data)       -- unverified: STOP_RAINING / START_RAINING, then the rain and thunder levels
-      select conn_id, case when kind = 'clear' then mc.pkt_game_event(2, 0) else mc.pkt_game_event(1, 0) end
-                   || mc.pkt_game_event(7, case when kind = 'clear' then 0 else 1 end) || mc.pkt_game_event(8, case when kind = 'thunder' then 1 else 0 end)
-        from mc.player where conn_id is not null order by entity_id;
-  end if;
-  update mc.game_state set raining = kind <> 'clear', thundering = kind = 'thunder';
-  perform mc.cmd_success(me, mc.tc_translate('commands.weather.set.' || kind));       -- (verified for 'clear')
+  -- WeatherCommand (read from the bytecode): the command only sets the clock (sql/894: counters, flags; the clock sends the game events, tick by tick); no duration = a random one
+  if kind = 'clear' then perform mc.weather_set(case when dur = -1 then mc.uniform_int(12000, 180000) else dur end, 0, false, false);
+  elsif kind = 'rain' then perform mc.weather_set(0, case when dur = -1 then mc.uniform_int(12000, 24000) else dur end, true, false);
+  else perform mc.weather_set(0, case when dur = -1 then mc.uniform_int(3600, 15600) else dur end, true, true); end if;
+  perform mc.cmd_success(me, mc.tc_translate('commands.weather.set.' || kind));       -- (verified)
 end $$;
 
 ------------------------------------------------------------------------------------------------ /difficulty

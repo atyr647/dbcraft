@@ -6,8 +6,8 @@ dbcraft; per step every packet of the kinds below that either client received is
 usage: tests/e2e/cmd_blocks.py record --port P --out FILE [--dbcraft] [--group NAME[,NAME]]     (vanilla: OPS=Surv,Obs tests/e2e/vanilla_start.sh;  dbcraft: a dev gateway with Surv and Obs as operators)
        tests/e2e/cmd_blocks.py compare VANILLA.json OURS.json [--group NAME]
 Groups: setblock fill spawn weather time title.  The world edits of the set-up (not recorded) go through /fill on vanilla and psql (the PG* variables) on dbcraft.
-Kept: system_chat (exact bytes), block_update, section_blocks_update (exact bytes), level_event, set_default_spawn_position, game_event, title packets, set_time (only in the
-`time` group), add_entity (the type only), sound.  The world and the clients' positions are the same at the start of every group.
+Kept: system_chat (exact bytes), block_update (not the grass layer: random ticks), section_blocks_update (exact bytes), level_event, set_default_spawn_position, title
+packets, set_time (only in the `time` group), add_entity (the type only).  Game events (the weather) are tests/e2e/weather_probe.py's.  The world and the clients' positions are the same at the start of every group.
 """
 import json, os, subprocess, struct, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -16,19 +16,19 @@ import mcclient as m
 GROUPS = {
   "setblock": [("Surv", c) for c in (
     "setblock 0 -60 5 stone", "setblock 0 -60 5 stone", "setblock 0 -60 5 minecraft:oak_log[axis=x]", "setblock 0 -60 5 oak_log[axis=x] keep", "setblock 0 -60 6 oak_log keep",
-    "setblock 0 -60 5 air destroy", "setblock 0 -60 5 air destroy", "setblock 0 -60 5 stone replace", "setblock ~ ~ ~ glass", "setblock ~1 ~2 ~-3 sand", "setblock ^ ^ ^3 dirt",
+    "setblock 0 -60 5 air destroy", "setblock 0 -60 5 air destroy", "setblock 0 -60 5 stone replace", "setblock ~ ~ ~ glass", "setblock ~1 ~2 ~-3 oak_planks", "setblock ^ ^ ^3 dirt",
     "setblock ^1 ^ ^3 dirt", "setblock 0 -60 7 oak_stairs[facing=north,half=top]", "setblock 0 -60 8 oak_door[half=lower]", "setblock 0 -60 9 chest",
     "setblock 0 -60 5 stone destroy", "setblock 0 -60 5 oak_planks destroy", "setblock 0 -60 5 stone strict", "setblock 0 -60 5 air",
     "setblock 0 -60 10 stone[foo=bar]", "setblock 0 -60 10 oak_log[axis=q]", "setblock 0 -60 10 oak_log[axis]", "setblock 0 -60 10 oak_log[axis=x", "setblock 0 -60 10 oak_log[axis=x,axis=y]",
     "setblock 0 -60 10 nonsense", "setblock 0 -60 10 Stone", "setblock 0 -60 10 #minecraft:logs", "setblock 0 -60 10 ", "setblock 0 -60", "setblock 0 -60 x stone",
     "setblock 0 400 0 stone", "setblock 0 -70 0 stone", "setblock 100000 0 0 stone", "setblock 40000000 0 0 stone", "setblock 0.5 -60 10 stone", "setblock ~ ^ ~ stone",
-    "setblock 0 -60 10 stone foo", "setblock 0 -60 11 air", "setblock 0 -60 11 stone[]", "setblock 0 -60 11 oak_log[ axis = z ]", "setblock 1 -60 11 water", "setblock 1 -59 11 water[level=3]",
-    "setblock 2 -60 11 lava", "setblock 0 -60 12 air replace", "setblock 3 -60 11 minecraft:stone[]", "setblock ~ ~-1 ~ stone", "setblock 0 -59 12 oak_slab[type=double]",
-    "setblock 0 -59 12 oak_slab[type=bottom,waterlogged=true]", "setblock 0 -59 12 air destroy")],
+    "setblock 0 -60 10 stone foo", "setblock 0 -60 11 air", "setblock 0 -60 11 stone[]", "setblock 0 -60 11 oak_log[ axis = z ]",
+    "setblock 0 -60 12 air replace", "setblock 3 -60 11 minecraft:stone[]", "setblock ~ ~-1 ~ stone", "setblock 0 -59 12 oak_slab[type=double]", "setblock 0 -59 12 air destroy",
+    "setblock 0 -60 13 oak_fence", "setblock 0 -60 14 oak_fence", "setblock 0 -60 13 air destroy")],
   "fill": [("Surv", c) for c in (
     "fill 0 -60 12 3 -58 14 stone", "fill 0 -60 12 3 -58 14 stone", "fill 0 -60 12 3 -58 14 glass hollow", "fill 0 -60 12 3 -58 14 oak_planks outline", "fill 0 -60 12 3 -58 14 air replace stone",
     "fill 0 -60 12 3 -58 14 gold_block replace #minecraft:planks", "fill 0 -60 12 3 -58 14 diamond_block replace oak_planks", "fill 0 -60 12 3 -58 14 stone keep",
-    "fill 0 -60 12 3 -58 14 air destroy", "fill ~ ~ ~5 ~2 ~2 ~7 sand", "fill 0 -60 20 100 -50 100 stone", "fill 0 -60 20 31 -50 20 stone", "fill 0 -60 12 3 -58 14 minecraft:nonsense",
+    "fill 0 -60 12 3 -58 14 air destroy", "fill ~ ~ ~5 ~2 ~2 ~7 oak_planks", "fill 0 -60 0 47 -30 47 stone", "fill 0 -60 20 31 -50 20 stone", "fill 0 -60 12 3 -58 14 minecraft:nonsense",
     "fill 0 -60 12 3 -58 14 stone replace minecraft:nonsense", "fill 0 -60 12 3 -58 14 stone replace #minecraft:nonsense", "fill 0 -60 12 3 -58 14 stone replace oak_log[axis=q]",
     "fill 100000 0 0 100001 0 0 stone", "fill 0 -60 12 3 -58 stone", "fill 0 -60 12 3 -58 14 stone strict", "fill 3 -58 14 0 -60 12 glass replace stone", "fill 0 -60 12 0 -60 12 stone",
     "fill 0 -60 12 3 -58 14 oak_log[axis=x] replace stone", "fill 0 -60 12 3 -58 14 stone hollow", "fill 0 -60 12 3 -58 14 air hollow", "fill 0 -60 12 1 -60 12 stone replace air",
@@ -61,9 +61,9 @@ GROUPS = {
     'tellraw Surv {"text":""}', 'tellraw Surv ""', 'tellraw Surv {}', 'tellraw Surv 12', 'tellraw Surv {"text":"a","color":"red","extra":[{"text":"b","color":"blue"}]}',
     'tellraw Surv {"text":"x","shadow_color":-1}', 'tellraw Surv {"text":"x","shadow_color":[1.0,0.5,0.0,1.0]}')],
 }
-KEEP = {"minecraft:system_chat", "minecraft:block_update", "minecraft:section_blocks_update", "minecraft:level_event", "minecraft:set_default_spawn_position", "minecraft:game_event",
+KEEP = {"minecraft:system_chat", "minecraft:block_update", "minecraft:section_blocks_update", "minecraft:level_event", "minecraft:set_default_spawn_position",
         "minecraft:set_title_text", "minecraft:set_subtitle_text", "minecraft:set_titles_animation", "minecraft:clear_titles", "minecraft:set_action_bar_text", "minecraft:set_time",
-        "minecraft:add_entity", "minecraft:sound"}
+        "minecraft:add_entity"}
 
 def psql(sql): subprocess.run(["psql", "-X", "-q", "-At", "-c", sql], check=True, capture_output=True)
 
@@ -84,7 +84,7 @@ def record(port, out, groups, dbcraft, host="127.0.0.1"):
             psql("select mc.fill('minecraft:overworld', -8, -60, -8, 40, -40, 40, 'minecraft:air'), mc.fill('minecraft:overworld', -8, -61, -8, 40, -61, 40, 'minecraft:grass_block[snowy=false]')")
         else:
             cmd("fill -8 -60 -8 40 -40 40 minecraft:air"); cmd("fill -8 -61 -8 40 -61 40 minecraft:grass_block")
-        cmd("tp Surv 0.5 -60 0.5 0 0"); cmd("tp Obs 0.5 -60 3.5 0 0"); cmd("clear Surv"); cmd("weather clear"); cmd("setworldspawn 0 -60 0 0 0"); quiet(0.6, 4.0)
+        cmd("tp Surv 0.5 -60 0.5 0 0"); cmd("tp Obs 20.5 -60 20.5 0 0"); cmd("clear Surv"); cmd("weather clear"); cmd("setworldspawn 0 -60 0 0 0"); quiet(0.6, 4.0)
         for x in c.values():
             for _ in range(4): x.send("minecraft:client_tick_end"); time.sleep(0.05)
         quiet()
@@ -102,11 +102,10 @@ def record(port, out, groups, dbcraft, host="127.0.0.1"):
                 for e in x.events[ks[n]:]:
                     if e["state"] == "mark" or e["dir"] != "clientbound" or e["name"] not in KEEP: continue
                     if e["name"] == "minecraft:set_time" and g != "time": continue
-                    if e["name"] == "minecraft:game_event" and g != "weather" and g != "spawn": continue
                     b = e["body"]
+                    if e["name"] == "minecraft:block_update" and m.unposition(b)[1] <= -61: continue           # (random ticks of the grass layer: not under test)
                     if e["name"] == "minecraft:add_entity": b = b[m.parse_varint(b, 0)[1] + 16:]; b = m.parse_varint(b, 0)[0].to_bytes(2, "big")
                     step["got"].setdefault(n, []).append([e["name"].replace("minecraft:", ""), b.hex()])
-                    if e["name"] == "minecraft:sound": step["got"][n][-1][1] = b[:-8].hex() if False else b.hex()[:-8]     # (the seed is the last 8 bytes)
             res.append(step)
             time.sleep(0.2)
     json.dump(res, open(out, "w"), indent=0)

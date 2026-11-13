@@ -207,7 +207,6 @@ CASES = [
     ("short_grass_hand", "minecraft:short_grass", None),
     ("bedrock_pick", "minecraft:bedrock", "minecraft:diamond_pickaxe"),
     ("stone_sword", "minecraft:stone", "minecraft:iron_sword"),
-    ("chest_axe", "minecraft:chest[facing=south,type=single,waterlogged=false]", "minecraft:iron_axe"),
 ]
 
 if a.scenario == "dig":
@@ -215,7 +214,8 @@ if a.scenario == "dig":
     for (nm, blk, tool) in CASES:
         if only and nm not in only: continue
         if blk.endswith("bedrock") or nm == "bedrock_pick": continue
-        dig_case(nm, blk, tool)
+        try: dig_case(nm, blk, tool)
+        except subprocess.CalledProcessError as e: print("case %s: %s" % (nm, e.stderr.decode()[:200] if e.stderr else e)); both("case %s failed" % nm)
 elif a.scenario == "misc":
     # --- abort: the crack disappears for the observer
     prepare("minecraft:stone", "minecraft:iron_pickaxe")

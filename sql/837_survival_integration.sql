@@ -42,7 +42,10 @@ create or replace function mc.tick_core() returns bigint language plpgsql as $$
 declare cur bigint; t0 timestamptz := clock_timestamp(); t1 timestamptz; t2 timestamptz; t3 timestamptz; t4 timestamptz; t5 timestamptz; t6 timestamptz;
         mv record; ch record; vis record; ka record; n_in int; n_players int; n_out int; snap mc.surv_snap; n_misc boolean; n_chat boolean; s0 timestamptz; s1 timestamptz; s2 timestamptz; ms_surv float8;
 begin
-  update mc.game_state set game_time = game_time + 1, day_time = day_time + 1 returning game_time into cur;
+  update mc.game_state set game_time = game_time + 1,
+         day_time = day_time + case when clock_paused then 0 else floor(clock_acc + clock_rate)::bigint end,                                       -- (the clock: `time pause` / `time rate`, sql/813)
+         clock_acc = case when clock_paused then clock_acc else (clock_acc + clock_rate) - floor(clock_acc + clock_rate) end returning game_time into cur;
+  perform mc.weather_tick(cur);                                    -- (weather, sql/894) the rain and thunder clock, level changes
   select count(*)::int into n_in from mc.play_in_work;
   select count(*)::int into n_players from mc.player where conn_id is not null;
   snap := mc.survival_pre();                                       s0 := clock_timestamp();                  -- (survival) sprint flags, positions before the moves
