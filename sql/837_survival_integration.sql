@@ -64,6 +64,7 @@ begin
   perform mc.survival_input(cur, snap);                            s2 := clock_timestamp();                  -- (survival) respawn, start eating
   select * into vis from mc.refresh_visibility();                  t4 := clock_timestamp();
   perform mc.dyn_step(cur);                                                                                   -- (world dynamics, sql/880-889) scheduled block and fluid ticks, random ticks, landing falling blocks
+  perform mc.light_step(cur);                                                                                 -- (light, sql/228) the block changes of this tick: light recomputed around them, light_update packets for the border viewers
   perform mc.vis_step(cur);                                                                                   -- (visibility, sql/905) entity data, equipment, attributes, swings: what other players see
 
   perform mc.survival_entities(cur);                                                                          -- (survival) tracker, deaths, void, eating, food, health/experience

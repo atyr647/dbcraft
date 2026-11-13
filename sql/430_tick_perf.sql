@@ -212,6 +212,12 @@ begin
         begin perform mc.apply_block_actions(cur); exception when others then
             insert into mc.error_log (tick, step, message) values (cur, 'apply_block_actions', sqlerrm); raise warning 'apply_block_actions failed: %', sqlerrm; end;
     end if;
+    -- (light, sql/228) the block changes of this tick, the dynamics' (mc.tick_core already lit those) and the players': light recomputed and the light_update packets queued before the
+    -- block packets, as vanilla sends them in the tick of the change (recorded: 12 of 14 steps in the same tick, 2 in the next)
+    if exists (select 1 from mc.light_dirty) then
+        begin perform mc.light_step(cur); exception when others then
+            insert into mc.error_log (tick, step, message) values (cur, 'light_step', sqlerrm); raise warning 'light_step failed: %', sqlerrm; end;
+    end if;
     if all_phases or exists (select 1 from mc.block_event) or exists (select 1 from mc.pending_ack) then
         begin perform mc.broadcast_block_events(); exception when others then
             insert into mc.error_log (tick, step, message) values (cur, 'broadcast_block_events', sqlerrm); raise warning 'broadcast_block_events failed: %', sqlerrm; end;

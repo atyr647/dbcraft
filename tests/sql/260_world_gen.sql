@@ -29,7 +29,7 @@ select t.is_true('the reference chunk has several sections, fluid and partial li
 -- the packet cache is filled at generation time with exactly the bytes the generic path produces
 select t.is_true('cache row exists right after fast generation', exists (select 1 from mc.chunk_cache where dimension = 'dbcraft:g1' and cx = 7 and cz = -9 and version = 0));
 select t.eq('prefilled packet == packet built by the generic path', md5(mc.chunk_packet('dbcraft:g1', 7, -9)), md5(mc.chunk_packet('dbcraft:g2', 7, -9)));
-select t.eq('...and its body decodes to the right coordinates', proto.i32_read(substring(mc.chunk_packet('dbcraft:g1', 7, -9) from 4 for 8), 0)::text || ',' || proto.i32_read(substring(mc.chunk_packet('dbcraft:g1', 7, -9) from 4 for 8), 4)::text, '7,-9');
+select t.eq('...and its body decodes to the right coordinates', proto.i32_read(substring(mc.chunk_packet('dbcraft:g1', 7, -9) from (select nxt from proto.varint_read(mc.chunk_packet('dbcraft:g1', 7, -9), 0)) + 2 for 8), 0)::text || ',' || proto.i32_read(substring(mc.chunk_packet('dbcraft:g1', 7, -9) from (select nxt from proto.varint_read(mc.chunk_packet('dbcraft:g1', 7, -9), 0)) + 2 for 8), 4)::text, '7,-9');
 delete from mc.chunk_cache where dimension = 'dbcraft:g1' and cx = 7 and cz = -9;
 select t.eq('packet rebuilt from the rows after the cache is dropped is the same', md5(mc.chunk_packet('dbcraft:g1', 7, -9)), md5(mc.chunk_packet('dbcraft:g2', 7, -9)));
 

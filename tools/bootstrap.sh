@@ -98,6 +98,11 @@ if [ "$CHECK" = 1 ]; then
   if [ -s "$DBCRAFT_REPORTS/dyn_states.tsv" ]; then ok "dyn_states.tsv (world dynamics)"; else todo "dyn_states.tsv (tools/gen_dynamics.sh)"; fi
 elif have_reports; then tools/gen_dynamics.sh >"$DBCRAFT_LOG/gen-dynamics.log" 2>&1 && ok "world-dynamics data in $DBCRAFT_REPORTS/dyn_states.tsv" || echo "    note     tools/gen_dynamics.sh failed (see $DBCRAFT_LOG/gen-dynamics.log): world dynamics stay disabled"; fi
 
+# the light-engine reference data (emission, dampening and occlusion face shapes of every block state), read from the jar by tools/java/LightDump.java
+if [ "$CHECK" = 1 ]; then
+  if [ -s "$DBCRAFT_REPORTS/light_states.tsv" ]; then ok "light_states.tsv (light engine)"; else todo "light_states.tsv (tools/gen_light.sh)"; fi
+elif have_reports; then tools/gen_light.sh >"$DBCRAFT_LOG/gen-light.log" 2>&1 && ok "light-engine data in $DBCRAFT_REPORTS/light_states.tsv" || echo "    note     tools/gen_light.sh failed (see $DBCRAFT_LOG/gen-light.log): light stays the straight-down model"; fi
+
 # the block sound types (SoundType of every block), read from the jar by tools/java/SoundDump.java
 if [ "$CHECK" = 1 ]; then
   if [ -s "$DBCRAFT_REPORTS/block_sounds.tsv" ]; then ok "block_sounds.tsv (block sounds)"; else todo "block_sounds.tsv (tools/gen_sounds.sh)"; fi

@@ -258,8 +258,12 @@ begin
         select count(*), array_cat(made_x, array_agg(cx)), array_cat(made_z, array_agg(cz)) into k, made_x, made_z from ins;
         n := n + k;
     end if;
-    -- The chunks this call created get their light (straight-down model) and their packet now, in the generator's own transaction, so that the tick only reads the cache:
-    -- 0.9 ms and 1.4 ms of the 4.7 ms a chunk costs here (docs/WORLD.md).  The flat generator copies both from its template.
+    -- The chunks this call created get their light (the light engine, docs/LIGHT.md: one region for all of them) and their packet now, in the generator's own transaction,
+    -- so that the tick only reads the cache.  The flat generator copies both from its template.
+    if coalesce(cardinality(made_x), 0) > 0 then
+        perform mc.light_chunks(p_dim, made_x, made_z);
+        update mc.chunk c set dirty = false from unnest(made_x, made_z) u(cx, cz) where c.dimension = p_dim and c.cx = u.cx and c.cz = u.cz;
+    end if;
     for k in 1 .. coalesce(cardinality(made_x), 0) loop
         perform mc.chunk_packet(p_dim, made_x[k], made_z[k]);
     end loop;

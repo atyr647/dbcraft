@@ -3,9 +3,8 @@
 -- What is and is not modelled (see docs/WORLD.md):
 --   heightmaps  WORLD_SURFACE is exact (highest non-air block).  MOTION_BLOCKING / MOTION_BLOCKING_NO_LEAVES use a name-based approximation of
 --               "blocks motion" (mc.non_collidable): the generator reports carry no collision data.
---   sky light   straight-down only: 15 above the highest non-air block of a column, 0 at and below it.  No horizontal spreading, no attenuation
---               by water or leaves, no cross-chunk effects.  Exact for flat worlds and any terrain without overhangs.
---   block light none: every layer is all zero (no emitter propagation).
+--   light       the light engine of sql/221 .. 226 (docs/LIGHT.md); the straight-down sky model below (mc.compute_light_flat) where it provably gives the same result
+--               (flat worlds) and while the light reference data is not loaded.
 
 ------------------------------------------------------------------------------------------------ predicates
 -- Blocks without a collision box (approximation: the common ones; extend as needed).
@@ -108,6 +107,8 @@ begin
     return r;
 end $$;
 
+-- The straight-down sky model (mc.compute_light_flat): the light of a chunk whose result provably equals the light engine's (sql/221 .. 226), e.g. every flat world, and
+-- the fallback while the light reference data is not loaded.  mc.compute_light below decides.
 -- Rebuilds the light rows of a chunk.  Layers 0 .. (index of the highest non-empty section + 2); layer 0 lies below the world.
 -- p_sky0_as_data: vanilla sometimes sends layer 0 as a present all-zero array instead of an "empty" bit (a transient of its light engine, seen on the first
 -- chunks of a session); pass true to reproduce that form.
@@ -116,7 +117,7 @@ end $$;
 -- rows were computed from: an edit that changed neither (a block placed or removed below the surface) costs one comparison instead of a rebuild.
 -- When the inputs did change, all partial layers are built in ONE statement (the columns are grouped by surface height once, then every absolute level gets its
 -- cumulative mask; a layer is 16 consecutive levels), and only layers whose content differs from the stored row are written.
-create or replace function mc.compute_light(p_dim text, p_cx int, p_cz int, p_sky0_as_data boolean default false) returns void language plpgsql volatile set plan_cache_mode = force_generic_plan as $$
+create or replace function mc.compute_light_flat(p_dim text, p_cx int, p_cz int, p_sky0_as_data boolean default false) returns void language plpgsql volatile set plan_cache_mode = force_generic_plan as $$
 declare
     v_min_y    int;
     v_height   int;
@@ -184,6 +185,17 @@ begin
     -- vanilla's layer-0 variant is not what a later call without the flag would produce, so it must not leave a key behind
     update mc.chunk c set light_ws = case when p_sky0_as_data then null else hm end, light_top = case when p_sky0_as_data then null else top::smallint end
      where c.dimension = p_dim and c.cx = p_cx and c.cz = p_cz;
+end $$;
+
+-- Light of one chunk.  The light engine (sql/221 .. 226: sky and block light exactly as vanilla's engine leaves them, docs/LIGHT.md) when its reference data is loaded
+-- and the chunk is not one of the uniform ones the straight-down model reproduces exactly (mc.light_flat_ok); that model otherwise.
+create or replace function mc.compute_light(p_dim text, p_cx int, p_cz int, p_sky0_as_data boolean default false) returns void language plpgsql volatile set plan_cache_mode = force_generic_plan as $$
+begin
+    if not mc.light_ready() or mc.light_flat_ok(p_dim, p_cx, p_cz) then
+        perform mc.compute_light_flat(p_dim, p_cx, p_cz, p_sky0_as_data);
+    else
+        perform mc.light_region(p_dim, array[p_cx], array[p_cz], p_sky0_as_data);
+    end if;
 end $$;
 
 -- Height value of the highest block at or below p_from_y in one column that satisfies heightmap kind p_kind (1 = WORLD_SURFACE, 2 = MOTION_BLOCKING,

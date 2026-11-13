@@ -42,6 +42,8 @@ python3 tools/load_item_components.py || echo "NOTE: no item components (tools/b
 python3 tools/load_recipes.py
 echo "== loading the world-dynamics reference data (derived from the jar: tools/gen_dynamics.sh)"
 python3 tools/load_dynamics.py
+echo "== loading the light-engine reference data (derived from the jar: tools/gen_light.sh)"
+python3 tools/load_light.py
 echo "== loading the block sound types (derived from the jar: tools/gen_sounds.sh)"
 python3 tools/load_sounds.py
 echo "== configuring the server"
