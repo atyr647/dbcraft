@@ -29,7 +29,7 @@ create or replace function mc.light_pal(p_palette text[], out damp int[], out em
 --   sh        cells whose state uses its occlusion shape (NULL when there are none)
 -- p_bits / p_data / p_palette are the stored columns (palette = {} means the data holds global state ids).
 create or replace function mc.light_secmasks(p_bits int, p_data bytea, p_palette text[], out op bit(4096), out cl bit(4096), out em_lvl int[], out em_mask bit(4096)[], out sh bit(4096))
-language plpgsql stable parallel safe set plan_cache_mode = force_generic_plan as $$
+language plpgsql stable strict parallel safe set plan_cache_mode = force_generic_plan as $$
 declare
     pd int[]; pe int[]; ps boolean[];
     n int := cardinality(p_palette);
