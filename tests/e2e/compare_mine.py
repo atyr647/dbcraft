@@ -71,7 +71,7 @@ def reduce(path):
         elif n == "set_player_inventory":
             slot, o = varint(b, 0); sk, _ = stack(b, o); r.append(("set_player_inventory", slot, sk))
         elif n == "entity_event":
-            r.append(("entity_event", "E", b[4]))
+            if b[4] != 10: r.append(("entity_event", "E", b[4]))            # (10 is a sheep eating grass: the world's own noise)
         elif n == "sound":                                                   # (not compared: the world's animals make sounds of their own; the mining sounds are the client's, from the level events)
             pass
         elif n == "add_entity":
@@ -88,6 +88,9 @@ def reduce(path):
             r.append(("take_item_entity",))
         elif n == "player_abilities" or n == "game_event":
             r.append((n, b.hex()))
+    if "misc" in path:                                   # (item entities are not simulated here: only /give's fake ones for the tools exist in vanilla's recording)
+        for st in order:
+            steps[st] = [x for x in steps[st] if x[0] not in ("item_stack", "add_entity", "take_item_entity") or (x[0] == "add_entity" and x[1] != "minecraft:item")]
     if "drops" in path:
         # the item entities of a drop: their packets come in the entity tracker's order (not under test); compared are the stacks (a set: vanilla sends each entity's data twice)
         for st in order:

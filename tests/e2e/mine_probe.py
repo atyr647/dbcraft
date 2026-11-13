@@ -102,7 +102,7 @@ s.settle(1.0, 20.0); o.settle(1.0, 15.0)
 for c in (s, o):
     c.send("minecraft:client_command", m.varint(0)); c.settle(0.5, 3.0)
 def setblock(x, y, z, state):
-    if a.dbcraft: psql("select mc.set_block('minecraft:overworld', %d, %d, %d, '%s')" % (x, y, z, state))
+    if a.dbcraft: psql("select mc.set_block('minecraft:overworld', %d, %d, %d, '%s'); select mc.shape_neighbours('minecraft:overworld', %d, %d, %d)" % (x, y, z, state, x, y, z))     # (what /setblock does: a snow block makes the grass below snowy)
     else: cmd(s, "setblock %d %d %d %s" % (x, y, z, state))
 def quiet(q=0.5, t=4.0): s.settle(q, t); o.settle(q, t)
 def both(label): s.mark(label); o.mark(label)
@@ -190,9 +190,9 @@ CASES = [
     ("planks_pick_iron", "minecraft:oak_planks", "minecraft:iron_pickaxe"),
     ("wool_hand", "minecraft:white_wool", None),
     ("wool_shears", "minecraft:white_wool", "minecraft:shears"),
-    ("leaves_hand", "minecraft:oak_leaves[distance=1,persistent=true,waterlogged=false]", None),
-    ("leaves_shears", "minecraft:oak_leaves[distance=1,persistent=true,waterlogged=false]", "minecraft:shears"),
-    ("leaves_sword", "minecraft:oak_leaves[distance=1,persistent=true,waterlogged=false]", "minecraft:iron_sword"),
+    ("leaves_hand", "minecraft:oak_leaves[distance=7,persistent=true,waterlogged=false]", None),
+    ("leaves_shears", "minecraft:oak_leaves[distance=7,persistent=true,waterlogged=false]", "minecraft:shears"),
+    ("leaves_sword", "minecraft:oak_leaves[distance=7,persistent=true,waterlogged=false]", "minecraft:iron_sword"),
     ("cobweb_sword", "minecraft:cobweb", "minecraft:iron_sword"),
     ("cobweb_shears", "minecraft:cobweb", "minecraft:shears"),
     ("cobweb_hand", "minecraft:cobweb", None),

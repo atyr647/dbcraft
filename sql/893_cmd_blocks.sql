@@ -97,7 +97,7 @@ end $$;
 ------------------------------------------------------------------------------------------------ /fill
 create or replace function mc.cmd_run_fill(me mc.player, lvl int, input text, sig text, args jsonb) returns void language plpgsql as $$
 declare dim text := 'minecraft:overworld'; a int[]; b int[]; parts text[] := string_to_array(sig, '/'); mode text; filt text; cnt bigint; lim int := mc.gamerule_get('max_block_modifications')::int;
-        new_state text := mc.cmd_block_input(args -> 'block'); n int; is_strict boolean := false; wx int; wy int; wz int; cur text; filt_states text[];
+        new_state text := mc.cmd_block_input(args -> 'block'); n int; is_strict boolean := false; wx int; wy int; wz int; cur text; filt_states text[]; nst text;
 begin
   a := mc.cmd_pos_loaded(me, args -> 'from'); if a is null then return; end if;
   b := mc.cmd_pos_loaded(me, args -> 'to'); if b is null then return; end if;
@@ -120,6 +120,17 @@ begin
     end loop; end loop; end loop;
   else
     n := mc.fill_mode(dim, a[1], a[2], a[3], b[1], b[2], b[3], new_state, mode, filt);
+    -- a block with shape updates (fence, wall, pane, bars, stairs, snowy grass) placed next to its like connects both ways, and so do its neighbours outside the box: each placement
+    -- of the real fill ran updateFromNeighbourShapes and updateNeighbourShapes, whose end state is the one of a pass over the finished box (boxes up to 4096 positions)
+    if n > 0 and not is_strict and cnt <= 4096 and exists (select 1 from mc.dyn_state ds where ds.name = mc.canon_state(new_state) and ds.chain is not null) then
+      for wz in least(a[3], b[3]) .. greatest(a[3], b[3]) loop for wy in least(a[2], b[2]) .. greatest(a[2], b[2]) loop for wx in least(a[1], b[1]) .. greatest(a[1], b[1]) loop
+        cur := mc.get_block(dim, wx, wy, wz);
+        continue when cur is null or split_part(cur, '[', 1) <> split_part(mc.canon_state(new_state), '[', 1);
+        nst := mc.update_from_neighbours(dim, cur, wx, wy, wz);
+        if nst is distinct from cur then perform mc.set_block(dim, wx, wy, wz, nst); end if;
+        perform mc.shape_neighbours(dim, wx, wy, wz);
+      end loop; end loop; end loop;
+    end if;
   end if;
   if n = 0 then perform mc.cmd_fail(me, mc.tc_translate('commands.fill.failed')); return; end if;
   perform mc.cmd_success(me, mc.tc_translate_json('commands.fill.success', jsonb_build_array(n)));

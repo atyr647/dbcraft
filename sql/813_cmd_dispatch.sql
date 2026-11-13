@@ -148,6 +148,9 @@ begin
     return;
   elsif sig in ('time/set/time', 'time/add/time') then
     v := (args ->> 'time')::bigint;
+    if sig = 'time/set/time' and cur = v then                                  -- (recorded: commands.time.set.already_at_time, the ticks as an int; nothing is sent)
+      perform mc.cmd_fail(me, mc.tc_translate('commands.time.set.already_at_time', array[clock_arg, mc.tc_arg_int(v::int)])); return;
+    end if;
     update mc.game_state set day_time = case when sig = 'time/set/time' then v else day_time + v end;
     perform mc.cmd_sync_time();
     -- (verified) `time set N`: the ticks are an int; `time add N`: a long (the clock total)
