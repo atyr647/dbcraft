@@ -64,3 +64,18 @@ begin
     end if;
     return n;
 end $$;
+
+-- The stored light of one cell: kind 'sky' or 'block'; 0 where the layer holds none.  (What the clients see; vanilla's Level.getBrightness / getRawBrightness read the same arrays.)
+create or replace function mc.light_at(p_dim text, p_x int, p_y int, p_z int, p_kind text default 'block') returns int language plpgsql stable as $$
+declare
+    v_min_sy int;
+    k text; a bytea; i int; b int;
+begin
+    select d.min_y >> 4 into v_min_sy from mc.dimension d where d.name = p_dim;
+    select case when p_kind = 'sky' then l.sky_kind else l.block_kind end, case when p_kind = 'sky' then l.sky else l.block end into k, a
+      from mc.chunk_light l where l.dimension = p_dim and l.cx = p_x >> 4 and l.cz = p_z >> 4 and l.idx = (p_y >> 4) - v_min_sy + 1;
+    if not found or k <> 'data' or a is null then return 0; end if;
+    i := ((p_y & 15) << 8) | ((p_z & 15) << 4) | (p_x & 15);
+    b := get_byte(a, i >> 1);
+    return case when (i & 1) = 1 then b >> 4 else b & 15 end;
+end $$;
