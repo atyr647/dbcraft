@@ -14,25 +14,32 @@
 --   lw_fr    the cells that were new at the level before (the wave front)
 create or replace function mc.light_work_init() returns void language plpgsql as $$
 begin
-    create temp table if not exists lw_sec (
-        i int primary key, cx int not null, sy int not null, cz int not null,
-        pass bit(4096) storage plain not null,               -- cells light may enter (dampening below 15)
-        src  bit(4096) storage plain,                        -- sky: cells above the highest light-stopping cell of their column (NULL: none)
-        em_lvl int[], em_mask bit(4096)[],                   -- block: emitting cells per level
-        sh   bit(4096) storage plain,                        -- cells whose state uses its occlusion shape (NULL: none)
-        stored boolean not null default false,               -- a stored section row exists
-        n0 int, n1 int, n2 int, n3 int, n4 int, n5 int) on commit delete rows;
-    create unique index if not exists lw_sec_pos on lw_sec (cx, sy, cz);
-    create temp table if not exists lw_em (i int not null, lvl int not null, m bit(4096) storage plain not null) on commit delete rows;
-    create index if not exists lw_em_lvl on lw_em (lvl);
-    create temp table if not exists lw_run (
-        kind smallint not null, i int not null, vis bit(4096) storage plain not null,
-        c0 bit(4096) storage plain not null, c1 bit(4096) storage plain not null, c2 bit(4096) storage plain not null, c3 bit(4096) storage plain not null,
-        primary key (kind, i)) on commit delete rows;
-    create temp table if not exists lw_fr (i int not null, f bit(4096) storage plain not null) on commit delete rows;
-    create temp table if not exists lw_chunk (cx int not null, cz int not null, tgt boolean not null, top int, carry bit(256), done boolean not null default false,
-                                              lowest int, primary key (cx, cz)) on commit delete rows;
-    delete from lw_sec; delete from lw_em; delete from lw_run; delete from lw_fr; delete from lw_chunk;
+    if to_regclass('pg_temp.lw_sec') is null then
+        create temp table lw_sec (
+            i int primary key, cx int not null, sy int not null, cz int not null,
+            pass bit(4096) storage plain not null,               -- cells light may enter (dampening below 15)
+            src  bit(4096) storage plain,                        -- sky: cells above the highest light-stopping cell of their column (NULL: none)
+            em_lvl int[], em_mask bit(4096)[],                   -- block: emitting cells per level
+            sh   bit(4096) storage plain,                        -- cells whose state uses its occlusion shape (NULL: none)
+            stored boolean not null default false,               -- a stored section row exists
+            n0 int, n1 int, n2 int, n3 int, n4 int, n5 int) on commit delete rows;
+        create unique index lw_sec_pos on lw_sec (cx, sy, cz);
+        create temp table lw_em (i int not null, lvl int not null, m bit(4096) storage plain not null) on commit delete rows;
+        create index lw_em_lvl on lw_em (lvl);
+        create temp table lw_run (
+            kind smallint not null, i int not null, vis bit(4096) storage plain not null,
+            c0 bit(4096) storage plain not null, c1 bit(4096) storage plain not null, c2 bit(4096) storage plain not null, c3 bit(4096) storage plain not null,
+            primary key (kind, i)) on commit delete rows;
+        create temp table lw_fr (i int not null, f bit(4096) storage plain not null) on commit delete rows;
+        create temp table lw_chunk (cx int not null, cz int not null, tgt boolean not null, top int, carry bit(256), done boolean not null default false,
+                                    lowest int, primary key (cx, cz)) on commit delete rows;
+        create temp table lw_lim (cx int, cz int, lim int, primary key (cx, cz)) on commit delete rows;
+        create temp table lw_ne (cx int, cz int, sy int) on commit delete rows;
+        create temp table lw_out (cx int, cz int, idx int, sky_kind text, sky bytea, block_kind text, block bytea) on commit delete rows;
+        create temp table lw_chg (cx int not null, cz int not null) on commit delete rows;                  -- chunks whose light rows changed in the last mc.light_region
+    else
+        delete from lw_sec; delete from lw_em; delete from lw_run; delete from lw_fr; delete from lw_chunk; delete from lw_lim; delete from lw_ne; delete from lw_out; delete from lw_chg;
+    end if;
 end $$;
 
 -- Link the neighbour sections of lw_sec.

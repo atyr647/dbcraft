@@ -28,72 +28,70 @@ create or replace function mc.light_pal(p_palette text[], out damp int[], out em
 --   em_lvl    the distinct emission levels (1 .. 15) of the section, em_mask the cells of each
 --   sh        cells whose state uses its occlusion shape (NULL when there are none)
 -- p_bits / p_data / p_palette are the stored columns (palette = {} means the data holds global state ids).
+-- Cost: a section of one class (or one state) needs no unpacking; a 4-bit palette section costs one hex string and one translate() per class that is not implied by
+-- the others (about 90 us each); other widths unpack the entries (about 3 ms).
 create or replace function mc.light_secmasks(p_bits int, p_data bytea, p_palette text[], out op bit(4096), out cl bit(4096), out em_lvl int[], out em_mask bit(4096)[], out sh bit(4096))
 language plpgsql stable strict parallel safe set plan_cache_mode = force_generic_plan as $$
 declare
     pd int[]; pe int[]; ps boolean[];
     n int := cardinality(p_palette);
-    hx text; k int; lv int;
-    m_op text; m_cl text; m_sh text; m_em text;
+    hx text; lv int;
+    has0 boolean; has1 boolean; has15 boolean; hassh boolean;
     map_op text; map_cl text; map_sh text; map_em text;
+    codes text;
+    ent int[];
 begin
+    em_lvl := '{}'; em_mask := '{}';
     if n = 0 then                                                         -- global palette: the entries are state ids
+        ent := mc.unpack_longs(p_data, p_bits, 4096);
         select string_agg(case when coalesce(l.damp, 0) = 15 then '1' else '0' end, '' order by (u.i - 1) # 15),
                string_agg(case when coalesce(l.damp, 0) = 0 then '1' else '0' end, '' order by (u.i - 1) # 15),
                string_agg(case when coalesce(l.shaped, false) then '1' else '0' end, '' order by (u.i - 1) # 15)
-          into m_op, m_cl, m_sh
-          from unnest(mc.unpack_longs(p_data, p_bits, 4096)) with ordinality u(e, i) left join mc.light_state l on l.sid = u.e;
-        op := m_op::bit(4096); cl := m_cl::bit(4096); sh := case when m_sh like '%1%' then m_sh::bit(4096) end;
-        em_lvl := '{}'; em_mask := '{}';
-        for lv in select distinct l.emission from unnest(mc.unpack_longs(p_data, p_bits, 4096)) u(e) join mc.light_state l on l.sid = u.e and l.emission > 0 order by 1 loop
-            select string_agg(case when coalesce(l.emission, 0) = lv then '1' else '0' end, '' order by (u.i - 1) # 15) into m_em
-              from unnest(mc.unpack_longs(p_data, p_bits, 4096)) with ordinality u(e, i) left join mc.light_state l on l.sid = u.e;
-            em_lvl := em_lvl || lv; em_mask := em_mask || m_em::bit(4096);
+          into map_op, map_cl, map_sh
+          from unnest(ent) with ordinality u(e, i) left join mc.light_state l on l.sid = u.e;
+        op := map_op::bit(4096); cl := map_cl::bit(4096); sh := case when map_sh like '%1%' then map_sh::bit(4096) end;
+        for lv in select distinct l.emission from unnest(ent) u(e) join mc.light_state l on l.sid = u.e and l.emission > 0 order by 1 loop
+            select string_agg(case when coalesce(l.emission, 0) = lv then '1' else '0' end, '' order by (u.i - 1) # 15) into map_em
+              from unnest(ent) with ordinality u(e, i) left join mc.light_state l on l.sid = u.e;
+            em_lvl := em_lvl || lv; em_mask := em_mask || map_em::bit(4096);
         end loop;
         return;
     end if;
     select * into pd, pe, ps from mc.light_pal(p_palette);
-    em_lvl := '{}'; em_mask := '{}';
-    if p_bits = 0 or (pd = array_fill(pd[1], array[n]) and pe = array_fill(pe[1], array[n]) and ps = array_fill(ps[1], array[n])) then
+    has0 := 0 = any(pd); has1 := 1 = any(pd); has15 := 15 = any(pd); hassh := true = any(ps);
+    if p_bits = 0 or ((has0::int + has1::int + has15::int) = 1 and (select count(distinct e) from unnest(pe) e) = 1 and (not hassh or ps = array_fill(true, array[n]))) then
         -- one state, or every state of the palette in the same class: no unpacking
-        op := case when pd[1] = 15 then mc.lk_ones() else mc.lk_zero() end;
-        cl := case when pd[1] = 0 then mc.lk_ones() else mc.lk_zero() end;
+        op := case when has15 then mc.lk_ones() else mc.lk_zero() end;
+        cl := case when has0 then mc.lk_ones() else mc.lk_zero() end;
         if pe[1] > 0 then em_lvl := array[pe[1]]; em_mask := array[mc.lk_ones()]; end if;
         sh := case when ps[1] then mc.lk_ones() end;
         return;
     end if;
     if p_bits = 4 then
         hx := encode(p_data, 'hex');
-        map_op := ''; map_cl := ''; map_sh := '';
-        for k in 1 .. 16 loop
-            if k <= n then
-                map_op := map_op || case when pd[k] = 15 then '1' else '0' end;
-                map_cl := map_cl || case when pd[k] = 0 then '1' else '0' end;
-                map_sh := map_sh || case when ps[k] then '1' else '0' end;
-            else
-                map_op := map_op || '0'; map_cl := map_cl || '0'; map_sh := map_sh || '0';
-            end if;
-        end loop;
-        op := translate(hx, '0123456789abcdef', map_op)::bit(4096);
-        cl := translate(hx, '0123456789abcdef', map_cl)::bit(4096);
-        if map_sh like '%1%' then sh := translate(hx, '0123456789abcdef', map_sh)::bit(4096); end if;
+        select rpad(string_agg(case when d = 15 then '1' else '0' end, '' order by o), 16, '0'), rpad(string_agg(case when d = 0 then '1' else '0' end, '' order by o), 16, '0'),
+               rpad(string_agg(case when s then '1' else '0' end, '' order by o), 16, '0')
+          into map_op, map_cl, map_sh from unnest(pd, ps) with ordinality u(d, s, o);
+        op := case when has15 then translate(hx, '0123456789abcdef', map_op)::bit(4096) else mc.lk_zero() end;
+        cl := case when not has0 then mc.lk_zero() when not has1 then ~op else translate(hx, '0123456789abcdef', map_cl)::bit(4096) end;
+        if hassh then sh := translate(hx, '0123456789abcdef', map_sh)::bit(4096); end if;
         for lv in select distinct e from unnest(pe) e where e > 0 order by 1 loop
-            map_em := '';
-            for k in 1 .. 16 loop map_em := map_em || case when k <= n and pe[k] = lv then '1' else '0' end; end loop;
+            select rpad(string_agg(case when e = lv then '1' else '0' end, '' order by o), 16, '0') into map_em from unnest(pe) with ordinality u(e, o);
             em_lvl := em_lvl || lv; em_mask := em_mask || translate(hx, '0123456789abcdef', map_em)::bit(4096);
         end loop;
         return;
     end if;
-    -- other widths: unpack the entries (about 2 ms per section)
-    select string_agg(case when pd[u.e + 1] = 15 then '1' else '0' end, '' order by (u.i - 1) # 15),
-           string_agg(case when pd[u.e + 1] = 0 then '1' else '0' end, '' order by (u.i - 1) # 15),
-           string_agg(case when ps[u.e + 1] then '1' else '0' end, '' order by (u.i - 1) # 15)
-      into m_op, m_cl, m_sh
-      from unnest(mc.unpack_longs(p_data, p_bits, 4096)) with ordinality u(e, i);
-    op := m_op::bit(4096); cl := m_cl::bit(4096); sh := case when m_sh like '%1%' then m_sh::bit(4096) end;
+    -- other widths: unpack the entries once, then one pass builds a code string (one character per cell, layout M) for all classes
+    ent := mc.unpack_longs(p_data, p_bits, 4096);
+    select string_agg(case when pd[ent[(p # 15) + 1] + 1] = 15 then '2' when pd[ent[(p # 15) + 1] + 1] = 1 then '1' else '0' end, '' order by p) into codes from generate_series(0, 4095) p;
+    op := translate(codes, '012', '001')::bit(4096);
+    cl := translate(codes, '012', '100')::bit(4096);
+    if hassh then
+        select string_agg(case when ps[ent[(p # 15) + 1] + 1] then '1' else '0' end, '' order by p) into map_sh from generate_series(0, 4095) p;
+        sh := map_sh::bit(4096);
+    end if;
     for lv in select distinct e from unnest(pe) e where e > 0 order by 1 loop
-        select string_agg(case when pe[u.e + 1] = lv then '1' else '0' end, '' order by (u.i - 1) # 15) into m_em
-          from unnest(mc.unpack_longs(p_data, p_bits, 4096)) with ordinality u(e, i);
-        em_lvl := em_lvl || lv; em_mask := em_mask || m_em::bit(4096);
+        select string_agg(case when pe[ent[(p # 15) + 1] + 1] = lv then '1' else '0' end, '' order by p) into map_em from generate_series(0, 4095) p;
+        em_lvl := em_lvl || lv; em_mask := em_mask || map_em::bit(4096);
     end loop;
 end $$;
