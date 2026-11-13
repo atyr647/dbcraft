@@ -109,7 +109,8 @@ declare
 begin
     if not exists (select 1 from mc.light_dirty) then return 0; end if;
     create temp table if not exists lw_all (cx int not null, cz int not null, idx int not null, sky boolean not null, blk boolean not null, cs bit(4096), cb bit(4096)) on commit delete rows;
-    delete from lw_all;
+    create temp table if not exists lw_allc (cx int not null, cz int not null) on commit delete rows;                -- chunks whose rows changed in any way (also new layers)
+    delete from lw_all; delete from lw_allc;
     for r in select d.dimension from mc.light_dirty d group by d.dimension loop
         -- the changed cells: block events one by one; a fill or section event as its cells (up to 64) or, beyond that, the chunk columns around it are lit again
         with d as (delete from mc.light_dirty where dimension = r.dimension returning x, y, z, kind, cells),
@@ -123,6 +124,9 @@ begin
         select coalesce(array_agg(c.x), '{}'), coalesce(array_agg(c.y), '{}'), coalesce(array_agg(c.z), '{}'),
                (select coalesce(array_agg(b.cx), '{}') from bigs b), (select coalesce(array_agg(b.cz), '{}') from bigs b)
           into xs, ys, zs, cxs, czs from cells c;
+        -- the chunks of the changed cells are current now (a later send does not light them again from scratch)
+        update mc.chunk c set dirty = false from (select distinct x >> 4 as cx, z >> 4 as cz from unnest(xs, zs) u(x, z) union select cx, cz from unnest(cxs, czs) u(cx, cz)) q
+         where c.dimension = r.dimension and c.cx = q.cx and c.cz = q.cz;
         res := 0;
         if cardinality(xs) > 0 then
             res := mc.light_update(r.dimension, xs, ys, zs);
@@ -138,11 +142,12 @@ begin
               from (select distinct c.cx + dx as a, c.cz + dz as b from unnest(cxs, czs) c(cx, cz), generate_series(-1, 1) dx, generate_series(-1, 1) dz) q;
             perform mc.light_region(r.dimension, cxs, czs);
             insert into lw_all select cx, cz, idx, sky, blk, cs, cb from lw_delta;
+            insert into lw_allc select cx, cz from lw_chg;
         end if;
     end loop;
     -- chunks whose light changed: new version (the cached packet), and the packets for the border viewers
-    if exists (select 1 from lw_all) then
-        update mc.chunk c set version = c.version + 1, dirty = false from (select distinct cx, cz from lw_all) a where c.dimension = 'minecraft:overworld' and c.cx = a.cx and c.cz = a.cz;
+    if exists (select 1 from lw_all) or exists (select 1 from lw_allc) then
+        update mc.chunk c set version = c.version + 1, dirty = false from (select cx, cz from lw_all union select cx, cz from lw_allc) a where c.dimension = 'minecraft:overworld' and c.cx = a.cx and c.cz = a.cz;
         vd := mc.prop_int('view-distance') + 1;
         pid := (select protocol_id from ref.packet where state = 'play' and direction = 'clientbound' and name = 'minecraft:light_update');
         delete from lw_delta; insert into lw_delta select cx, cz, idx, sky, blk, cs, cb from lw_all;
