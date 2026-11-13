@@ -61,6 +61,8 @@ def main():
     if a.mode == "vanilla":
         import common as C
         rc = C.Rcon(port=a.rcon, pw=a.rcon_pw)
+    if a.mode == "dbcraft":                                     # vanilla has loaded the area around the spawn; an edit in a chunk that does not exist would create an empty one here
+        subprocess.run(a.psql.split() + ["-c", f"select mc.generate_flat_area('{DIM}', -7, -7, 7, 7)"], capture_output=True)
     c = m.Client(a.host, a.port, a.name)
     c.settle(1.0, 15.0)
     print("client at", c.pos)
