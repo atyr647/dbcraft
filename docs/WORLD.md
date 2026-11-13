@@ -21,7 +21,7 @@ chunk never re-packs anything.  Targets Java Edition 26.3 (protocol 777).  Tests
   (`Data.write`) and round-trips through our own decoder, but no vanilla chunk in the capture had one.
 * Biome containers of 3 bits, and the global biome palette (7 bits).
 * `fluid_count` for blocks the capture did not contain (the classification is name-based: water, lava, bubble column, kelp, seagrass, `waterlogged=true`).
-* Anything about light other than a flat world and straight-down terrain (see "Light").
+* Light of terrain that vanilla had not finished (the capture is of chunks it had just generated at the edge of its world); light is checked against a world vanilla saved: [LIGHT.md](LIGHT.md).
 
 **Known differences from vanilla:**
 
@@ -38,10 +38,10 @@ chunk never re-packs anything.  Targets Java Edition 26.3 (protocol 777).  Tests
 * **MOTION_BLOCKING / MOTION_BLOCKING_NO_LEAVES.**  The generator reports carry no collision data, so "blocks motion" is a name list (`mc.non_collidable`).  On the pale-garden
   terrain capture: **17 of 12,544 columns differ for MOTION_BLOCKING and 31 for NO_LEAVES** (0.14% and 0.25%).  The list was extended after the first test run showed vanilla
   excludes `pale_hanging_moss`, `pale_moss_carpet` and `leaf_litter`; the other additions (marked "NOT verified" in the SQL) are my judgement.  The sample is mostly one region (a pale garden), so other biomes' blocks are untested.
-* **Sky light** is a straight-down model: 15 above the highest non-air block of a column, 0 at and below it, no horizontal spread, no attenuation by water or leaves, no
-  cross-chunk effects.  Exact for flat worlds (that is what the oracle checks).  On real terrain **517 of 682 captured sky layers (76%) are identical**; the rest differ
-  because vanilla spreads light sideways under overhangs.  Informational: the terrain test prints it and does not assert it.
-* **Block light** is not modelled: every layer is all zero (no torch or lava propagation).
+* **Light** is the light engine of [LIGHT.md](LIGHT.md): sky and block light as vanilla's engine leaves them, across chunk and section borders, with water, leaves, emitters and occlusion shapes,
+  kept up to date on edits.  On a world vanilla generated, finished and saved (612 chunks with all neighbours, 7,438 layers) the light computed from the blocks equals the saved light in every sky
+  array and every block array, except 10 block layers that vanilla holds as an allocated array of zeros (the same light).  Flat worlds keep the straight-down model of `mc.compute_light_flat`
+  where it provably gives the same result.  The 76% of this section's earlier versions is gone.
 
 ## Layout facts learned from the 26.3 classes (they differ from older versions)
 
@@ -102,9 +102,9 @@ Verification (the numbers are reproducible with the scripts named):
 
 Real-server comparison (`tests/e2e/compare_fill.py`): a scripted client joins vanilla and dbcraft; the same 32 steps run (RCON `/fill` and `/setblock` on vanilla, SQL on dbcraft):
 single block, two blocks, one-block fill, 17 fills of 24 to 4,096 blocks in one section (sizes on both sides of every rehash threshold), a fill that changes nothing, overlapping
-fills, a fill to air, a fill over 9 chunks, a batch of 74 `/setblock` in one tick (a function), a block changed twice, a block changed and changed back.  **All 134 `section_blocks_update` packets (133,921 entries) and the 4 `block_update` packets were byte-identical** (`compare_fill.py`, vanilla with `gamerule random_tick_speed 0`; with random ticks on, grass at y = -61 decays to dirt under the stone and one of the 134 packets once carried that unrelated entry, which the script tolerates and reports).  Vanilla also sent `light_update` after some steps (one in the final run, more in earlier runs: it depends on the light engine's timing), which dbcraft does not (listed, not a failure).
+fills, a fill to air, a fill over 9 chunks, a batch of 74 `/setblock` in one tick (a function), a block changed twice, a block changed and changed back.  **All 134 `section_blocks_update` packets (133,921 entries) and the 4 `block_update` packets were byte-identical** (`compare_fill.py`, vanilla with `gamerule random_tick_speed 0`; with random ticks on, grass at y = -61 decays to dirt under the stone and one of the 134 packets once carried that unrelated entry, which the script tolerates and reports).  Vanilla also sent `light_update` after some steps; dbcraft sends them too since the light engine ([LIGHT.md](LIGHT.md), `tests/e2e/light_probe.py`), and `compare_fill.py` still lists them without judging them.
 
-**Not verified against vanilla:** `light_update` (vanilla sends it after block changes; there is no light engine here), `block_entity_data` after a block update of a block with a
+**Not verified against vanilla:** `block_entity_data` after a block update of a block with a
 block entity (dbcraft sends none), the order of sections of *different* chunks in one tick (vanilla's is a hash-map order; dbcraft sends chunk by chunk), `/fill` modes other than the
 default (`mc.fill_mode`, sql/961: `replace <filter>`, `keep`, `outline`, `hollow`, checked against a position-by-position reference but not recorded from vanilla; `destroy` is refused), fills across dimensions, more than one connection per chunk
 with different view distances.  Entities in deep sleep wake only near a fill's section corner (the trigger on `mc.block_event` looks at the event's x, y, z), the same limit the old
@@ -134,8 +134,7 @@ What a chunk contains (sql/855; the file header has the details):
 * **Not there**: caves, ravines, ores, aquifers, lava, trees, grass and flowers, snow layers, structures, villages, fluid flow, a gradient between biomes' surface blocks.  Rivers are not
   carved (low ground simply floods to sea level).
 * **Heightmaps** are written with the chunk: WORLD_SURFACE = MOTION_BLOCKING = MOTION_BLOCKING_NO_LEAVES = the higher of the surface and the water (water has a fluid, so it counts for MOTION_BLOCKING),
-  checked against `mc.compute_heightmaps` from the blocks (36 chunks per run, all three kinds, equal).  **Light** stays the straight-down model (the generator computes it right away with
-  `mc.ensure_chunk_current`, together with the packet, in its own transaction, so the tick only reads the cache).
+  checked against `mc.compute_heightmaps` from the blocks (36 chunks per run, all three kinds, equal).  **Light** is the light engine's ([LIGHT.md](LIGHT.md): the generator lights each batch in one region with `mc.light_chunks`, together with the packet, in its own transaction, so the tick only reads the cache).
 
 How it is built (why it is fast enough): value noise is PL/pgSQL with the integer hash inline (written as nested SQL functions the planner inlined every use of every intermediate value
 into 8 copies: 0.5 ms per noise value instead of 8 µs); the 256 columns, the 16 cells and the 25 lattice samples are small loops; a section is text: every column is one character
@@ -263,7 +262,7 @@ Measured on the 4-core dev container with other benchmark processes running, so 
 | one edit, then `chunk_packet` (light recompute + re-encode) | 2.8 to 5.9 ms |
 | `chunk_packet_body`, real terrain chunk (24 sections, about 11 palette) | 16 to 20 ms |
 | `compute_heightmaps` in full, flat / real terrain | 4 to 5 ms / 44 to 49 ms (only after a whole-section fill or on import) |
-| `compute_light`, flat / real terrain | about 1 ms / 1.7 to 2.3 ms |
+| light of a chunk: flat (straight-down model) / noise terrain in a batch / one chunk at a time / vanilla-like terrain in a batch | about 0.25 ms / 2.2 ms / 5.9 ms / 13.7 ms, see [LIGHT.md](LIGHT.md) "Costs" (the straight-down model it replaced: 0.23 to 0.4 ms) |
 | storage: flat chunk / real terrain chunk (all section rows) | **uncompressed, before `sql/950`:** 2.4 KB / 40.5 KB on average (palette sections average 3.4 KB, single-value 173 B).  **Now, whole chunk on disk** (all four tables, indexes included; re-measured, PERF-DISK.md): flat 1,692 B (was 9,713); imported vanilla terrain 17.9 KB after `tools/compact_world.sh`, 23.9 KB as imported (was 59 KB), 32.7 KB with the packet cache; `dbcraft:noise` 7.0 KB compacted (was 24.4 KB) |
 
 ### Large fills (sql/210 `mc.fill_section`, measured for this change)
@@ -381,8 +380,8 @@ player placements and breaks run `mc.shape_neighbours`).
   in SQL or a tiny native function); nothing of it is built here.
 * **Block entity NBT** is stored as the raw network bytes, not as a readable representation.  Editing or inspecting a chest means decoding bytes.
 * **No biome editing API** (sections carry biomes; nothing sets them after generation), no vanilla terrain generator (flat, and the seeded `dbcraft:noise` above, which is not vanilla's: no caves, ores, trees), no structures.
-* **Light** is the straight-down model above; no horizontal sky spread, no block light, no cross-chunk updates.
-* **Cache invalidation of neighbours.**  Light does not depend on neighbours in this model, so editing a chunk invalidates only that chunk's packet.
+* **Light** is [LIGHT.md](LIGHT.md): what is approximate there (all-zero `data` arrays, which sections a `light_update` marks, timing) is listed there.
+* **Cache invalidation of neighbours.**  Light depends on the chunks around (14 cells): an edit near a chunk border changes the light of the neighbour, and `mc.light_step` gives the chunks whose light changed a new version.
 * **Per-section encoded bytes are not cached**, which is the main cost of re-sending an edited terrain chunk (see Performance).
 * **Autovacuum.**  Each edit rewrites a section row (and the chunk row): under steady editing the heap bloats until vacuum runs (the bench database shows 61 MB for
   about 1,800 live sections after 20,000+ edits with no vacuum).  `fillfactor 70` helps HOT updates; autovacuum settings for these two tables were not tuned.
@@ -417,7 +416,7 @@ tests/world_import/terrain_vanilla.sh 8                    # vanilla loads an ex
 ## Chunk rebuild and batched edits (details and numbers: PERF-EDIT.md)
 
 * `mc.chunk.light_ws` / `light_top` are a **cache key**: the inputs (WORLD_SURFACE heightmap, highest non-empty section) the stored `mc.chunk_light` rows were computed from.  `mc.compute_light` does nothing when they still match
-  (and the row count is right); NULL means "recompute".  Anything that writes light rows directly (the template copy in sql/245 copies the template's key) must set or null it.
+  (and the row count is right); NULL means "recompute".  Anything that writes light rows directly (the template copy in sql/245 copies the template's key) must set or null it.  The light engine (sql/225, 227) writes no key (NULL): the key belongs to `mc.compute_light_flat`.
 * `mc.set_blocks` processes sections in key order through `mc.edit_section_core` with per-chunk bookkeeping and one event insert; `mc.edit_section` (one section) is a wrapper around the same core.
   A section stores exactly `ceil(4096 / (64 / bits)) * 8` bytes of packed data (the first versions stored twice that when a few edits created a palette section; see PERF-EDIT.md for the repair statement).
 * The world code looks block states up by name through a hash index on `ref.block_state(name)`.

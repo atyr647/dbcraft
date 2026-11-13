@@ -17,6 +17,8 @@ create unlogged table if not exists mc.light_dirty (
     effect    smallint not null default 3           -- 1 the sky light can change, 2 the block light can change (see mc.light_effect)
 );
 
+alter table mc.light_dirty add column if not exists effect smallint not null default 3;           -- (a database made before the column existed)
+
 create or replace function mc.light_differs(p_old text, p_new text) returns boolean language sql stable parallel safe as $$
   select coalesce(
       (select o.damp <> n.damp or o.emission <> n.emission or o.shaped or n.shaped
@@ -121,6 +123,7 @@ begin
     create temp table if not exists lw_all (cx int not null, cz int not null, idx int not null, sky boolean not null, blk boolean not null, cs bit(4096), cb bit(4096)) on commit delete rows;
     create temp table if not exists lw_allc (cx int not null, cz int not null) on commit delete rows;                -- chunks whose rows changed in any way (also new layers)
     delete from lw_all; delete from lw_allc;
+    delete from mc.light_dirty d where not exists (select 1 from mc.dimension m where m.name = d.dimension);          -- (a dimension that was removed)
     for r in select d.dimension from mc.light_dirty d group by d.dimension loop
         -- the changed cells: block events one by one; a fill or section event as its cells (up to 64) or, beyond that, the chunk columns around it are lit again
         with d0 as (delete from mc.light_dirty where dimension = r.dimension returning x, y, z, kind, cells, effect),

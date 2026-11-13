@@ -90,7 +90,7 @@ are not imported.
 
 * Pending `PostProcessing` is not applied (35 of 292 chunks in the comparison).  Vanilla applies it itself when it loads the exported chunks only if the export keeps it;
   the exporter writes none, so the few water edges and plant blocks that were waiting stay as they are in the file.
-* Light comes from the file.  Next to chunks with pending post-processing the light differs from what vanilla's packet sends after the update.
+* Light comes from the file.  Next to chunks with pending post-processing the light differs from what vanilla's packet sends after the update.  An imported chunk keeps the file's light until a block next to it changes; the light engine ([LIGHT.md](LIGHT.md)) then lights the neighbourhood again, and `tests/light/compare_import.sql` lights every imported chunk again from its blocks and compares it with the file's light (612 chunks with all neighbours: equal).
 * Block entity update tags of `trial_spawner` (ominous state), brushable blocks, campfires, shelves and `potent_sulfur` follow `getUpdateTag` but were not seen in the test world.
 * An exported world loses everything under "Not imported"; players keep their inventory but not advancements or statistics.
 * Items in inventories are written from the jsonb `components`; unknown future components are passed through untouched.

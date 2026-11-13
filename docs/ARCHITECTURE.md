@@ -88,7 +88,7 @@ chat message index surviving across sessions.
 
 ## Not verified, not built
 
-* **Not compared with vanilla**: the follow-up packets of block changes (`block_entity_data` for a block with a block entity, `light_update`), survival break timing (the client's word is trusted), `teleport_entity`, several command feedback keys
+* **Not compared with vanilla**: the follow-up packets of block changes (`block_entity_data` for a block with a block entity; `light_update` is compared: docs/LIGHT.md), survival break timing (the client's word is trusted), `teleport_entity`, several command feedback keys
   (`docs/GAME.md`), keep-alive timing, two real clients' chunk batching, behaviour with a real vanilla client (the test client is a scripted one that answers like a real one).
 * **A first-time player** gets a different burst from a returning one in vanilla; since `sql/906` dbcraft generates both (compared with the real server, [PLAYER-VISIBILITY.md](PLAYER-VISIBILITY.md)).  The recipes themselves and the advancement update are still captured bytes.
 * **Opaque rows**: the `update_recipes` and `recipe_book_add` packets (the recipes themselves are rows now, [CONTAINERS.md](CONTAINERS.md)), the command tree (`commands`) and advancements are stored as captured bytes
@@ -96,7 +96,7 @@ chat message index surviving across sessions.
 * **Online mode** (RSA, session check, AES-CFB8) and **deflate**: none in SQL; the production gateway has to do them. Without deflate, no packet can be compressed, so
   the dev server runs uncompressed (a join is about 3.3 MB at view distance 9).
 * **World**: flat by default; `dbcraft.generator = dbcraft:noise` selects a seeded terrain generator that is not vanilla's (docs/WORLD.md "Terrain generator": no caves, ores, trees or structures).
-  Light is the straight-down model (exact for flat worlds; 76% of sky layers on real terrain). No block light, no biomes API, no
+  Light is the light engine of docs/LIGHT.md (exact against a vanilla-saved world). No biomes API, no
   structures, block entity data is raw bytes.
 * **Gameplay**: no mobs or other entities beyond players (the player-side survival core -- health, hunger, falls, the void, death, respawn, eating, experience -- is in [SURVIVAL.md](SURVIVAL.md)), no redstone (scheduled ticks, fluids, falling blocks and random ticks exist: [WORLD-DYNAMICS.md](WORLD-DYNAMICS.md)), placement computes vanilla's states for the common block families ([WORLD.md](WORLD.md)), no
   containers beyond chests, barrels, ender chests, the crafting table and furnaces ([CONTAINERS.md](CONTAINERS.md)), only the sounds of [SURVIVAL.md](SURVIVAL.md#sounds) (everything else is listed in [DIFFERENCES.md](DIFFERENCES.md)), entity data of players, equipment, attributes and the locator bar exist (PLAYER-VISIBILITY.md), chat and command rate limits exist (SQL-tested only), no chat signing; about 70 of vanilla's commands answer "not implemented".
