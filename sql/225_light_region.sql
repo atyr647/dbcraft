@@ -9,7 +9,7 @@
 --          that contain such cells are scanned until every column has one, and one more section below the lowest source section of the neighbourhood (light spreads
 --          14 cells at most);
 --   block  the sections that contain an emitting block state and their 26 neighbours.
-create or replace function mc.light_region(p_dim text, p_cxs int[], p_czs int[], p_sky0_as_data boolean default false) returns int language plpgsql volatile set plan_cache_mode = force_generic_plan as $$
+create or replace function mc.light_region(p_dim text, p_cxs int[], p_czs int[], p_sky0_as_data boolean default false) returns int language plpgsql volatile set plan_cache_mode = force_generic_plan set jit = off as $$
 declare
     v_min_y  int;
     v_height int;
@@ -48,27 +48,7 @@ begin
       left join lateral unnest(s.palette) u(nm) on true
       left join mc.light_state l on l.name = u.nm
      group by c.cx, c.cz, s.sy, s.palette;
-    if exists (select 1 from lw_pal where has_sh) then
-        insert into lw_shc
-        select cs.cx * 16 + (m.idx & 15), cs.sy * 16 + (m.idx >> 8), cs.cz * 16 + ((m.idx >> 4) & 15), m.f
-          from lw_pal p
-          join lateral (select c0.cx, c0.cz, c0.sy, c0.bits, c0.data, c0.palette from mc.chunk_section c0
-                         where c0.dimension = p_dim and c0.cx = p.cx and c0.cz = p.cz and c0.sy = p.sy offset 0) cs on true,
-          lateral mc.light_shaped_cells(cs.bits, cs.data, cs.palette) m
-         where p.has_sh;
-        -- the edges between two cells (one of them shaped) whose face shapes together cover the whole square (Shapes.faceShapeOccludes); direction numbers as Direction.ordinal()
-        with dirs(d, dx, dy, dz, opp) as (values (0, 0, -1, 0, 1), (1, 0, 1, 0, 0), (2, 0, 0, -1, 3), (3, 0, 0, 1, 2), (4, -1, 0, 0, 5), (5, 1, 0, 0, 4)),
-        e as (
-            select c.ax, c.ay, c.az, d.d, d.opp, c.ax + d.dx as nx, c.ay + d.dy as ny, c.az + d.dz as nz
-              from lw_shc c cross join dirs d
-             where exists (select 1 from mc.light_face_occ o
-                            where o.a = c.f[d.d + 1]
-                              and o.b = coalesce((select n.f[d.opp + 1] from lw_shc n where n.ax = c.ax + d.dx and n.ay = c.ay + d.dy and n.az = c.az + d.dz), 0))),
-        q as (select nx as x, ny as y, nz as z, opp as side from e union select ax, ay, az, d from e)     -- the cell of an edge receives from the side where the other lies
-        insert into lw_occ
-        select x >> 4, y >> 4, z >> 4, side, bit_or(mc.lk_msb() >> ((((y & 15) << 8) | ((z & 15) << 4) | (15 - (x & 15)))))
-          from q group by x >> 4, y >> 4, z >> 4, side;
-    end if;
+    perform mc.light_shapes_prepare(p_dim);
 
     if dbg then raise notice 'light_region: chunks done after % ms', round(extract(epoch from clock_timestamp() - t0) * 1000); end if;
     ---------------------------------------------------------------------------------------------------- sky: columns from the top down
@@ -141,23 +121,7 @@ begin
     select base + row_number() over (order by m.cx, m.sy, m.cz), m.cx, m.sy, m.cz, ~coalesce(m.op, mc.lk_zero()), null, m.em_lvl, m.em_mask, m.sh, m.ssy is not null from m;
 
     perform mc.light_link();
-    if exists (select 1 from lw_occ) then
-        -- occlusion masks per section; the allow masks of the waves (sql/224)
-        create temp table if not exists lw_o (i int primary key, o0 bit(4096), o1 bit(4096), o2 bit(4096), o3 bit(4096), o4 bit(4096), o5 bit(4096)) on commit delete rows;
-        delete from lw_o;
-        insert into lw_o
-        select s.i, bit_or(q.m) filter (where q.side = 0), bit_or(q.m) filter (where q.side = 1), bit_or(q.m) filter (where q.side = 2), bit_or(q.m) filter (where q.side = 3),
-               bit_or(q.m) filter (where q.side = 4), bit_or(q.m) filter (where q.side = 5)
-          from lw_occ q join lw_sec s on s.cx = q.cx and s.sy = q.sy and s.cz = q.cz group by s.i;
-        update lw_sec s set ia0 = ~mc.lk_y0() & ~o.o0, ia1 = ~mc.lk_y15() & ~o.o1, ia2 = ~mc.lk_z0() & ~o.o2, ia3 = ~mc.lk_z15() & ~o.o3, ia4 = ~mc.lk_x0() & ~o.o4, ia5 = ~mc.lk_x15() & ~o.o5
-          from lw_o o where o.i = s.i;
-        update lw_sec s set rc0 = mc.lk_x15() & ~o.o5 from lw_o o where s.n0 = o.i and o.o5 is not null;
-        update lw_sec s set rc1 = mc.lk_x0()  & ~o.o4 from lw_o o where s.n1 = o.i and o.o4 is not null;
-        update lw_sec s set rc2 = mc.lk_z15() & ~o.o3 from lw_o o where s.n2 = o.i and o.o3 is not null;
-        update lw_sec s set rc3 = mc.lk_z0()  & ~o.o2 from lw_o o where s.n3 = o.i and o.o2 is not null;
-        update lw_sec s set rc4 = mc.lk_y15() & ~o.o1 from lw_o o where s.n4 = o.i and o.o1 is not null;
-        update lw_sec s set rc5 = mc.lk_y0()  & ~o.o0 from lw_o o where s.n5 = o.i and o.o0 is not null;
-    end if;
+    perform mc.light_shapes_apply();
 
     ---------------------------------------------------------------------------------------------------- waves
     if dbg then raise notice 'light_region: link done after % ms', round(extract(epoch from clock_timestamp() - t0) * 1000); end if;
@@ -196,6 +160,7 @@ begin
     end if;
 
     if dbg then raise notice 'light_region: output arrays done after % ms', round(extract(epoch from clock_timestamp() - t0) * 1000); end if;
+    perform mc.light_delta_from_out(p_dim);
     with d as (
         delete from mc.chunk_light l using lw_chunk c
          where c.tgt and l.dimension = p_dim and l.cx = c.cx and l.cz = c.cz and not exists (select 1 from lw_out o where o.cx = l.cx and o.cz = l.cz and o.idx = l.idx)

@@ -45,23 +45,25 @@ end $$;
 create or replace function mc.light_array_uniform(p_level int) returns bytea language sql immutable parallel safe as $$
   select decode(repeat(to_hex(p_level), 4096), 'hex') $$;
 
--- The four planes of a stored array (the inverse): hex digit planes by translate, then the layout change of a row (the array's bytes of a row come in the order
--- of x = 0 .. 15 with the odd cell in the high nibble; layout M wants x = 15 .. 0).
+-- The four planes of a stored array (the inverse): one translate() per plane over the hex digits (the array's bytes hold the cell with odd x in the high nibble, so a
+-- row of 16 cells reads x = 1, 0, 3, 2 ..), then the 8 pairs of every row are put in the order of layout M (x = 15 .. 0) by three swaps.
 create or replace function mc.light_planes(p_arr bytea, out c3 bit(4096), out c2 bit(4096), out c1 bit(4096), out c0 bit(4096)) language plpgsql immutable parallel safe as $$
 declare
-    h  text := encode(p_arr, 'hex');                                                -- per byte: high nibble (odd x) first
-    w  bit(16384);
-    t  text;
+    h text := encode(p_arr, 'hex');
 begin
-    -- turn the array's rows (64 bits = 8 bytes) around: the bytes of a row become x = 15, 14 .. 0 order
-    w := ('x' || h)::bit(16384);
-    w := ((w & mc.lk_bs(8)) << 8) | ((w >> 8) & mc.lk_bs(8));
-    w := ((w & mc.lk_bs(16)) << 16) | ((w >> 16) & mc.lk_bs(16));
-    w := ((w & mc.lk_bs(32)) << 32) | ((w >> 32) & mc.lk_bs(32));
-    t := translate(w::text, '01', '01');                                              -- (w as text is 16384 binary digits, 4 per cell: c3 c2 c1 c0)
-    -- plane k of cell p is character 4 p + (3 - k) of t
-    c3 := regexp_replace(t, '(.)...', '\1', 'g')::bit(4096);
-    c2 := regexp_replace(t, '.(.)..', '\1', 'g')::bit(4096);
-    c1 := regexp_replace(t, '..(.).', '\1', 'g')::bit(4096);
-    c0 := regexp_replace(t, '...(.)', '\1', 'g')::bit(4096);
+    c3 := mc.light_rowfix(translate(h, '0123456789abcdef', '0000000011111111')::bit(4096));
+    c2 := mc.light_rowfix(translate(h, '0123456789abcdef', '0000111100001111')::bit(4096));
+    c1 := mc.light_rowfix(translate(h, '0123456789abcdef', '0011001100110011')::bit(4096));
+    c0 := mc.light_rowfix(translate(h, '0123456789abcdef', '0101010101010101')::bit(4096));
 end $$;
+
+-- cell order x^1 (the order of a stored array's hex digits) to layout M: reverse the 8 pairs of every 16 cells
+create or replace function mc.light_rowfix(x bit(4096)) returns bit(4096) language plpgsql immutable parallel safe as $$
+begin
+    x := ((x & mc.lk_g(2)) << 2) | ((x >> 2) & mc.lk_g(2));
+    x := ((x & mc.lk_g(4)) << 4) | ((x >> 4) & mc.lk_g(4));
+    x := ((x & mc.lk_g(8)) << 8) | ((x >> 8) & mc.lk_g(8));
+    return x;
+end $$;
+create or replace function mc.lk_g(w int) returns bit(4096) language sql immutable parallel safe as $$              -- the low w bits of every 2w-bit group
+  select repeat(repeat('0', w) || repeat('1', w), 2048 / w)::bit(4096) $$;

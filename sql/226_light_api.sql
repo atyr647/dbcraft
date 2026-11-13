@@ -7,7 +7,7 @@
 -- mc.light_chunks(dim, cxs, czs)  light of freshly created chunks, in one call: the uniform ones with the flat model, the rest in one region.  Existing neighbours that
 --                                 were lit while these chunks were missing are lit again (their light depends on them); chunks whose rows changed and that already
 --                                 have been served get a new version (so their cached packet is rebuilt).  Returns the number of chunks lit.
-create or replace function mc.light_flat_ok(p_dim text, p_cx int, p_cz int) returns boolean language plpgsql stable set plan_cache_mode = force_generic_plan as $$
+create or replace function mc.light_flat_ok(p_dim text, p_cx int, p_cz int) returns boolean language plpgsql stable set plan_cache_mode = force_generic_plan set jit = off as $$
 declare
     v_min_sy int;
     h        int;
@@ -29,7 +29,7 @@ begin
                             where l.sid is null or l.emission > 0 or l.shaped or l.damp not in (0, 15))));
 end $$;
 
-create or replace function mc.light_chunks(p_dim text, p_cxs int[], p_czs int[]) returns int language plpgsql volatile set plan_cache_mode = force_generic_plan as $$
+create or replace function mc.light_chunks(p_dim text, p_cxs int[], p_czs int[]) returns int language plpgsql volatile set plan_cache_mode = force_generic_plan set jit = off as $$
 declare
     xs int[]; zs int[];                     -- the chunks of the region call
     fx int[]; fz int[];                     -- the uniform ones
