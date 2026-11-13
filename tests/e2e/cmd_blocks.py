@@ -34,6 +34,7 @@ GROUPS = {
     "fill 0 -60 12 3 -58 14 oak_log[axis=x] replace stone", "fill 0 -60 12 3 -58 14 stone hollow", "fill 0 -60 12 3 -58 14 air hollow", "fill 0 -60 12 1 -60 12 stone replace air",
     "fill ^ ^ ^2 ^1 ^1 ^3 dirt", "fill 0 -60 12 3 -58 14 stone replace #minecraft:logs[axis=x]", "fill 0 -61 12 3 -61 14 dirt replace grass_block", "fill 0 -61 12 3 -61 14 grass_block")],
   "spawn": [("Surv", c) for c in (
+    "tp Surv 0.5 -60 0.5 45 10", "spawnpoint", "spawnpoint Surv", "spawnpoint Surv 5 -60 5", "setworldspawn", "setworldspawn 3 -60 3", "tp Surv 0.5 -60 0.5 0 0",
     "spawnpoint", "spawnpoint Surv", "spawnpoint Surv 5 -60 5", "spawnpoint @a 6 -60 6", "spawnpoint Surv ~ ~ ~", "spawnpoint Surv 5 -60 5 90", "spawnpoint Surv 5 -60 5 90 45",
     "spawnpoint Nobody", "spawnpoint Surv 5 -60", "spawnpoint @a", "spawnpoint Surv ~1 ~ ~-1 ~10 ~5",
     "setworldspawn", "setworldspawn 3 -60 3", "setworldspawn 3 -60 3 90", "setworldspawn 3 -60 3 90 20", "setworldspawn ~ ~ ~", "setworldspawn x", "setworldspawn 3 -60", "setworldspawn 3 -60 3 90 a",

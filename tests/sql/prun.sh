@@ -31,6 +31,7 @@ $ADMIN -c "drop database if exists $TPL" -c "create database $TPL" 2>/dev/null
       || echo "NOTE: datapack/static packets/world reference could not be loaded into the template (tests load what they need themselves)"
     python3 tools/load_dynamics.py >/dev/null 2>&1 || echo "NOTE: no world-dynamics data (tools/gen_dynamics.sh): the dynamics tests skip"
     python3 tools/load_sounds.py >/dev/null 2>&1 || echo "NOTE: no block sound data (tools/gen_sounds.sh): the placement sound tests skip"
+    python3 tools/load_mining.py >/dev/null 2>&1 || echo "NOTE: no mining data (tools/gen_mining.sh): the mining tests skip"
   else echo "NOTE: no capture file; tests that need the vanilla capture are skipped by their own checks"; fi
   python3 tools/load_item_components.py >/dev/null 2>&1 || echo "NOTE: no item components loaded (tests of worn-item attributes skip)"
 ) || exit 1

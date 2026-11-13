@@ -44,6 +44,8 @@ echo "== loading the world-dynamics reference data (derived from the jar: tools/
 python3 tools/load_dynamics.py
 echo "== loading the block sound types (derived from the jar: tools/gen_sounds.sh)"
 python3 tools/load_sounds.py
+echo "== loading the mining data: block hardness, tool rules, block loot tables (derived from the jar: tools/gen_mining.sh)"
+python3 tools/load_mining.py
 echo "== configuring the server"
 psql -X -q -v ON_ERROR_STOP=1 <<'SQL'
 select mc.configure_dev_server('dbcraft', 'creative');

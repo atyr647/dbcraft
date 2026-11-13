@@ -5,6 +5,7 @@ cd "$(dirname "$0")/../.." || exit 1
 tests/e2e/vis_dev.sh stop > /dev/null 2>&1
 tests/e2e/vis_dev.sh setup || exit 1
 python3 tools/load_sounds.py
+python3 tools/load_mining.py
 for n in ${OPS:-Surv Obs}; do
   u=$(python3 -c "
 import hashlib, sys, uuid
