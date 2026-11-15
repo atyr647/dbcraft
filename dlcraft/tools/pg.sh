@@ -26,7 +26,8 @@ case "${1:-}" in
   start)
     mkdir -p "$ROOT" "$SOCK"; [ "$(id -u)" = 0 ] && chown postgres "$ROOT" "$SOCK"
     if [ ! -d "$DATA/base" ]; then as_pg "mkdir -p $DATA && $PGBIN/initdb -D $DATA -A trust -E UTF8 --locale=C.UTF-8 >/dev/null"; fi
-    if ! as_pg "$PGBIN/pg_ctl -D $DATA status" >/dev/null 2>&1; then
+    # "running" = the port answers (after kill -9 a dead postmaster lingers as an unreaped zombie that pg_ctl status still calls running)
+    if ! "$PGBIN/pg_isready" -q -h 127.0.0.1 -p "$PORT"; then
       as_pg "ulimit -n 20000; $PGBIN/pg_ctl -D $DATA -o '$(opts)' -l $ROOT/pg.log -w start" >/dev/null
     fi
     psql -h 127.0.0.1 -p "$PORT" -U postgres -tAc "select 1 from pg_database where datname='dlcraft'" | grep -q 1 \
