@@ -116,7 +116,8 @@
          (let [bb (ByteBuffer/wrap k)]
            [(long (unchecked-int (bit-xor (.getInt bb 0) Integer/MIN_VALUE))) (long (unchecked-int (bit-xor (.getInt bb 4) Integer/MIN_VALUE))) (- (bit-and (long (.getShort bb 8)) 0xFFFF) 32768) v]))))
 
-(defn- hex-bytea [^bytes b] (let [sb (StringBuilder. (+ 2 (* 2 (alength b))))] (.append sb "\\\\x") (doseq [x b] (.append sb (format "%02x" (bit-and (long x) 0xff)))) (str sb)))
+(def ^:private hexfmt (java.util.HexFormat/of))
+(defn- hex-bytea [^bytes b] (str "\\\\x" (.formatHex ^java.util.HexFormat hexfmt b)))   ; COPY text format: the backslash of \x is doubled
 
 (defn- pg-copy-rows [sections]
   "CSV text (tab separated) lines for mc.chunk_section"
@@ -165,28 +166,35 @@
       (println "  world restored in PostgreSQL"))))
 
 ;; ---------------------------------------------------------------------------------------------- storage
-(defn f-storage [{:keys [env pg]}]
-  (facet "storage"
-    (let [kv (:kv env)
-          _ (do (d/clear-dbi kv "cache") (pgx/exec! pg "select bx.clear_cache()"))
+(defn f-storage [{:keys [pg]}]
+  (facet "storage (a dedicated store, 512 chunks generated from scratch)"
+    (let [env (st/open "/srv/dlcraft/dl/storage" {:fresh? true :profile :nometasync}) kv (:kv env)
           pg-world #(+ (pg1 pg "select bx.relsize('mc.chunk')") (pg1 pg "select bx.relsize('mc.chunk_section')"))
-          n-chunks (long (pg1 pg "select count(*) from mc.chunk"))]
-      (rec! "chunks stored" "postgres" n-chunks "chunks")
-      (rec! "world on disk, sections only, no packet cache" "datalevin" (/ (st/disk-bytes env) n-chunks) "bytes/chunk" :note "whole LMDB file incl. everything else in the store")
-      (rec! "world on disk, sections only, no packet cache" "postgres" (/ (pg-world) n-chunks) "bytes/chunk" :note "chunk + chunk_section incl. indexes")
+          mb #(/ % 1048576.0)]
+      (pgx/exec! pg "select mc.reset_world()") (pgx/exec! pg "vacuum full mc.chunk") (pgx/exec! pg "vacuum full mc.chunk_section") (pgx/exec! pg "vacuum full mc.chunk_cache")
+      (w/gen-area! kv 0 0 31 15) (pg1 pg "select mc.gen_area(0,0,31,15)")
+      (rec! "512 chunks, sections only" "datalevin" (/ (st/disk-bytes env) 512.0) "bytes/chunk" :note "the whole LMDB file (nothing else in this store)")
+      (rec! "512 chunks, sections only" "postgres" (/ (pg-world) 512.0) "bytes/chunk" :note "chunk + chunk_section, with primary-key indexes")
       (doseq [cx (range 16) cz (range 16)] (w/chunk-packet kv cx cz))
       (pg1 pg "select bx.packet_bytes(0,0,15,15)")
-      (rec! "packet cache for 256 chunks" "postgres" (/ (pg1 pg "select bx.relsize('mc.chunk_cache')") 256) "bytes/chunk")
-      ;; compaction
-      (let [dl-before (st/disk-bytes env)
+      (rec! "after caching 256 chunk packets" "datalevin" (/ (st/disk-bytes env) 512.0) "bytes/chunk (of 512)")
+      (rec! "after caching 256 chunk packets" "postgres" (/ (+ (pg-world) (pg1 pg "select bx.relsize('mc.chunk_cache')")) 512.0) "bytes/chunk (of 512)")
+      ;; churn: 20,000 single edits, each its own commit, scattered over the world
+      (let [span 512]
+        (dotimes [i 20000] (w/set-block! env kv (rem (hash2 (inc i) 1 13) span) (- (rem (hash2 (inc i) 2 13) 130) 64) (rem (hash2 (inc i) 3 13) 256) (+ 1 (rem (hash2 (inc i) 4 13) 20))))
+        (dotimes [i 20000] (pg1 pg "select mc.set_block(?,?,?,?)" (rem (hash2 (inc i) 1 13) span) (- (rem (hash2 (inc i) 2 13) 130) 64) (rem (hash2 (inc i) 3 13) 256) (+ 1 (rem (hash2 (inc i) 4 13) 20)))))
+      (pgx/exec! pg "select mc.drain_block_events()") (w/drain-block-events! kv)
+      (let [dl-before (st/disk-bytes env) pg-before (+ (pg-world) (pg1 pg "select bx.relsize('mc.chunk_cache')"))
             dest "/srv/dlcraft/dl/compact-copy"
             _ (when (.exists (java.io.File. dest)) (doseq [f (reverse (file-seq (java.io.File. dest)))] (.delete ^java.io.File f)))
             [_ dl-ms] (timed (d/copy (:kv env) dest true))
             dl-after (reduce + (map #(.length ^java.io.File %) (filter #(.isFile ^java.io.File %) (file-seq (java.io.File. dest)))))
-            pg-before (pg-world)
-            [_ pg-ms] (timed (do (pgx/exec! pg "vacuum full mc.chunk_section") (pgx/exec! pg "vacuum full mc.chunk")))
-            pg-after (pg-world)]
-        (rec! "size before compaction (after the edits of the earlier facets)" "datalevin" (/ dl-before 1048576.0) "MB")
-        (rec! "size after compaction (mdb_copy -c)" "datalevin" (/ dl-after 1048576.0) "MB" :note (format "%.0f ms" dl-ms))
-        (rec! "size before compaction (sections only)" "postgres" (/ pg-before 1048576.0) "MB")
-        (rec! "size after compaction (VACUUM FULL)" "postgres" (/ pg-after 1048576.0) "MB" :note (format "%.0f ms" pg-ms))))))
+            [_ pg-ms] (timed (do (pgx/exec! pg "vacuum full mc.chunk_section") (pgx/exec! pg "vacuum full mc.chunk") (pgx/exec! pg "vacuum full mc.chunk_cache")))
+            pg-after (+ (pg-world) (pg1 pg "select bx.relsize('mc.chunk_cache')"))]
+        (rec! "after 20,000 single-edit commits" "datalevin" (mb dl-before) "MB" :note "copy-on-write pages not yet reclaimed by a copy")
+        (rec! "after 20,000 single-edit commits" "postgres" (mb pg-before) "MB" :note "fillfactor 70 lets edits stay on the page")
+        (rec! "after compaction" "datalevin" (mb dl-after) "MB" :note (format "mdb_copy -c, %.0f ms" dl-ms))
+        (rec! "after compaction" "postgres" (mb pg-after) "MB" :note (format "VACUUM FULL, %.0f ms" pg-ms)))
+      (st/close env)
+      ;; leave the shared PostgreSQL world as the other facets expect it
+      (pg1 pg "select mc.reset_world()") (pg1 pg "select mc.gen_area(-8,-8,-1,-1)") (pg1 pg "select mc.gen_area(0,0,31,15)"))))

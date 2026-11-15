@@ -1119,254 +1119,6 @@
   "better" : "higher",
   "note" : "visible pairs at start: [8552 8552]"
 }, {
-  "facet" : "chat: 50,000 messages with full-text search",
-  "metric" : "insert 50k messages (500 batches of 100, one commit each)",
-  "engine" : "datalevin",
-  "value" : 12264.851241178158,
-  "unit" : "msg/s",
-  "better" : "higher",
-  "note" : null
-}, {
-  "facet" : "chat: 50,000 messages with full-text search",
-  "metric" : "insert 50k messages (500 batches of 100, one commit each)",
-  "engine" : "postgres",
-  "value" : 75691.28555905067,
-  "unit" : "msg/s",
-  "better" : "higher",
-  "note" : null
-}, {
-  "facet" : "chat: 50,000 messages with full-text search",
-  "metric" : "full-text search, whole word, newest 20 (each word in ~1.7% of messages)",
-  "engine" : "datalevin",
-  "value" : 0.008984879999999999,
-  "unit" : "ms/query",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "chat: 50,000 messages with full-text search",
-  "metric" : "full-text search, whole word, newest 20 (each word in ~1.7% of messages)",
-  "engine" : "postgres",
-  "value" : 0.393477155,
-  "unit" : "ms/query",
-  "better" : "lower",
-  "note" : "round trip included"
-}, {
-  "facet" : "chat: 50,000 messages with full-text search",
-  "metric" : "last 50 messages",
-  "engine" : "datalevin",
-  "value" : 0.0011348039999999999,
-  "unit" : "ms/query",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "chat: 50,000 messages with full-text search",
-  "metric" : "last 50 messages",
-  "engine" : "postgres",
-  "value" : 0.091572262,
-  "unit" : "ms/query",
-  "better" : "lower",
-  "note" : "round trip included"
-}, {
-  "facet" : "chat: 50,000 messages with full-text search",
-  "metric" : "messages per sender (full aggregation over 50k)",
-  "engine" : "datalevin",
-  "value" : 0.0039272000000000005,
-  "unit" : "ms/query",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "chat: 50,000 messages with full-text search",
-  "metric" : "messages per sender (full aggregation over 50k)",
-  "engine" : "postgres",
-  "value" : 5.071069,
-  "unit" : "ms/query",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "seed 1000 players (about 28k stacks)",
-  "engine" : "datalevin/datalog",
-  "value" : 366.183019,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "seed 1000 players (about 28k stacks)",
-  "engine" : "datalevin/kv",
-  "value" : 15.477667,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "seed 1000 players (about 28k stacks)",
-  "engine" : "postgres",
-  "value" : 100.672188,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "load one player's inventory (join)",
-  "engine" : "datalevin/datalog",
-  "value" : 376.665312,
-  "unit" : "us/player",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "load one player's inventory (join)",
-  "engine" : "datalevin/kv",
-  "value" : 0.456848,
-  "unit" : "us/player",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "load one player's inventory (join)",
-  "engine" : "postgres",
-  "value" : 74.070847,
-  "unit" : "us/player",
-  "better" : "lower",
-  "note" : "client round trip included"
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "20k clicks inside one transaction",
-  "engine" : "datalevin/datalog",
-  "value" : 34.707637150000004,
-  "unit" : "us/click",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "20k clicks inside one transaction",
-  "engine" : "datalevin/kv",
-  "value" : 1.7840754,
-  "unit" : "us/click",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "20k clicks inside one transaction",
-  "engine" : "postgres",
-  "value" : 14.716475899999999,
-  "unit" : "us/click",
-  "better" : "lower",
-  "note" : "PL/pgSQL loop"
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "one click per commit",
-  "engine" : "datalevin/datalog",
-  "value" : 4.227744,
-  "unit" : "us/click",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "one click per commit",
-  "engine" : "datalevin/kv",
-  "value" : 1.233682,
-  "unit" : "us/click",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "one click per commit",
-  "engine" : "postgres",
-  "value" : 90.329111,
-  "unit" : "us/click",
-  "better" : "lower",
-  "note" : "client round trip included, sync_commit=off"
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "who holds item 7? (28k stacks)",
-  "engine" : "datalevin/datalog",
-  "value" : 0.002108,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : "AVE index on every attribute"
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "who holds item 7? (28k stacks)",
-  "engine" : "datalevin/kv",
-  "value" : 0.001206,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : "scan 1000 records"
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "who holds item 7? (28k stacks)",
-  "engine" : "postgres",
-  "value" : 1.468321,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : "no index on item"
-}, {
-  "facet" : "inventory (1000 players, 46 slots)",
-  "metric" : "who holds item 7? (28k stacks)",
-  "engine" : "postgres/indexed",
-  "value" : 0.160986,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : "with a btree on item"
-}, {
-  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
-  "metric" : "burst: 1600 sources spread for 70 ticks (total)",
-  "engine" : "datalevin",
-  "value" : 355.0877069999999,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : "25285 blocks set"
-}, {
-  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
-  "metric" : "burst: 1600 sources spread for 70 ticks (total)",
-  "engine" : "postgres",
-  "value" : 77.65010500000001,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : "1204 blocks set"
-}, {
-  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
-  "metric" : "burst: busiest single tick",
-  "engine" : "datalevin",
-  "value" : 35.839817,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
-  "metric" : "burst: busiest single tick",
-  "engine" : "postgres",
-  "value" : 24.997329,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
-  "metric" : "burst: identical blocks set per tick",
-  "engine" : "both",
-  "value" : 0,
-  "unit" : "1 = yes",
-  "better" : "higher",
-  "note" : null
-}, {
-  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
-  "metric" : "random ticks over 256 chunks (per tick)",
-  "engine" : "datalevin",
-  "value" : 4.20386995,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
-  "metric" : "random ticks over 256 chunks (per tick)",
-  "engine" : "postgres",
-  "value" : 538.9004142,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
   "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
   "metric" : "set_block, one commit each: mean",
   "engine" : "datalevin/sync",
@@ -1911,17 +1663,330 @@
   "better" : "higher",
   "note" : null
 }, {
-  "unit" : "ERROR: invalid byte sequence for encoding \"UTF8\": 0x00\n  Where: COPY chunk_section, line 2: \"0\t0\t-3\t4096\t{1,15,16,17,9,4,10,14,12,8,20,19,3,18,6,2}\t4\t\\x00000000000000000000000000000000000000000...\"",
-  "value" : null,
-  "facet" : "bulk import of a generated world (512 chunks)",
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "insert 50k messages (500 batches of 100, one commit each)",
+  "engine" : "datalevin",
+  "value" : 10761.072977943337,
+  "unit" : "msg/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "insert 50k messages (500 batches of 100, one commit each)",
+  "engine" : "postgres",
+  "value" : 55268.79525367503,
+  "unit" : "msg/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "full-text search, whole word, newest 20 (each word in ~1.7% of messages)",
+  "engine" : "datalevin",
+  "value" : 5.169896305,
+  "unit" : "ms/query",
   "better" : "lower",
-  "engine" : "-",
-  "metric" : "FAILED"
+  "note" : "index-result cache disabled"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "full-text search, whole word, newest 20 (each word in ~1.7% of messages)",
+  "engine" : "datalevin/cached",
+  "value" : 0.321886185,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "same 200 queries repeated: served from the result cache"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "full-text search, whole word, newest 20 (each word in ~1.7% of messages)",
+  "engine" : "postgres",
+  "value" : 0.46467899,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "round trip included"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "last 50 messages",
+  "engine" : "datalevin",
+  "value" : 0.038898838,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "index-result cache disabled"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "last 50 messages",
+  "engine" : "datalevin/cached",
+  "value" : 0.002355514,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "last 50 messages",
+  "engine" : "postgres",
+  "value" : 0.064995452,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "round trip included"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "messages per sender (full aggregation over 50k)",
+  "engine" : "datalevin",
+  "value" : 6.770646000000001,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "index-result cache disabled"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "messages per sender (full aggregation over 50k)",
+  "engine" : "datalevin/cached",
+  "value" : 0.2679262,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "messages per sender (full aggregation over 50k)",
+  "engine" : "postgres",
+  "value" : 3.6040457000000004,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "seed 1000 players (about 28k stacks)",
+  "engine" : "datalevin/datalog",
+  "value" : 302.746731,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "seed 1000 players (about 28k stacks)",
+  "engine" : "datalevin/kv",
+  "value" : 17.072415,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "seed 1000 players (about 28k stacks)",
+  "engine" : "postgres",
+  "value" : 94.453178,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "load one player's inventory (join)",
+  "engine" : "datalevin/datalog",
+  "value" : 877.935755,
+  "unit" : "us/player",
+  "better" : "lower",
+  "note" : "index-result cache disabled"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "load one player's inventory (join)",
+  "engine" : "datalevin/datalog cached",
+  "value" : 622.513744,
+  "unit" : "us/player",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "load one player's inventory (join)",
+  "engine" : "datalevin/kv",
+  "value" : 3.304907,
+  "unit" : "us/player",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "load one player's inventory (join)",
+  "engine" : "postgres",
+  "value" : 103.984918,
+  "unit" : "us/player",
+  "better" : "lower",
+  "note" : "client round trip included"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "20k clicks inside one transaction",
+  "engine" : "datalevin/datalog",
+  "value" : 50.94265745,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "20k clicks inside one transaction",
+  "engine" : "datalevin/kv",
+  "value" : 2.43330665,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "20k clicks inside one transaction",
+  "engine" : "postgres",
+  "value" : 15.8126085,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : "PL/pgSQL loop"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "one click per commit",
+  "engine" : "datalevin/datalog",
+  "value" : 474.846563,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "one click per commit",
+  "engine" : "datalevin/kv",
+  "value" : 108.67913,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "one click per commit",
+  "engine" : "postgres",
+  "value" : 94.289326,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : "client round trip included, sync_commit=off"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "who holds item 7? (28k stacks)",
+  "engine" : "datalevin/datalog",
+  "value" : 0.88781,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "AVE index on every attribute, result cache disabled"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "who holds item 7? (28k stacks)",
+  "engine" : "datalevin/datalog cached",
+  "value" : 0.001212,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "who holds item 7? (28k stacks)",
+  "engine" : "datalevin/kv",
+  "value" : 1.485876,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "scan 1000 records"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "who holds item 7? (28k stacks)",
+  "engine" : "postgres",
+  "value" : 1.725319,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "no index on item"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "who holds item 7? (28k stacks)",
+  "engine" : "postgres/indexed",
+  "value" : 0.331004,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "with a btree on item"
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "burst: 1600 sources spread for 70 ticks (total)",
+  "engine" : "datalevin",
+  "value" : 47.832679,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "1204 blocks set"
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "burst: 1600 sources spread for 70 ticks (total)",
+  "engine" : "postgres",
+  "value" : 86.62768199999998,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "1204 blocks set"
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "burst: busiest single tick",
+  "engine" : "datalevin",
+  "value" : 20.543058,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "burst: busiest single tick",
+  "engine" : "postgres",
+  "value" : 26.083131,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "burst: identical blocks set per tick",
+  "engine" : "both",
+  "value" : 1,
+  "unit" : "1 = yes",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "random ticks over 256 chunks (per tick)",
+  "engine" : "datalevin",
+  "value" : 3.8707341499999997,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "random ticks over 256 chunks (per tick)",
+  "engine" : "postgres",
+  "value" : 465.578895,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "bulk import of a generated world (512 chunks)",
+  "metric" : "import 512 chunks, from section blobs",
+  "engine" : "datalevin",
+  "value" : 86.07182,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "transact-kv, 16 chunks per transaction"
+}, {
+  "facet" : "bulk import of a generated world (512 chunks)",
+  "metric" : "import 512 chunks, :append flag",
+  "engine" : "datalevin",
+  "value" : 90.316931,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "keys pre-sorted"
+}, {
+  "facet" : "bulk import of a generated world (512 chunks)",
+  "metric" : "import 512 chunks, COPY only",
+  "engine" : "postgres",
+  "value" : 99.027733,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "text COPY of rows already formatted"
+}, {
+  "facet" : "bulk import of a generated world (512 chunks)",
+  "metric" : "import 512 chunks, format rows + COPY",
+  "engine" : "postgres",
+  "value" : 3043.576185,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "must unpack each blob into columns first"
 }, {
   "facet" : "storage",
   "metric" : "chunks stored",
   "engine" : "postgres",
-  "value" : 256,
+  "value" : 576,
   "unit" : "chunks",
   "better" : "lower",
   "note" : null
@@ -1929,7 +1994,7 @@
   "facet" : "storage",
   "metric" : "world on disk, sections only, no packet cache",
   "engine" : "datalevin",
-  "value" : 2847840.5234375,
+  "value" : 1265706.899305556,
   "unit" : "bytes/chunk",
   "better" : "lower",
   "note" : "whole LMDB file incl. everything else in the store"
@@ -1937,7 +2002,7 @@
   "facet" : "storage",
   "metric" : "world on disk, sections only, no packet cache",
   "engine" : "postgres",
-  "value" : 39680,
+  "value" : 38158.22222222222,
   "unit" : "bytes/chunk",
   "better" : "lower",
   "note" : "chunk + chunk_section incl. indexes"
@@ -1945,7 +2010,7 @@
   "facet" : "storage",
   "metric" : "packet cache for 256 chunks",
   "engine" : "postgres",
-  "value" : 21472,
+  "value" : 25120,
   "unit" : "bytes/chunk",
   "better" : "lower",
   "note" : null
@@ -1961,15 +2026,15 @@
   "facet" : "storage",
   "metric" : "size after compaction (mdb_copy -c)",
   "engine" : "datalevin",
-  "value" : 59.0234432220459,
+  "value" : 56.1171932220459,
   "unit" : "MB",
   "better" : "lower",
-  "note" : "73 ms"
+  "note" : "58 ms"
 }, {
   "facet" : "storage",
   "metric" : "size before compaction (sections only)",
   "engine" : "postgres",
-  "value" : 9.6875,
+  "value" : 20.9609375,
   "unit" : "MB",
   "better" : "lower",
   "note" : null
@@ -1977,10 +2042,10 @@
   "facet" : "storage",
   "metric" : "size after compaction (VACUUM FULL)",
   "engine" : "postgres",
-  "value" : 9.5234375,
+  "value" : 20.6171875,
   "unit" : "MB",
   "better" : "lower",
-  "note" : "95 ms"
+  "note" : "110 ms"
 }, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "acknowledged commits lost",
@@ -1988,12 +2053,12 @@
   "value" : 0,
   "unit" : "commits",
   "better" : "lower",
-  "note" : "7341 acknowledged, reopen 13 ms, 1 unacknowledged edits also applied"
+  "note" : "8463 acknowledged, reopen 11 ms, 0 unacknowledged edits also applied"
 }, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "restart after kill -9",
   "engine" : "datalevin/sync",
-  "value" : 13.436889,
+  "value" : 11.234586,
   "unit" : "ms",
   "better" : "lower",
   "note" : null
@@ -2004,12 +2069,12 @@
   "value" : 0,
   "unit" : "commits",
   "better" : "lower",
-  "note" : "12313 acknowledged, reopen 11 ms, 0 unacknowledged edits also applied"
+  "note" : "12932 acknowledged, reopen 14 ms, 0 unacknowledged edits also applied"
 }, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "restart after kill -9",
   "engine" : "datalevin/nometasync",
-  "value" : 10.513994,
+  "value" : 13.628008,
   "unit" : "ms",
   "better" : "lower",
   "note" : null
@@ -2020,35 +2085,60 @@
   "value" : 0,
   "unit" : "commits",
   "better" : "lower",
-  "note" : "7748 acknowledged, reopen 253 ms, 0 unacknowledged edits also applied"
+  "note" : "7694 acknowledged, reopen 232 ms, 0 unacknowledged edits also applied"
 }, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "restart after kill -9",
   "engine" : "datalevin/wal-relaxed",
-  "value" : 252.737268,
+  "value" : 232.296153,
   "unit" : "ms",
   "better" : "lower",
   "note" : null
 }, {
-  "unit" : "Connection to 127.0.0.1:54340 refused. Check that the hostname and port are correct and that the postmaster is accepting TCP/IP connections.",
-  "value" : null,
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "acknowledged commits lost",
+  "engine" : "postgres/strict",
+  "value" : 0,
+  "unit" : "commits",
   "better" : "lower",
-  "engine" : "-",
-  "metric" : "FAILED"
+  "note" : "5666 acknowledged; crash recovery + start 282 ms"
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "restart after kill -9",
+  "engine" : "postgres/strict",
+  "value" : 282.122473,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "acknowledged commits lost",
+  "engine" : "postgres/relaxed",
+  "value" : 9,
+  "unit" : "commits",
+  "better" : "lower",
+  "note" : "14213 acknowledged; crash recovery + start 281 ms"
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "restart after kill -9",
+  "engine" : "postgres/relaxed",
+  "value" : 281.498413,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
 }, {
   "facet" : "?",
   "metric" : "resident memory, end of run",
   "engine" : "datalevin (JVM process)",
-  "value" : 1886,
+  "value" : 2057,
   "unit" : "MB",
   "better" : "lower",
-  "note" : "heap used 101 MB, JVM started with -Xms2g -Xmx4g"
+  "note" : "heap used 99 MB, JVM started with -Xms2g -Xmx4g"
 }, {
   "facet" : "?",
   "metric" : "resident memory, end of run",
   "engine" : "postgres (postmaster + backends)",
-  "value" : null,
+  "value" : 76,
   "unit" : "MB",
   "better" : "lower",
   "note" : "shared_buffers 128MB (dbcraft's setting)"
