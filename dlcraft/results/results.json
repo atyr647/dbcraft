@@ -1,0 +1,2177 @@
+[ {
+  "facet" : "world generation",
+  "metric" : "generate 256 chunks (ms/chunk, run 1)",
+  "engine" : "datalevin",
+  "value" : 0.9027279296875,
+  "unit" : "ms/chunk",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "world generation",
+  "metric" : "generate 256 chunks (ms/chunk, run 1)",
+  "engine" : "postgres",
+  "value" : 29.8435169375,
+  "unit" : "ms/chunk",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "world generation",
+  "metric" : "generate 256 chunks (ms/chunk, run 2)",
+  "engine" : "datalevin",
+  "value" : 0.82480424609375,
+  "unit" : "ms/chunk",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "world generation",
+  "metric" : "generate 256 chunks (ms/chunk, run 2)",
+  "engine" : "postgres",
+  "value" : 27.3881639296875,
+  "unit" : "ms/chunk",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "world generation",
+  "metric" : "chunks per second (run 2)",
+  "engine" : "datalevin",
+  "value" : 1212.408889425548,
+  "unit" : "chunks/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "world generation",
+  "metric" : "chunks per second (run 2)",
+  "engine" : "postgres",
+  "value" : 36.51212262958768,
+  "unit" : "chunks/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "?",
+  "metric" : "resident memory, after generating 640 chunks",
+  "engine" : "datalevin (JVM process)",
+  "value" : 1760,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "heap used 114 MB, JVM started with -Xms2g -Xmx4g"
+}, {
+  "facet" : "?",
+  "metric" : "resident memory, after generating 640 chunks",
+  "engine" : "postgres (postmaster + backends)",
+  "value" : 158,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "shared_buffers 128MB (dbcraft's setting)"
+}, {
+  "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
+  "metric" : "assemble 256 chunk payloads from sections",
+  "engine" : "datalevin",
+  "value" : 6.280029,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
+  "metric" : "assemble 256 chunk payloads from sections",
+  "engine" : "postgres",
+  "value" : 194.812378,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "server side, nothing shipped"
+}, {
+  "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
+  "metric" : "256 chunk packets, cache cold (build + store)",
+  "engine" : "datalevin",
+  "value" : 84.241878,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
+  "metric" : "256 chunk packets, cache cold (build + store)",
+  "engine" : "postgres",
+  "value" : 256.712911,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
+  "metric" : "256 chunk packets, cache warm",
+  "engine" : "datalevin",
+  "value" : 2.598573,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
+  "metric" : "256 chunk packets, cache warm, server side",
+  "engine" : "postgres",
+  "value" : 1.689338,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
+  "metric" : "256 chunk packets, cache warm, shipped to the client",
+  "engine" : "postgres",
+  "value" : 8.134806,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "JDBC over loopback TCP"
+}, {
+  "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
+  "metric" : "256 chunk packets, warm, delivered to the caller",
+  "engine" : "datalevin",
+  "value" : 2.162749,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "in-process: the bytes are in the caller's heap"
+}, {
+  "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
+  "metric" : "single cached chunk packet",
+  "engine" : "datalevin",
+  "value" : 7.1129915,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
+  "metric" : "single cached chunk packet (client round trip)",
+  "engine" : "postgres",
+  "value" : 65.549922,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : "JDBC over loopback TCP"
+}, {
+  "facet" : "point operations (get_block / set_block)",
+  "metric" : "get_block, 100k random, in one transaction",
+  "engine" : "datalevin",
+  "value" : 0.8821399099999999,
+  "unit" : "us/op",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "point operations (get_block / set_block)",
+  "metric" : "get_block, 100k random, in one transaction",
+  "engine" : "postgres",
+  "value" : 51.52764494,
+  "unit" : "us/op",
+  "better" : "lower",
+  "note" : "PL/pgSQL loop, logic inside the database"
+}, {
+  "facet" : "point operations (get_block / set_block)",
+  "metric" : "set_block, 50k random, in one transaction",
+  "engine" : "datalevin",
+  "value" : 1.88585494,
+  "unit" : "us/op",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "point operations (get_block / set_block)",
+  "metric" : "set_block, 50k random, in one transaction",
+  "engine" : "postgres",
+  "value" : 15.77803446,
+  "unit" : "us/op",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "point operations (get_block / set_block)",
+  "metric" : "set_block, one commit per call (nometasync)",
+  "engine" : "datalevin",
+  "value" : 2.2812805,
+  "unit" : "us/op",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "point operations (get_block / set_block)",
+  "metric" : "set_block, one commit per call (sync_commit=off), client round trip",
+  "engine" : "postgres",
+  "value" : 131.4666245,
+  "unit" : "us/op",
+  "better" : "lower",
+  "note" : "JDBC over loopback TCP, autocommit"
+}, {
+  "facet" : "point operations (get_block / set_block)",
+  "metric" : "get_block, one statement per call, client round trip",
+  "engine" : "postgres",
+  "value" : 200.1078,
+  "unit" : "us/op",
+  "better" : "lower",
+  "note" : "what a client-driven design would pay"
+}, {
+  "facet" : "fill (set-based bulk edits)",
+  "metric" : "fill 16^3 (one whole section)",
+  "engine" : "datalevin",
+  "value" : 0.813465,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "fill (set-based bulk edits)",
+  "metric" : "fill 16^3 (one whole section)",
+  "engine" : "postgres",
+  "value" : 0.458961,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "fill (set-based bulk edits)",
+  "metric" : "fill 40^3 (27 partial sections)",
+  "engine" : "datalevin",
+  "value" : 4.462127,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "fill (set-based bulk edits)",
+  "metric" : "fill 40^3 (27 partial sections)",
+  "engine" : "postgres",
+  "value" : 92.60424,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "fill (set-based bulk edits)",
+  "metric" : "fill 128x32x128 (128 whole sections, 524k blocks)",
+  "engine" : "datalevin",
+  "value" : 5.007034,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "fill (set-based bulk edits)",
+  "metric" : "fill 128x32x128 (128 whole sections, 524k blocks)",
+  "engine" : "postgres",
+  "value" : 2.016653,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "analytics (whole-region scans)",
+  "metric" : "count blocks by type, 256x256 columns (256 chunks)",
+  "engine" : "datalevin",
+  "value" : 427.877835,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "analytics (whole-region scans)",
+  "metric" : "count blocks by type, 256x256 columns (256 chunks)",
+  "engine" : "postgres",
+  "value" : 1428.372737,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "analytics (whole-region scans)",
+  "metric" : "count blocks by type, unaligned 96x96",
+  "engine" : "datalevin",
+  "value" : 115.06135,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "analytics (whole-region scans)",
+  "metric" : "count blocks by type, unaligned 96x96",
+  "engine" : "postgres",
+  "value" : 488.575718,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "analytics (whole-region scans)",
+  "metric" : "find every diamond ore, 256x256 columns",
+  "engine" : "datalevin",
+  "value" : 59.601742,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "5530 found"
+}, {
+  "facet" : "analytics (whole-region scans)",
+  "metric" : "find every diamond ore, 256x256 columns",
+  "engine" : "postgres",
+  "value" : 2489.384592,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: tick avg",
+  "engine" : "datalevin",
+  "value" : 1.9275734500000004,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: tick p50",
+  "engine" : "datalevin",
+  "value" : 1.779519,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: tick p99",
+  "engine" : "datalevin",
+  "value" : 6.808537,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: tick max",
+  "engine" : "datalevin",
+  "value" : 7.318024,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: inbox push",
+  "engine" : "datalevin",
+  "value" : 0.062282,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: outbox drain",
+  "engine" : "datalevin",
+  "value" : 0.064208,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "in-process"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: end to end (push + tick + drain)",
+  "engine" : "datalevin",
+  "value" : 2.05406345,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "122 frames, 1 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: tick avg",
+  "engine" : "postgres",
+  "value" : 5.071846835,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: tick p50",
+  "engine" : "postgres",
+  "value" : 4.86854,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: tick p99",
+  "engine" : "postgres",
+  "value" : 8.161285,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: tick max",
+  "engine" : "postgres",
+  "value" : 11.883943,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: inbox push",
+  "engine" : "postgres",
+  "value" : 0.480501,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: outbox drain",
+  "engine" : "postgres",
+  "value" : 0.60689,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "includes shipping to the client over JDBC"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: end to end (push + tick + drain)",
+  "engine" : "postgres",
+  "value" : 6.159237835,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "122 frames, 1 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "100 players, 20% moving: outputs byte-identical (digest of every frame of every tick)",
+  "engine" : "both",
+  "value" : 1,
+  "unit" : "1 = yes",
+  "better" : "higher",
+  "note" : "visible pairs at start: [301 301]"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: tick avg",
+  "engine" : "datalevin",
+  "value" : 5.951915610000001,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: tick p50",
+  "engine" : "datalevin",
+  "value" : 5.611463,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: tick p99",
+  "engine" : "datalevin",
+  "value" : 11.061008,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: tick max",
+  "engine" : "datalevin",
+  "value" : 31.864375,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: inbox push",
+  "engine" : "datalevin",
+  "value" : 0.117797,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: outbox drain",
+  "engine" : "datalevin",
+  "value" : 0.151255,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "in-process"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: end to end (push + tick + drain)",
+  "engine" : "datalevin",
+  "value" : 6.2209676100000015,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "852 frames, 11 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: tick avg",
+  "engine" : "postgres",
+  "value" : 24.006655770000016,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: tick p50",
+  "engine" : "postgres",
+  "value" : 23.319029,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: tick p99",
+  "engine" : "postgres",
+  "value" : 41.682927,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: tick max",
+  "engine" : "postgres",
+  "value" : 42.783672,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: inbox push",
+  "engine" : "postgres",
+  "value" : 0.619746,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: outbox drain",
+  "engine" : "postgres",
+  "value" : 1.805886,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "includes shipping to the client over JDBC"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: end to end (push + tick + drain)",
+  "engine" : "postgres",
+  "value" : 26.432287770000016,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "852 frames, 11 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving: outputs byte-identical (digest of every frame of every tick)",
+  "engine" : "both",
+  "value" : 1,
+  "unit" : "1 = yes",
+  "better" : "higher",
+  "note" : "visible pairs at start: [2087 2087]"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: tick avg",
+  "engine" : "datalevin",
+  "value" : 21.052209425000004,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: tick p50",
+  "engine" : "datalevin",
+  "value" : 20.00987,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: tick p99",
+  "engine" : "datalevin",
+  "value" : 32.998237,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: tick max",
+  "engine" : "datalevin",
+  "value" : 35.007145,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: inbox push",
+  "engine" : "datalevin",
+  "value" : 0.380214,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: outbox drain",
+  "engine" : "datalevin",
+  "value" : 0.550839,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "in-process"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: end to end (push + tick + drain)",
+  "engine" : "datalevin",
+  "value" : 21.983262425000003,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "4189 frames, 52 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: tick avg",
+  "engine" : "postgres",
+  "value" : 157.595944055,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: tick p50",
+  "engine" : "postgres",
+  "value" : 169.540738,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: tick p99",
+  "engine" : "postgres",
+  "value" : 254.333172,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: tick max",
+  "engine" : "postgres",
+  "value" : 255.136717,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: inbox push",
+  "engine" : "postgres",
+  "value" : 1.150339,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: outbox drain",
+  "engine" : "postgres",
+  "value" : 5.197879,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "includes shipping to the client over JDBC"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: end to end (push + tick + drain)",
+  "engine" : "postgres",
+  "value" : 163.944162055,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "4189 frames, 52 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 100% moving: outputs byte-identical (digest of every frame of every tick)",
+  "engine" : "both",
+  "value" : 1,
+  "unit" : "1 = yes",
+  "better" : "higher",
+  "note" : "visible pairs at start: [2087 2087]"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: tick avg",
+  "engine" : "datalevin",
+  "value" : 7.680596024999997,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: tick p50",
+  "engine" : "datalevin",
+  "value" : 7.395889,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: tick p99",
+  "engine" : "datalevin",
+  "value" : 12.075012,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: tick max",
+  "engine" : "datalevin",
+  "value" : 12.458412,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: inbox push",
+  "engine" : "datalevin",
+  "value" : 0.092467,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: outbox drain",
+  "engine" : "datalevin",
+  "value" : 0.316296,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "in-process"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: end to end (push + tick + drain)",
+  "engine" : "datalevin",
+  "value" : 8.089359024999997,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "2236 frames, 26 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: tick avg",
+  "engine" : "postgres",
+  "value" : 19.371936385,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: tick p50",
+  "engine" : "postgres",
+  "value" : 18.082458,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: tick p99",
+  "engine" : "postgres",
+  "value" : 33.481541,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: tick max",
+  "engine" : "postgres",
+  "value" : 37.295409,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: inbox push",
+  "engine" : "postgres",
+  "value" : 0.585938,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: outbox drain",
+  "engine" : "postgres",
+  "value" : 3.311044,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "includes shipping to the client over JDBC"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: end to end (push + tick + drain)",
+  "engine" : "postgres",
+  "value" : 23.268918385,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "2236 frames, 26 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players, 20% moving, 20 block edits per tick: outputs byte-identical (digest of every frame of every tick)",
+  "engine" : "both",
+  "value" : 1,
+  "unit" : "1 = yes",
+  "better" : "higher",
+  "note" : "visible pairs at start: [2087 2087]"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: tick avg",
+  "engine" : "datalevin",
+  "value" : 33.96185407499999,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: tick p50",
+  "engine" : "datalevin",
+  "value" : 33.951807,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: tick p99",
+  "engine" : "datalevin",
+  "value" : 46.544778,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: tick max",
+  "engine" : "datalevin",
+  "value" : 46.602545,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: inbox push",
+  "engine" : "datalevin",
+  "value" : 0.123882,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: outbox drain",
+  "engine" : "datalevin",
+  "value" : 1.905867,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "in-process"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: end to end (push + tick + drain)",
+  "engine" : "datalevin",
+  "value" : 35.99160307499999,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "16027 frames, 201 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: tick avg",
+  "engine" : "postgres",
+  "value" : 44.74279704999999,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: tick p50",
+  "engine" : "postgres",
+  "value" : 43.229739,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: tick p99",
+  "engine" : "postgres",
+  "value" : 66.625066,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: tick max",
+  "engine" : "postgres",
+  "value" : 73.316912,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: inbox push",
+  "engine" : "postgres",
+  "value" : 0.676562,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: outbox drain",
+  "engine" : "postgres",
+  "value" : 18.83918,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "includes shipping to the client over JDBC"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: end to end (push + tick + drain)",
+  "engine" : "postgres",
+  "value" : 64.25853905,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "16027 frames, 201 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "500 players crowded (side 8, ~100 in view of each), 20% moving: outputs byte-identical (digest of every frame of every tick)",
+  "engine" : "both",
+  "value" : 1,
+  "unit" : "1 = yes",
+  "better" : "higher",
+  "note" : "visible pairs at start: [39553 39553]"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: tick avg",
+  "engine" : "datalevin",
+  "value" : 10.725568733333338,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: tick p50",
+  "engine" : "datalevin",
+  "value" : 10.183799,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: tick p99",
+  "engine" : "datalevin",
+  "value" : 19.04103,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: tick max",
+  "engine" : "datalevin",
+  "value" : 24.925197,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: inbox push",
+  "engine" : "datalevin",
+  "value" : 0.181875,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: outbox drain",
+  "engine" : "datalevin",
+  "value" : 0.270836,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "in-process"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: end to end (push + tick + drain)",
+  "engine" : "datalevin",
+  "value" : 11.178279733333337,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "1833 frames, 23 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: tick avg",
+  "engine" : "postgres",
+  "value" : 63.92223129333334,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: tick p50",
+  "engine" : "postgres",
+  "value" : 64.214083,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: tick p99",
+  "engine" : "postgres",
+  "value" : 92.312021,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: tick max",
+  "engine" : "postgres",
+  "value" : 96.961513,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: inbox push",
+  "engine" : "postgres",
+  "value" : 0.718904,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: outbox drain",
+  "engine" : "postgres",
+  "value" : 2.677036,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "includes shipping to the client over JDBC"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: end to end (push + tick + drain)",
+  "engine" : "postgres",
+  "value" : 67.31817129333334,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "1833 frames, 23 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "1000 players, 20% moving: outputs byte-identical (digest of every frame of every tick)",
+  "engine" : "both",
+  "value" : 1,
+  "unit" : "1 = yes",
+  "better" : "higher",
+  "note" : "visible pairs at start: [4511 4511]"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: tick avg",
+  "engine" : "datalevin",
+  "value" : 19.878194849999996,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: tick p50",
+  "engine" : "datalevin",
+  "value" : 18.932609,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: tick p99",
+  "engine" : "datalevin",
+  "value" : 42.728144,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: tick max",
+  "engine" : "datalevin",
+  "value" : 42.728144,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: inbox push",
+  "engine" : "datalevin",
+  "value" : 0.308242,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: outbox drain",
+  "engine" : "datalevin",
+  "value" : 0.447462,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "in-process"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: end to end (push + tick + drain)",
+  "engine" : "datalevin",
+  "value" : 20.633898849999998,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "3431 frames, 44 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: tick avg",
+  "engine" : "postgres",
+  "value" : 181.00308108999994,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: tick p50",
+  "engine" : "postgres",
+  "value" : 180.924825,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: tick p99",
+  "engine" : "postgres",
+  "value" : 246.399235,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: tick max",
+  "engine" : "postgres",
+  "value" : 246.399235,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: inbox push",
+  "engine" : "postgres",
+  "value" : 0.972545,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "median"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: outbox drain",
+  "engine" : "postgres",
+  "value" : 4.151068,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "includes shipping to the client over JDBC"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: end to end (push + tick + drain)",
+  "engine" : "postgres",
+  "value" : 186.12669408999994,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "3431 frames, 44 KB per tick"
+}, {
+  "facet" : "server tick (parse, move, visibility, fan-out, block broadcast)",
+  "metric" : "2000 players, 20% moving: outputs byte-identical (digest of every frame of every tick)",
+  "engine" : "both",
+  "value" : 1,
+  "unit" : "1 = yes",
+  "better" : "higher",
+  "note" : "visible pairs at start: [8552 8552]"
+}, {
+  "facet" : "?",
+  "metric" : "resident memory, after the tick scenarios (up to 2000 players)",
+  "engine" : "datalevin (JVM process)",
+  "value" : 1653,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "heap used 73 MB, JVM started with -Xms2g -Xmx4g"
+}, {
+  "facet" : "?",
+  "metric" : "resident memory, after the tick scenarios (up to 2000 players)",
+  "engine" : "postgres (postmaster + backends)",
+  "value" : 399,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "shared_buffers 128MB (dbcraft's setting)"
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (fillfactor 60, no hot index): round avg",
+  "engine" : "postgres",
+  "value" : 2.025074544999999,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (fillfactor 60, no hot index): round p99",
+  "engine" : "postgres",
+  "value" : 5.077066,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (fillfactor 60, no hot index): last 20 rounds avg",
+  "engine" : "postgres",
+  "value" : 2.1652605,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (fillfactor 60, no hot index): storage after 200 rounds",
+  "engine" : "postgres",
+  "value" : 0.25,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (index on the changing column): round avg",
+  "engine" : "postgres",
+  "value" : 4.528641365000003,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (index on the changing column): round p99",
+  "engine" : "postgres",
+  "value" : 7.768121,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (index on the changing column): last 20 rounds avg",
+  "engine" : "postgres",
+  "value" : 5.132008400000001,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (index on the changing column): storage after 200 rounds",
+  "engine" : "postgres",
+  "value" : 7.1484375,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "put 1000 packed records: round avg",
+  "engine" : "datalevin/kv",
+  "value" : 0.9422236750000004,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "put 1000 packed records: round p99",
+  "engine" : "datalevin/kv",
+  "value" : 1.882846,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "put 1000 packed records: last 20 rounds avg",
+  "engine" : "datalevin/kv",
+  "value" : 0.7579642999999999,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "put 1000 packed records: storage after 200 rounds",
+  "engine" : "datalevin/kv",
+  "value" : 0.1640625,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "transact! 4 datoms x 1000 players: round avg",
+  "engine" : "datalevin/datalog",
+  "value" : 16.502233070000003,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "transact! 4 datoms x 1000 players: round p99",
+  "engine" : "datalevin/datalog",
+  "value" : 46.879715,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "transact! 4 datoms x 1000 players: last 20 rounds avg",
+  "engine" : "datalevin/datalog",
+  "value" : 15.635007400000001,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "transact! 4 datoms x 1000 players: storage after 200 rounds",
+  "engine" : "datalevin/datalog",
+  "value" : 0.390625,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "100 rounds before the reader (avg)",
+  "engine" : "postgres",
+  "value" : 2.288529789999999,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "rounds 101-300 with an idle-in-transaction reader (avg of last 100)",
+  "engine" : "postgres",
+  "value" : 25.128873880000015,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "table size: before / with the reader",
+  "engine" : "postgres",
+  "value" : 14.203125,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "0.3 MB before"
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "100 rounds before the reader (avg)",
+  "engine" : "datalevin/kv",
+  "value" : 0.9197000599999996,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "rounds 101-300 with an open read transaction (avg of last 100)",
+  "engine" : "datalevin/kv",
+  "value" : 1.0034950500000006,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "lazy range-seq held open"
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "file size: before / with the reader",
+  "engine" : "datalevin/kv",
+  "value" : 14.218877792358398,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "0.3 MB before"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "insert 50k messages (500 batches of 100, one commit each)",
+  "engine" : "datalevin",
+  "value" : 9143.448666930773,
+  "unit" : "msg/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "insert 50k messages (500 batches of 100, one commit each)",
+  "engine" : "postgres",
+  "value" : 56242.13972509684,
+  "unit" : "msg/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "full-text search, whole word, newest 20 (each word in ~1.7% of messages)",
+  "engine" : "datalevin",
+  "value" : 4.946969085,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "index-result cache disabled"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "full-text search, whole word, newest 20 (each word in ~1.7% of messages)",
+  "engine" : "datalevin/cached",
+  "value" : 0.308471235,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "same 200 queries repeated: served from the result cache"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "full-text search, whole word, newest 20 (each word in ~1.7% of messages)",
+  "engine" : "postgres",
+  "value" : 0.4795236,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "round trip included"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "last 50 messages",
+  "engine" : "datalevin",
+  "value" : 0.037303800000000005,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "index-result cache disabled"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "last 50 messages",
+  "engine" : "datalevin/cached",
+  "value" : 0.002543644,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "last 50 messages",
+  "engine" : "postgres",
+  "value" : 0.1019182,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "round trip included"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "messages per sender (full aggregation over 50k)",
+  "engine" : "datalevin",
+  "value" : 7.084270399999999,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : "index-result cache disabled"
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "messages per sender (full aggregation over 50k)",
+  "engine" : "datalevin/cached",
+  "value" : 0.24638670000000001,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "chat: 50,000 messages with full-text search",
+  "metric" : "messages per sender (full aggregation over 50k)",
+  "engine" : "postgres",
+  "value" : 5.624013,
+  "unit" : "ms/query",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "seed 1000 players (about 28k stacks)",
+  "engine" : "datalevin/datalog",
+  "value" : 350.478964,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "seed 1000 players (about 28k stacks)",
+  "engine" : "datalevin/kv",
+  "value" : 15.398141,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "seed 1000 players (about 28k stacks)",
+  "engine" : "postgres",
+  "value" : 91.823718,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "load one player's inventory (join)",
+  "engine" : "datalevin/datalog",
+  "value" : 973.948966,
+  "unit" : "us/player",
+  "better" : "lower",
+  "note" : "index-result cache disabled"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "load one player's inventory (join)",
+  "engine" : "datalevin/datalog cached",
+  "value" : 747.371459,
+  "unit" : "us/player",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "load one player's inventory (join)",
+  "engine" : "datalevin/kv",
+  "value" : 3.047531,
+  "unit" : "us/player",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "load one player's inventory (join)",
+  "engine" : "postgres",
+  "value" : 81.766424,
+  "unit" : "us/player",
+  "better" : "lower",
+  "note" : "client round trip included"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "20k clicks inside one transaction",
+  "engine" : "datalevin/datalog",
+  "value" : 44.249989,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "20k clicks inside one transaction",
+  "engine" : "datalevin/kv",
+  "value" : 2.30067195,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "20k clicks inside one transaction",
+  "engine" : "postgres",
+  "value" : 15.30043885,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : "PL/pgSQL loop"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "one click per commit",
+  "engine" : "datalevin/datalog",
+  "value" : 391.058434,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "one click per commit",
+  "engine" : "datalevin/kv",
+  "value" : 75.47921,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "one click per commit",
+  "engine" : "postgres",
+  "value" : 78.710116,
+  "unit" : "us/click",
+  "better" : "lower",
+  "note" : "client round trip included, sync_commit=off"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "who holds item 7? (28k stacks)",
+  "engine" : "datalevin/datalog",
+  "value" : 0.853517,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "AVE index on every attribute, result cache disabled"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "who holds item 7? (28k stacks)",
+  "engine" : "datalevin/datalog cached",
+  "value" : 0.002945,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "who holds item 7? (28k stacks)",
+  "engine" : "datalevin/kv",
+  "value" : 1.709706,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "scan 1000 records"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "who holds item 7? (28k stacks)",
+  "engine" : "postgres",
+  "value" : 1.441848,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "no index on item"
+}, {
+  "facet" : "inventory (1000 players, 46 slots)",
+  "metric" : "who holds item 7? (28k stacks)",
+  "engine" : "postgres/indexed",
+  "value" : 0.14674,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "with a btree on item"
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "burst: 1600 sources spread for 70 ticks (total)",
+  "engine" : "datalevin",
+  "value" : 49.37385900000002,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "1204 blocks set"
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "burst: 1600 sources spread for 70 ticks (total)",
+  "engine" : "postgres",
+  "value" : 96.06786999999998,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "1204 blocks set"
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "burst: busiest single tick",
+  "engine" : "datalevin",
+  "value" : 25.941975,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "burst: busiest single tick",
+  "engine" : "postgres",
+  "value" : 28.648675,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "burst: identical blocks set per tick",
+  "engine" : "both",
+  "value" : 1,
+  "unit" : "1 = yes",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "random ticks over 256 chunks (per tick)",
+  "engine" : "datalevin",
+  "value" : 4.15389065,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "world dynamics (scheduled ticks, water burst, random ticks)",
+  "metric" : "random ticks over 256 chunks (per tick)",
+  "engine" : "postgres",
+  "value" : 545.867494,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "bulk import of a generated world (512 chunks)",
+  "metric" : "import 512 chunks, from section blobs",
+  "engine" : "datalevin",
+  "value" : 69.654827,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "transact-kv, 16 chunks per transaction"
+}, {
+  "facet" : "bulk import of a generated world (512 chunks)",
+  "metric" : "import 512 chunks, :append flag",
+  "engine" : "datalevin",
+  "value" : 77.315512,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "keys pre-sorted"
+}, {
+  "facet" : "bulk import of a generated world (512 chunks)",
+  "metric" : "import 512 chunks, COPY only",
+  "engine" : "postgres",
+  "value" : 145.270682,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "text COPY of rows already formatted"
+}, {
+  "facet" : "bulk import of a generated world (512 chunks)",
+  "metric" : "import 512 chunks, format rows + COPY",
+  "engine" : "postgres",
+  "value" : 209.379878,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "must unpack each blob into columns first"
+}, {
+  "facet" : "storage (a dedicated store, 512 chunks generated from scratch)",
+  "metric" : "512 chunks, sections only",
+  "engine" : "datalevin",
+  "value" : 38488.26171875,
+  "unit" : "bytes/chunk",
+  "better" : "lower",
+  "note" : "the whole LMDB file (nothing else in this store)"
+}, {
+  "facet" : "storage (a dedicated store, 512 chunks generated from scratch)",
+  "metric" : "512 chunks, sections only",
+  "engine" : "postgres",
+  "value" : 38656.0,
+  "unit" : "bytes/chunk",
+  "better" : "lower",
+  "note" : "chunk + chunk_section, with primary-key indexes"
+}, {
+  "facet" : "storage (a dedicated store, 512 chunks generated from scratch)",
+  "metric" : "after caching 256 chunk packets",
+  "engine" : "datalevin",
+  "value" : 49088.26171875,
+  "unit" : "bytes/chunk (of 512)",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "storage (a dedicated store, 512 chunks generated from scratch)",
+  "metric" : "after caching 256 chunk packets",
+  "engine" : "postgres",
+  "value" : 49280.0,
+  "unit" : "bytes/chunk (of 512)",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "storage (a dedicated store, 512 chunks generated from scratch)",
+  "metric" : "after 20,000 single-edit commits",
+  "engine" : "datalevin",
+  "value" : 24.7462215423584,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "copy-on-write pages not yet reclaimed by a copy"
+}, {
+  "facet" : "storage (a dedicated store, 512 chunks generated from scratch)",
+  "metric" : "after 20,000 single-edit commits",
+  "engine" : "postgres",
+  "value" : 24.078125,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "fillfactor 70 lets edits stay on the page"
+}, {
+  "facet" : "storage (a dedicated store, 512 chunks generated from scratch)",
+  "metric" : "after compaction",
+  "engine" : "datalevin",
+  "value" : 23.8789119720459,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "mdb_copy -c, 53 ms"
+}, {
+  "facet" : "storage (a dedicated store, 512 chunks generated from scratch)",
+  "metric" : "after compaction",
+  "engine" : "postgres",
+  "value" : 24.0390625,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "VACUUM FULL, 120 ms"
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: mean",
+  "engine" : "datalevin/sync",
+  "value" : 420.30742699999956,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: p99",
+  "engine" : "datalevin/sync",
+  "value" : 1237.175,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: mean",
+  "engine" : "datalevin/nometasync",
+  "value" : 265.6394984999999,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: p99",
+  "engine" : "datalevin/nometasync",
+  "value" : 773.034,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: mean",
+  "engine" : "datalevin/nosync",
+  "value" : 13.934242499999986,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: p99",
+  "engine" : "datalevin/nosync",
+  "value" : 49.323,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: mean",
+  "engine" : "datalevin/wal-strict",
+  "value" : 726.604054999999,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: p99",
+  "engine" : "datalevin/wal-strict",
+  "value" : 1642.209,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: mean",
+  "engine" : "datalevin/wal-relaxed",
+  "value" : 287.45758550000005,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: p99",
+  "engine" : "datalevin/wal-relaxed",
+  "value" : 1545.614,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: mean",
+  "engine" : "postgres/synchronous_commit=on",
+  "value" : 491.9306884999995,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : "client round trip included"
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: p99",
+  "engine" : "postgres/synchronous_commit=on",
+  "value" : 1085.007,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: mean",
+  "engine" : "postgres/synchronous_commit=off",
+  "value" : 136.1468664999999,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : "dbcraft's setting"
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: p99",
+  "engine" : "postgres/synchronous_commit=off",
+  "value" : 312.102,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
+  "metric" : "set_block, one commit each: mean",
+  "engine" : "postgres/fsync=off",
+  "value" : 135.47152800000026,
+  "unit" : "us",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "1 writers",
+  "engine" : "datalevin/sync",
+  "value" : 7600.641731302145,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "1 writers",
+  "engine" : "datalevin/nometasync",
+  "value" : 12904.401855358767,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "1 writers",
+  "engine" : "datalevin/wal-strict",
+  "value" : 3269.131598866359,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "1 writers",
+  "engine" : "postgres/synchronous_commit=on",
+  "value" : 3509.997657954063,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "1 writers",
+  "engine" : "postgres/synchronous_commit=off",
+  "value" : 6658.128726263355,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "4 writers",
+  "engine" : "datalevin/sync",
+  "value" : 14088.603402908433,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "4 writers",
+  "engine" : "datalevin/nometasync",
+  "value" : 10774.488147570104,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "4 writers",
+  "engine" : "datalevin/wal-strict",
+  "value" : 9108.115542484336,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "4 writers",
+  "engine" : "postgres/synchronous_commit=on",
+  "value" : 12037.674236832972,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "4 writers",
+  "engine" : "postgres/synchronous_commit=off",
+  "value" : 21645.860422113004,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "8 writers",
+  "engine" : "datalevin/sync",
+  "value" : 22690.76065042827,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "8 writers",
+  "engine" : "datalevin/nometasync",
+  "value" : 9436.193534456308,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "8 writers",
+  "engine" : "datalevin/wal-strict",
+  "value" : 17028.669139561487,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "8 writers",
+  "engine" : "postgres/synchronous_commit=on",
+  "value" : 17591.86541939725,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "concurrent small writers (each thread: 1000 single-commit block edits in its own chunk)",
+  "metric" : "8 writers",
+  "engine" : "postgres/synchronous_commit=off",
+  "value" : 27471.298056468848,
+  "unit" : "commits/s",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "0 concurrent chunk readers: tick avg",
+  "engine" : "datalevin",
+  "value" : 5.620032426666668,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "0 concurrent chunk readers: tick p99",
+  "engine" : "datalevin",
+  "value" : 7.968553,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "0 concurrent chunk readers: tick avg",
+  "engine" : "postgres",
+  "value" : 15.382772220000003,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "0 concurrent chunk readers: tick p99",
+  "engine" : "postgres",
+  "value" : 27.353707,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: tick avg",
+  "engine" : "datalevin",
+  "value" : 4.8773989333333345,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: tick p99",
+  "engine" : "datalevin",
+  "value" : 8.506443,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: tick avg",
+  "engine" : "postgres",
+  "value" : 23.420947619999996,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: tick p99",
+  "engine" : "postgres",
+  "value" : 35.817349,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: chunks served during the run",
+  "engine" : "datalevin",
+  "value" : 81578,
+  "unit" : "chunks",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: chunks served during the run",
+  "engine" : "postgres",
+  "value" : 45948,
+  "unit" : "chunks",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: tick avg",
+  "engine" : "datalevin",
+  "value" : 5.029007300000001,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: tick p99",
+  "engine" : "datalevin",
+  "value" : 12.177841,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: tick avg",
+  "engine" : "postgres",
+  "value" : 22.227077973333337,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: tick p99",
+  "engine" : "postgres",
+  "value" : 41.086428,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: chunks served during the run",
+  "engine" : "datalevin",
+  "value" : 333969,
+  "unit" : "chunks",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: chunks served during the run",
+  "engine" : "postgres",
+  "value" : 341824,
+  "unit" : "chunks",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "?",
+  "metric" : "resident memory, before the crash tests (everything loaded)",
+  "engine" : "datalevin (JVM process)",
+  "value" : 2023,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "heap used 79 MB, JVM started with -Xms2g -Xmx4g"
+}, {
+  "facet" : "?",
+  "metric" : "resident memory, before the crash tests (everything loaded)",
+  "engine" : "postgres (postmaster + backends)",
+  "value" : 416,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "shared_buffers 128MB (dbcraft's setting)"
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "acknowledged commits lost",
+  "engine" : "datalevin/sync",
+  "value" : 0,
+  "unit" : "commits",
+  "better" : "lower",
+  "note" : "7630 acknowledged, reopen 12 ms, 1 unacknowledged edits also applied"
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "restart after kill -9",
+  "engine" : "datalevin/sync",
+  "value" : 12.043127,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "acknowledged commits lost",
+  "engine" : "datalevin/nometasync",
+  "value" : 0,
+  "unit" : "commits",
+  "better" : "lower",
+  "note" : "12129 acknowledged, reopen 13 ms, 0 unacknowledged edits also applied"
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "restart after kill -9",
+  "engine" : "datalevin/nometasync",
+  "value" : 12.926903,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "acknowledged commits lost",
+  "engine" : "datalevin/wal-relaxed",
+  "value" : 0,
+  "unit" : "commits",
+  "better" : "lower",
+  "note" : "7679 acknowledged, reopen 220 ms, 0 unacknowledged edits also applied"
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "restart after kill -9",
+  "engine" : "datalevin/wal-relaxed",
+  "value" : 220.114173,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "acknowledged commits lost",
+  "engine" : "postgres/strict",
+  "value" : 0,
+  "unit" : "commits",
+  "better" : "lower",
+  "note" : "6021 acknowledged; crash recovery + start 293 ms"
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "restart after kill -9",
+  "engine" : "postgres/strict",
+  "value" : 293.340971,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "acknowledged commits lost",
+  "engine" : "postgres/relaxed",
+  "value" : 5,
+  "unit" : "commits",
+  "better" : "lower",
+  "note" : "15970 acknowledged; crash recovery + start 289 ms"
+}, {
+  "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
+  "metric" : "restart after kill -9",
+  "engine" : "postgres/relaxed",
+  "value" : 289.41448,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+} ]
