@@ -32,8 +32,11 @@
   (->> (d/q '[:find ?id :in $ ?w :where [(fulltext $ ?w {:top 1000000}) [[?e ?a ?v]]] [?e :chat/id ?id]] (d/db conn) word)
        (map first) (sort >) (take lim) vec))
 
-(defn chat-recent [{:keys [conn]} lim]
-  (vec (take lim (map :v (d/rseek-datoms (d/db conn) :ave :chat/id)))))
+(defn chat-recent
+  "newest `lim` ids: a range over the AVE index of the sequential unique :chat/id"
+  [{:keys [conn]} lim]
+  (let [hi (.get chat-seq)]
+    (vec (reverse (map :v (d/index-range (d/db conn) :chat/id (max 1 (- hi (dec lim))) hi))))))
 
 (defn chat-count-by-sender [{:keys [conn]}]
   (into (sorted-map) (d/q '[:find ?s (count ?e) :where [?e :chat/sender ?s]] (d/db conn))))

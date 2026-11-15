@@ -8,6 +8,14 @@
 
 (defn pg1 [pg sql & ps] (apply pgx/query1 pg sql ps))
 
+(defn with-cache-limit [env n f]
+  (d/datalog-index-cache-limit (d/db (:conn env)) n)
+  (try (f) (finally (d/datalog-index-cache-limit (d/db (:conn env)) 512))))
+(defn both-modes
+  "[uncached-result cached-result] of (repeat-ms 1 reps thunk): the index-result cache disabled, then left on (warm after the first pass)"
+  [env reps thunk]
+  [(with-cache-limit env 0 #(repeat-ms 1 reps thunk)) (repeat-ms 1 reps thunk)])
+
 ;; ---------------------------------------------------------------------------------------------- tick
 (defn run-tick-scenario
   "returns {:dl {...} :pg {...} :match? bool}"
@@ -147,19 +155,20 @@
         (rec! "insert 50k messages (500 batches of 100, one commit each)" "datalevin" (/ 50000 (/ dl-ms 1000.0)) "msg/s" :better :higher)
         (rec! "insert 50k messages (500 batches of 100, one commit each)" "postgres" (/ 50000 (/ pg-ms 1000.0)) "msg/s" :better :higher))
       (let [words (vec (for [i (range 200)] (wl/vocab-word (rem (* i 7) 400))))
-            dl (repeat-ms 1 3 #(doseq [wd words] (so/chat-search env wd 20)))
+            [dl dlc] (both-modes env 3 #(doseq [wd words] (so/chat-search env wd 20)))
             pgr (repeat-ms 1 3 #(doseq [wd words] (pgx/query pg "select id from mc.chat_search(?,?)" wd 20)))]
-        (rec! "full-text search, whole word, newest 20 (each word in ~1.7% of messages)" "datalevin" (/ (:median dl) 200) "ms/query")
+        (rec! "full-text search, whole word, newest 20 (each word in ~1.7% of messages)" "datalevin" (/ (:median dl) 200) "ms/query" :note "index-result cache disabled")
+        (rec! "full-text search, whole word, newest 20 (each word in ~1.7% of messages)" "datalevin/cached" (/ (:median dlc) 200) "ms/query" :note "same 200 queries repeated: served from the result cache")
         (rec! "full-text search, whole word, newest 20 (each word in ~1.7% of messages)" "postgres" (/ (:median pgr) 200) "ms/query" :note "round trip included"))
-      (let [rare (str (wl/vocab-word 3) " " (wl/vocab-word 5))]
-        nil)
-      (let [dl (repeat-ms 1 3 #(dotimes [_ 500] (so/chat-recent env 50)))
+      (let [[dl dlc] (both-modes env 3 #(dotimes [_ 500] (so/chat-recent env 50)))
             pgr (repeat-ms 1 3 #(dotimes [_ 500] (pgx/query pg "select id from mc.chat_recent(?)" 50)))]
-        (rec! "last 50 messages" "datalevin" (/ (:median dl) 500) "ms/query")
+        (rec! "last 50 messages" "datalevin" (/ (:median dl) 500) "ms/query" :note "index-result cache disabled")
+        (rec! "last 50 messages" "datalevin/cached" (/ (:median dlc) 500) "ms/query")
         (rec! "last 50 messages" "postgres" (/ (:median pgr) 500) "ms/query" :note "round trip included"))
-      (let [dl (repeat-ms 1 3 #(dotimes [_ 10] (so/chat-count-by-sender env)))
+      (let [[dl dlc] (both-modes env 3 #(dotimes [_ 10] (so/chat-count-by-sender env)))
             pgr (repeat-ms 1 3 #(dotimes [_ 10] (pgx/query pg "select * from mc.chat_count_by_sender()")))]
-        (rec! "messages per sender (full aggregation over 50k)" "datalevin" (/ (:median dl) 10) "ms/query")
+        (rec! "messages per sender (full aggregation over 50k)" "datalevin" (/ (:median dl) 10) "ms/query" :note "index-result cache disabled")
+        (rec! "messages per sender (full aggregation over 50k)" "datalevin/cached" (/ (:median dlc) 10) "ms/query")
         (rec! "messages per sender (full aggregation over 50k)" "postgres" (/ (:median pgr) 10) "ms/query")))))
 
 ;; ---------------------------------------------------------------------------------------------- inventory
@@ -174,10 +183,11 @@
       (let [[_ a] (timed (so/inv-seed! env 1000)) [_ b] (timed (so/inv-seed-kv! env 1000)) [_ p] (timed (pgx/exec! pg "select mc.inv_seed(1000)"))]
         (rec! "seed 1000 players (about 28k stacks)" "datalevin/datalog" a "ms") (rec! "seed 1000 players (about 28k stacks)" "datalevin/kv" b "ms") (rec! "seed 1000 players (about 28k stacks)" "postgres" p "ms"))
       ;; join: load one player's inventory
-      (let [dl (repeat-ms 1 3 #(dotimes [i 1000] (so/inv-load env (inc i))))
+      (let [[dl dlc] (both-modes env 3 #(dotimes [i 1000] (so/inv-load env (inc i))))
             kv (repeat-ms 1 3 #(dotimes [i 1000] (so/inv-load-kv env (inc i))))
             pgr (repeat-ms 1 3 #(dotimes [i 1000] (pgx/query pg "select * from mc.inv_load(?)" (inc i))))]
-        (rec! "load one player's inventory (join)" "datalevin/datalog" (/ (* 1000 (:median dl)) 1000) "us/player")
+        (rec! "load one player's inventory (join)" "datalevin/datalog" (/ (* 1000 (:median dl)) 1000) "us/player" :note "index-result cache disabled")
+        (rec! "load one player's inventory (join)" "datalevin/datalog cached" (/ (* 1000 (:median dlc)) 1000) "us/player")
         (rec! "load one player's inventory (join)" "datalevin/kv" (/ (* 1000 (:median kv)) 1000) "us/player")
         (rec! "load one player's inventory (join)" "postgres" (/ (* 1000 (:median pgr)) 1000) "us/player" :note "client round trip included"))
       ;; clicks in one transaction (db-native)
@@ -196,13 +206,14 @@
         (rec! "one click per commit" "datalevin/kv" (/ (* 1000 (:median kv)) 1000) "us/click")
         (rec! "one click per commit" "postgres" (/ (* 1000 (:median pgr)) 1000) "us/click" :note "client round trip included, sync_commit=off"))
       ;; who holds item 7 (a relational question over all players)
-      (let [dl (repeat-ms 1 5 #(count (d/q '[:find ?p :in $ ?i :where [?e :inv/item ?i] [?e :inv/player ?p]] (d/db (:conn env)) 7)))
+      (let [[dl dlc] (both-modes env 5 #(count (d/q '[:find ?p :in $ ?i :where [?e :inv/item ?i] [?e :inv/player ?p]] (d/db (:conn env)) 7)))
             kv (repeat-ms 1 5 #(count (so/inv-holders-kv env 7)))
             pgr (repeat-ms 1 5 #(count (pgx/query pg "select distinct player from mc.inv where item = 7")))
             _ (pgx/exec! pg "create index if not exists inv_item_idx on mc.inv (item)")
             pgi (repeat-ms 1 5 #(count (pgx/query pg "select distinct player from mc.inv where item = 7")))
             _ (pgx/exec! pg "drop index if exists mc.inv_item_idx")]
-        (rec! "who holds item 7? (28k stacks)" "datalevin/datalog" (:median dl) "ms" :note "AVE index on every attribute")
+        (rec! "who holds item 7? (28k stacks)" "datalevin/datalog" (:median dl) "ms" :note "AVE index on every attribute, result cache disabled")
+        (rec! "who holds item 7? (28k stacks)" "datalevin/datalog cached" (:median dlc) "ms")
         (rec! "who holds item 7? (28k stacks)" "datalevin/kv" (:median kv) "ms" :note "scan 1000 records")
         (rec! "who holds item 7? (28k stacks)" "postgres" (:median pgr) "ms" :note "no index on item")
         (rec! "who holds item 7? (28k stacks)" "postgres/indexed" (:median pgi) "ms" :note "with a btree on item")))))
@@ -234,7 +245,10 @@
       (rec! "burst: 1600 sources spread for 70 ticks (total)" "postgres" (tot :pg) "ms" :note (str (cells :pg) " blocks set"))
       (rec! "burst: busiest single tick" "datalevin" (apply max (map second (:dl (last runs)))) "ms")
       (rec! "burst: busiest single tick" "postgres" (apply max (map second (:pg (last runs)))) "ms")
-      (rec! "burst: identical blocks set per tick" "both" (if (= (map first (:dl (last runs))) (map first (:pg (last runs)))) 1 0) "1 = yes" :better :higher)
+      (let [a (mapv (comp long first) (:dl (last runs))) b (mapv (comp long first) (:pg (last runs)))
+            diff (first (filter (fn [i] (not= (a i) (b i))) (range (count a))))]
+        (rec! "burst: identical blocks set per tick" "both" (if (nil? diff) 1 0) "1 = yes" :better :higher
+              :note (when diff (format "first difference at step %d: datalevin %d, postgres %d" (inc diff) (a diff) (b diff)))))
       ;; random ticks over a 16x16 chunk area
       (let [dl (repeat-ms 2 5 #(dotimes [i 20] (dyn/random-ticks! env kv (+ 1000 i) 0 0 15 15)))
             pgr (repeat-ms 2 5 #(dotimes [i 20] (pg1 pg "select mc.random_ticks(?,?,?,?,?)" (+ 1000 i) 0 0 15 15)))]

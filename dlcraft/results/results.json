@@ -1783,77 +1783,6 @@
   "better" : "lower",
   "note" : "0.3 MB before"
 }, {
-  "unit" : "ERROR: value \"4294967288\" is out of range for type integer\n  Where: COPY chunk, line 1, column cx: \"4294967288\"",
-  "value" : null,
-  "facet" : "bulk import of a generated world (512 chunks)",
-  "better" : "lower",
-  "engine" : "-",
-  "metric" : "FAILED"
-}, {
-  "facet" : "storage",
-  "metric" : "chunks stored",
-  "engine" : "postgres",
-  "value" : 256,
-  "unit" : "chunks",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "storage",
-  "metric" : "world on disk, sections only, no packet cache",
-  "engine" : "datalevin",
-  "value" : 2847840.5234375,
-  "unit" : "bytes/chunk",
-  "better" : "lower",
-  "note" : "whole LMDB file incl. everything else in the store"
-}, {
-  "facet" : "storage",
-  "metric" : "world on disk, sections only, no packet cache",
-  "engine" : "postgres",
-  "value" : 39744,
-  "unit" : "bytes/chunk",
-  "better" : "lower",
-  "note" : "chunk + chunk_section incl. indexes"
-}, {
-  "facet" : "storage",
-  "metric" : "packet cache for 256 chunks",
-  "engine" : "postgres",
-  "value" : 21472,
-  "unit" : "bytes/chunk",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "storage",
-  "metric" : "size before compaction (after the edits of the earlier facets)",
-  "engine" : "datalevin",
-  "value" : 695.2735652923584,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "storage",
-  "metric" : "size after compaction (mdb_copy -c)",
-  "engine" : "datalevin",
-  "value" : 63.1367244720459,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : "66 ms"
-}, {
-  "facet" : "storage",
-  "metric" : "size before compaction (sections only)",
-  "engine" : "postgres",
-  "value" : 9.703125,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "storage",
-  "metric" : "size after compaction (VACUUM FULL)",
-  "engine" : "postgres",
-  "value" : 9.5234375,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : "89 ms"
-}, {
   "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
   "metric" : "0 concurrent chunk readers: tick avg",
   "engine" : "datalevin",
@@ -1982,18 +1911,89 @@
   "better" : "higher",
   "note" : null
 }, {
+  "unit" : "ERROR: invalid byte sequence for encoding \"UTF8\": 0x00\n  Where: COPY chunk_section, line 2: \"0\t0\t-3\t4096\t{1,15,16,17,9,4,10,14,12,8,20,19,3,18,6,2}\t4\t\\x00000000000000000000000000000000000000000...\"",
+  "value" : null,
+  "facet" : "bulk import of a generated world (512 chunks)",
+  "better" : "lower",
+  "engine" : "-",
+  "metric" : "FAILED"
+}, {
+  "facet" : "storage",
+  "metric" : "chunks stored",
+  "engine" : "postgres",
+  "value" : 256,
+  "unit" : "chunks",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "storage",
+  "metric" : "world on disk, sections only, no packet cache",
+  "engine" : "datalevin",
+  "value" : 2847840.5234375,
+  "unit" : "bytes/chunk",
+  "better" : "lower",
+  "note" : "whole LMDB file incl. everything else in the store"
+}, {
+  "facet" : "storage",
+  "metric" : "world on disk, sections only, no packet cache",
+  "engine" : "postgres",
+  "value" : 39680,
+  "unit" : "bytes/chunk",
+  "better" : "lower",
+  "note" : "chunk + chunk_section incl. indexes"
+}, {
+  "facet" : "storage",
+  "metric" : "packet cache for 256 chunks",
+  "engine" : "postgres",
+  "value" : 21472,
+  "unit" : "bytes/chunk",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "storage",
+  "metric" : "size before compaction (after the edits of the earlier facets)",
+  "engine" : "datalevin",
+  "value" : 695.2735652923584,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "storage",
+  "metric" : "size after compaction (mdb_copy -c)",
+  "engine" : "datalevin",
+  "value" : 59.0234432220459,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "73 ms"
+}, {
+  "facet" : "storage",
+  "metric" : "size before compaction (sections only)",
+  "engine" : "postgres",
+  "value" : 9.6875,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "storage",
+  "metric" : "size after compaction (VACUUM FULL)",
+  "engine" : "postgres",
+  "value" : 9.5234375,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "95 ms"
+}, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "acknowledged commits lost",
   "engine" : "datalevin/sync",
   "value" : 0,
   "unit" : "commits",
   "better" : "lower",
-  "note" : "7770 acknowledged, reopen 12 ms, 0 unacknowledged edits also applied"
+  "note" : "7341 acknowledged, reopen 13 ms, 1 unacknowledged edits also applied"
 }, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "restart after kill -9",
   "engine" : "datalevin/sync",
-  "value" : 11.871302,
+  "value" : 13.436889,
   "unit" : "ms",
   "better" : "lower",
   "note" : null
@@ -2004,12 +2004,12 @@
   "value" : 0,
   "unit" : "commits",
   "better" : "lower",
-  "note" : "11467 acknowledged, reopen 10 ms, 0 unacknowledged edits also applied"
+  "note" : "12313 acknowledged, reopen 11 ms, 0 unacknowledged edits also applied"
 }, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "restart after kill -9",
   "engine" : "datalevin/nometasync",
-  "value" : 10.217373,
+  "value" : 10.513994,
   "unit" : "ms",
   "better" : "lower",
   "note" : null
@@ -2020,12 +2020,12 @@
   "value" : 0,
   "unit" : "commits",
   "better" : "lower",
-  "note" : "8357 acknowledged, reopen 246 ms, 1 unacknowledged edits also applied"
+  "note" : "7748 acknowledged, reopen 253 ms, 0 unacknowledged edits also applied"
 }, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "restart after kill -9",
   "engine" : "datalevin/wal-relaxed",
-  "value" : 245.587069,
+  "value" : 252.737268,
   "unit" : "ms",
   "better" : "lower",
   "note" : null
@@ -2040,15 +2040,15 @@
   "facet" : "?",
   "metric" : "resident memory, end of run",
   "engine" : "datalevin (JVM process)",
-  "value" : 3228,
+  "value" : 1886,
   "unit" : "MB",
   "better" : "lower",
-  "note" : "heap used 85 MB, JVM started with -Xms2g -Xmx4g"
+  "note" : "heap used 101 MB, JVM started with -Xms2g -Xmx4g"
 }, {
   "facet" : "?",
   "metric" : "resident memory, end of run",
   "engine" : "postgres (postmaster + backends)",
-  "value" : 0,
+  "value" : null,
   "unit" : "MB",
   "better" : "lower",
   "note" : "shared_buffers 128MB (dbcraft's setting)"

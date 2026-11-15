@@ -116,7 +116,7 @@
          (let [bb (ByteBuffer/wrap k)]
            [(long (unchecked-int (bit-xor (.getInt bb 0) Integer/MIN_VALUE))) (long (unchecked-int (bit-xor (.getInt bb 4) Integer/MIN_VALUE))) (- (bit-and (long (.getShort bb 8)) 0xFFFF) 32768) v]))))
 
-(defn- hex-bytea [^bytes b] (let [sb (StringBuilder. (+ 2 (* 2 (alength b))))] (.append sb "\\x") (doseq [x b] (.append sb (format "%02x" (bit-and (long x) 0xff)))) (str sb)))
+(defn- hex-bytea [^bytes b] (let [sb (StringBuilder. (+ 2 (* 2 (alength b))))] (.append sb "\\\\x") (doseq [x b] (.append sb (format "%02x" (bit-and (long x) 0xff)))) (str sb)))
 
 (defn- pg-copy-rows [sections]
   "CSV text (tab separated) lines for mc.chunk_section"

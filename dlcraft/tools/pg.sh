@@ -31,7 +31,7 @@ case "${1:-}" in
       # a postmaster killed with SIGKILL stays a zombie here (nothing reaps it), and PostgreSQL refuses to start next to its pid: treat a zombie pid as stale
       if [ -f "$DATA/postmaster.pid" ]; then
         zp=$(head -1 "$DATA/postmaster.pid")
-        if [ -z "$(ps -o stat= -p "$zp" 2>/dev/null | tr -d ' ')" ] || ps -o stat= -p "$zp" | grep -q '^Z'; then rm -f "$DATA/postmaster.pid"; fi
+        if [ -z "$(ps -o stat= -p "$zp" 2>/dev/null | tr -d ' ')" ] || ps -o stat= -p "$zp" | grep -q '^Z'; then rm -f "$DATA/postmaster.pid" "$SOCK/.s.PGSQL.$PORT.lock" "$SOCK/.s.PGSQL.$PORT"; fi
       fi
       as_pg "ulimit -n 20000; $PGBIN/pg_ctl -D $DATA -o '$(opts)' -l $ROOT/pg.log -w start" >/dev/null
     fi
