@@ -26,10 +26,26 @@ begin
                     when y >= h - 3 then case when h <= 63 then 5 when y = h - 1 and (mc.hash2(x, z, 7) & 31) = 0 then 14 else 3 end
                     else mc.ore(r, y) end as st
           from (select sy, i, x, y, z, h, case when y > -64 and y < h - 3 then mc.ore_r(x, y, z) end as r
-                  from generate_series(-4, top) sy, generate_series(0, 4095) i,
+                  from generate_series(3, top) sy, generate_series(0, 4095) i,
                        lateral (select sy * 16 + (i >> 8) as y, gen_chunk.cx * 16 + (i & 15) as x, gen_chunk.cz * 16 + ((i >> 4) & 15) as z,
                                        hs[((i >> 4) & 15) * 16 + (i & 15) + 1] as h) c
                 offset 0) q),
+    -- sections -4 .. 2 lie entirely in the stone zone (heights are >= 52, so y <= 47 < h - 3) except the bedrock layer: every block is stone (1, the smallest
+    -- palette entry, index 0, so the packed data is all zeros) except the ~0.4% ore rolls and the 256 bedrock blocks; only those are generated and patched in
+    hit as materialized (
+        select sy, i, st from (
+            select sy, i, case when r is null then 4 else mc.ore(r, y) end as st
+              from (select sy, i, y, case when sy = -4 and i < 256 then null else mc.ore_r(x, y, z) end as r
+                      from generate_series(-4, 2) sy, generate_series(0, 4095) i,
+                           lateral (select sy * 16 + (i >> 8) as y, gen_chunk.cx * 16 + (i & 15) as x, gen_chunk.cz * 16 + ((i >> 4) & 15) as z) c
+                    offset 0) q) d
+         where st <> 1),
+    pal2 as (select sy, array_agg(st order by st) as pal from (select sy, 1 as st from generate_series(-4, 2) sy union select sy, st from hit) u group by sy),
+    lng2 as (select h.sy, h.i / 16 as k, bit_or((array_position(p.pal, h.st) - 1)::bigint << ((h.i % 16) * 4)) as w
+               from hit h join pal2 p using (sy) where cardinality(p.pal) > 1 group by 1, 2),
+    dat2 as (select p.sy, string_agg(int8send(coalesce(l.w, 0)), ''::bytea order by k.k) as data
+               from pal2 p cross join generate_series(0, 255) k(k) left join lng2 l on l.sy = p.sy and l.k = k.k
+              where cardinality(p.pal) > 1 group by p.sy),
     pm  as (select sy, bit_or(1 << st) as mask, count(*) filter (where st <> 0) as bc from blk group by sy),
     pb  as (select sy, bc, pal, mc.bits_for(cardinality(pal)) as bits
               from (select sy, bc, array(select s from generate_series(0, 31) s where (mask >> s) & 1 = 1) as pal from pm) q),
@@ -39,6 +55,8 @@ begin
               from blk b join pb p using (sy) where p.bits > 0 group by 1, 2),
     dat as (select sy, string_agg(int8send(w), ''::bytea order by k) as data from lng group by sy)
     select gen_chunk.cx, gen_chunk.cz, p.sy, p.bc, p.pal, p.bits, coalesce(d.data, '\x'::bytea) from pb p left join dat d using (sy)
+    union all
+    select gen_chunk.cx, gen_chunk.cz, p.sy, 4096, p.pal, mc.bits_for(cardinality(p.pal)), coalesce(d.data, '\x'::bytea) from pal2 p left join dat2 d using (sy)
     union all
     select gen_chunk.cx, gen_chunk.cz, sy, 0, array[0], 0, '\x'::bytea from generate_series(top + 1, 19) sy;
 end $$;
