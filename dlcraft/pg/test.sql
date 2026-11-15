@@ -373,7 +373,7 @@ select mc.inbox_push(array[2, 2, 99, 1, 1], array[mc.move_payload(53, 64, 0, 0, 
 select mc.server_tick() \g /dev/null
 select mct.ok('duplicate packets: last valid per conn wins, unknown conn skipped',
               (select x = 54 from mc.player where eid = 2) and (select x = 4 from mc.player where eid = 1) and (select count(*) = 0 from mc.player where eid = 99));
-select mc.drain_hex() \g /dev/null
+select mct.drain_hex() \g /dev/null
 
 -- block events: ids in order, to every player within 8 chunks (|dcx| <= 8 and |dcz| <= 8) of the event chunk; none elsewhere
 select mc.reset_players() \g /dev/null
