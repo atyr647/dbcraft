@@ -189,7 +189,6 @@ select mct.ok('fill with nothing to change: 0, no event, no version bump, sectio
 select mc.fill(0, 96, 0, 15, 111, 15, 0) as n \gset
 select mct.ok('fill air over a full section', :n = 4096 and (select palette = array[0] and bits = 0 and block_count = 0 from mc.chunk_section where cx = 0 and cz = 0 and sy = 6));
 select mc.drain_block_events() \g /dev/null
--- whole-section fill over a multi-entry 4-bit section: n = blocks that were not already the state
 select count(*) as nstone from generate_series(0, 15) x, generate_series(0, 15) y, generate_series(0, 15) z where mc.get_block(x, y, z) = 1 \gset
 select mc.fill(0, 0, 0, 15, 15, 15, 1) as n \gset
 select mct.ok('whole fill of a stone section: n = 4096 - already stone (hex nibble counting)', :n = 4096 - :nstone and (select palette = array[1] and bits = 0 and block_count = 4096 from mc.chunk_section where cx = 0 and cz = 0 and sy = 0));
@@ -242,7 +241,6 @@ select mct.ok('partial fill n == set_blocks n, sections byte-identical (palette 
               and (select count(*) = 24 and bool_and(a.palette = b.palette and a.bits = b.bits and a.data = b.data and a.block_count = b.block_count)
                      from mc.chunk_section a join snapF b on b.cx = a.cx and b.cz = a.cz and b.sy = a.sy where a.cx = 0 and a.cz = 0));
 select mc.drain_block_events() \g /dev/null
--- single-value air section -> 16 palette entries via set_blocks -> partial fill with a 17th state (repack to 5 bits)
 select mc.set_blocks(array_agg(i order by i), array_fill(100, array[15]), array_fill(15, array[15]), array_agg(i + 1 order by i)) from generate_series(0, 14) i \g /dev/null
 create temp table snapB as select * from mc.chunk_section where cx = 0 and cz = 0;
 select mct.ok('section with 16 entries is 4 bits', (select cardinality(palette) = 16 and bits = 4 from snapB where sy = 6));
@@ -262,8 +260,6 @@ select mc.fill(0, 96, 0, 15, 111, 15, 20) as n \gset
 select count(*) as n20 from generate_series(0, 15) x, generate_series(96, 111) y, generate_series(0, 15) z where false \gset
 select mct.ok('whole fill of a 5-bit section collapses to [20], bits 0', :n > 0 and (select palette = array[20] and bits = 0 and data = '\x' from mc.chunk_section where cx = 0 and cz = 0 and sy = 6));
 select mc.drain_block_events() \g /dev/null
-
------------------------------------------------------------------------------------------------- chunk_packet cache, world_hash
 select mct.ok('chunk_packet = varint(len) || 0x2c || i32 cx || i32 cz || payload',
               mc.chunk_packet(0, 0) = mct.varint_ref(9 + length(mc.chunk_payload(0, 0))) || '\x2c'::bytea || '\x0000000000000000'::bytea || mc.chunk_payload(0, 0));
 select mct.ok('chunk_packet cached with the chunk version', (select c.version = k.version and k.packet = mc.chunk_packet(0, 0) from mc.chunk c join mc.chunk_cache k using (cx, cz) where cx = 0 and cz = 0));
@@ -375,8 +371,6 @@ select mc.server_tick() \g /dev/null
 select mct.ok('duplicate packets: last valid per conn wins, unknown conn skipped',
               (select x = 54 from mc.player where eid = 2) and (select x = 4 from mc.player where eid = 1) and (select count(*) = 0 from mc.player where eid = 99));
 select mct.drain_hex() \g /dev/null
-
--- block events: ids in order, to every player within 8 chunks (|dcx| <= 8 and |dcz| <= 8) of the event chunk; none elsewhere
 -- players in chunks (0,0) and (4,0)
 select mc.reset_players() \g /dev/null
 select mc.join_bulk(array[1, 2], array[1.0, 70.0], array[64.0, 64.0], array[1.0, 1.0]) \g /dev/null
@@ -491,10 +485,10 @@ begin
     perform setseed(0.31337);
     perform mc.drain_block_events();
     perform mc.reset_players();
-    perform mc.join_bulk((select array_agg(i) from generate_series(1, nplayers) i),
-                         (select array_agg(case when i % 7 = 0 then (floor(random() * 500000) + 0.5) / 4096 else random() * 140 end) from generate_series(1, nplayers) i),
-                         (select array_agg(64 + random() * 6) from generate_series(1, nplayers) i),
-                         (select array_agg(case when i % 5 = 0 then (floor(random() * 500000) + 0.5) / 4096 else random() * 140 end) from generate_series(1, nplayers) i));
+    perform mc.join_bulk((select array_agg(g) from generate_series(1, nplayers) g),
+                         (select array_agg(case when g % 7 = 0 then (floor(random() * 500000) + 0.5) / 4096 else random() * 140 end) from generate_series(1, nplayers) g),
+                         (select array_agg(64 + random() * 6) from generate_series(1, nplayers) g),
+                         (select array_agg(case when g % 5 = 0 then (floor(random() * 500000) + 0.5) / 4096 else random() * 140 end) from generate_series(1, nplayers) g));
     perform mc.vis_init();
     perform mct.o_sync();
     for t in 1 .. 60 loop
@@ -550,3 +544,157 @@ end $$;
 select mct.ok('differential tick (90 players, 60 ticks, dups, rejects, boundary distances, half-even quantisation, events): packets, digest, visible set, rows == oracle',
               (select packets > 5000 and enters > 200 and leaves > 200 and teleports > 50 and moves > 500 and evpk > 500 from difftick_stats));
 select 'INFO differential totals: ' || packets || ' packets, ' || enters || ' enters, ' || leaves || ' leaves, ' || moves || ' moves, ' || teleports || ' teleports, ' || evpk || ' block/fill updates' from difftick_stats;
+
+------------------------------------------------------------------------------------------------ dynamics (SPEC 7)
+select mc.reset_world() \g /dev/null
+select mc.gen_area(0, 0, 0, 0) \g /dev/null
+select mc.fill(0, 64, 0, 15, 70, 15, 0) \g /dev/null
+select mc.fill(0, 63, 0, 15, 63, 15, 20) \g /dev/null
+select mc.drain_block_events() \g /dev/null
+select mc.reset_sched() \g /dev/null
+select mc.set_block(8, 64, 8, 6) \g /dev/null
+select mc.sched_add(1, 8, 64, 8) \g /dev/null
+select mc.dyn_step(0) as n \gset
+select mct.ok('dyn_step before anything is due does nothing', :n = 0 and mc.sched_size() = 1);
+select mc.dyn_step(1) as n1 \gset
+select mct.ok('step 1: source spreads to its 4 neighbours at level 1 (state 7), rescheduled for now+5',
+              :n1 = 4 and mc.get_block(9, 64, 8) = 7 and mc.get_block(7, 64, 8) = 7 and mc.get_block(8, 64, 9) = 7 and mc.get_block(8, 64, 7) = 7 and mc.get_block(9, 64, 9) = 0 and mc.sched_size() = 4);
+select mc.dyn_step(2) as n \gset
+select mct.ok('nothing due at tick 2', :n = 0);
+select mc.dyn_step(6 + 5 * g) from generate_series(0, 5) g \g /dev/null
+select mct.ok('after 7 steps the platform shows level = manhattan distance (<= 7), 113 water blocks, deterministic',
+              (select count(*) = 113 and bool_and(mc.get_block(x, 64, z) = 6 + abs(x - 8) + abs(z - 8)) from generate_series(1, 15) x, generate_series(1, 15) z where abs(x - 8) + abs(z - 8) <= 7)
+              and (select count(*) = 0 from generate_series(0, 15) x, generate_series(0, 15) z where abs(x - 8) + abs(z - 8) > 7 and mc.get_block(x, 64, z) <> 0));
+select mc.world_hash() as wh1 \gset
+-- same again from scratch: identical world
+select mc.fill(0, 64, 0, 15, 64, 15, 0) \g /dev/null
+select mc.reset_sched() \g /dev/null
+select mc.set_block(8, 64, 8, 6) \g /dev/null
+select mc.sched_add(1, 8, 64, 8) \g /dev/null
+select mc.dyn_step(1 + 5 * g) from generate_series(0, 6) g \g /dev/null
+select mct.ok('dyn_step is deterministic (world_hash equal on replay)', mc.world_hash() = :'wh1'::bytea);
+-- minimum rule: a level-3 block next to a cell that a level-0 source above-neighbour also feeds by falling
+select mc.fill(0, 64, 0, 15, 70, 15, 0) \g /dev/null
+select mc.reset_sched() \g /dev/null
+select mc.set_block(5, 64, 5, 9) \g /dev/null
+select mc.set_block(6, 65, 5, 6) \g /dev/null
+select mc.sched_add(10, 5, 64, 5) \g /dev/null
+select mc.sched_add(10, 6, 65, 5) \g /dev/null
+select mc.sched_add(10, 6, 65, 5) \g /dev/null
+select mc.dyn_step(10) as n \gset
+select mct.ok('min level wins (fall = 1 beats spread = 4); falls into air below; duplicates collapse',
+              mc.get_block(6, 64, 5) = 7 and mc.get_block(6, 65, 6) = 7 and mc.get_block(5, 64, 6) = 10 and mc.get_block(5, 64, 5) = 9 and mc.get_block(6, 64, 5) = 7 and :n > 0);
+-- random ticks against a brute-force oracle
+select mc.fill(0, 64, 0, 15, 70, 15, 0) \g /dev/null
+select (mc.hash2(10::bigint, 0::bigint, 15::bigint) & 4095) as pick_i \gset
+select (:pick_i & 15) as px, (96 + (:pick_i >> 8)) as py, ((:pick_i >> 4) & 15) as pz \gset
+select mc.set_block(:px, :py, :pz, 3), mc.set_block(case when :px < 15 then :px + 1 else :px - 1 end, :py, :pz, 2) \g /dev/null
+select mc.drain_block_events() \g /dev/null
+create temp table rt_before as select x, y, z, mc.get_block(x, y, z) as s from generate_series(0, 15) x, generate_series(-64, 111) y, generate_series(0, 15) z;
+create temp table rt_expect as
+  select distinct on (x, y, z) x, y, z from (
+    select sy, k, (i & 15) as x, sy * 16 + (i >> 8) as y, ((i >> 4) & 15) as z
+      from (select s.sy, k, mc.hash2((0 * 64 + s.sy + 4)::bigint, 0::bigint, (5 * 3 + k)::bigint) & 4095 as i
+              from mc.chunk_section s, generate_series(0, 2) k where s.cx = 0 and s.cz = 0 and s.block_count > 0) h) p
+   where (select s from rt_before b where (b.x, b.y, b.z) = (p.x, p.y, p.z)) = 3
+     and coalesce((select s from rt_before b where (b.x, b.y, b.z) = (p.x, p.y + 1, p.z)), 0) = 0
+     and exists (select 1 from rt_before b where b.y = p.y and b.s = 2 and abs(b.x - p.x) + abs(b.z - p.z) = 1)
+   order by x, y, z;
+select mc.random_ticks(5, 0, 0, 0, 0) as n \gset
+select mct.ok('random_ticks turned the planted dirt (picked by hash2) into grass', :n >= 1 and mc.get_block(:px, :py, :pz) = 2);
+select mct.ok('random_ticks: changed == oracle (dirt, air above, grass beside), and exactly those blocks became grass',
+              :n = (select count(*) from rt_expect) and
+              (select count(*) = 0 from rt_before b where (b.s = 3 and mc.get_block(b.x, b.y, b.z) = 2) <> exists (select 1 from rt_expect e where (e.x, e.y, e.z) = (b.x, b.y, b.z)))
+              and (select count(*) = :n from mc.drain_block_events()));
+
+------------------------------------------------------------------------------------------------ chat
+select mc.reset_chat() \g /dev/null
+select setseed(0.5) \g /dev/null
+create temp table words as select w from unnest(array['alpha','beta','gamma','delta','x1','42','7up','zeta','omega','a']) w;
+create temp table chat_in as
+  select n, (n % 13) as sender, (select string_agg((select w from words offset (random() * 9)::int limit 1), ' ') from generate_series(1, 1 + (n % 6))) as msg
+    from generate_series(1, 400) n;
+select mc.chat_add_bulk(array_agg(sender order by n), array_agg(msg order by n), array_agg(n::bigint order by n)) as last_id from chat_in \gset
+select mct.ok('chat_add_bulk returns the last id, ids 1.. in order', :last_id = 400 and (select bool_and(c.msg = i.msg and c.sender = i.sender) from mc.chat c join chat_in i on i.n = c.id));
+select mc.chat_add(3, 'alpha omega', 401) as id \gset
+select mct.ok('chat_add returns the next id', :id = 401);
+select mct.ok('chat_search == brute force over whole space-separated tokens, newest first, limited (all words incl. numerics)',
+              (select bool_and((select coalesce(array_agg(id), '{}') from mc.chat_search(w, 25))::bigint[] =
+                               (select coalesce(array_agg(id order by id desc), '{}')::bigint[] from (select n::bigint as id from (select n, msg from chat_in union all select 401, 'alpha omega') m where w = any (string_to_array(msg, ' ')) order by n desc limit 25) q)) from words)
+              and (select count(*) = 0 from mc.chat_search('alph', 10)) and (select count(*) = 0 from mc.chat_search('nothere', 10)));
+select mct.ok('chat_recent / chat_count_by_sender', (select array_agg(id) from mc.chat_recent(3)) = array[401, 400, 399]::bigint[]
+              and (select sum(n) = 401 and count(*) = 13 and bool_and(n = (select count(*) from (select sender from chat_in union all select 3) q where q.sender = s.sender)) from mc.chat_count_by_sender() s));
+
+------------------------------------------------------------------------------------------------ inventory
+select mc.reset_inv() \g /dev/null
+select mc.inv_seed(6) \g /dev/null
+select mct.ok('inv_seed: slots 5..44 only, 70% rule, item/count formulas, max_stack',
+              (select count(*) = count(*) filter (where slot between 5 and 44 and item between 1 and 199 and count between 1 and mc.max_stack(item)) from mc.inv)
+              and (select count(*) = (select count(*) from generate_series(1, 6) p, generate_series(5, 44) s where mc.hash2(p, s, 9) % 100 < 70) from mc.inv)
+              and (select bool_and(item = 1 + mc.hash2(player, slot, 10) % 199 and count = 1 + mc.hash2(player, slot, 11) % (case when item < 100 then 64 when item < 180 then 16 else 1 end)) from mc.inv)
+              and mc.max_stack(99) = 64 and mc.max_stack(100) = 16 and mc.max_stack(179) = 16 and mc.max_stack(180) = 1);
+select mct.ok('inv_digest == formula over inv_load', mc.inv_digest() = (select sum(p::bigint * 1000003 + l.slot * 8191::bigint + l.item * 131::bigint + l.count * 7::bigint + p::bigint * l.slot * 3) from generate_series(1, 6) p, lateral mc.inv_load(p) l));
+-- reference model: arrays of 46 (item,count), plain loops
+create type mct.invst as (items int[], cnts int[]);
+create function mct.inv_ref(st mct.invst, op text, a int, b int) returns mct.invst language plpgsql as $$
+declare items int[] := st.items; cnts int[] := st.cnts; ms int; mv int; lo int; hi int; s int; rem int; ti int; tc int;
+begin
+    if op = 'swap' then
+        if a <> b then ti := items[a + 1]; tc := cnts[a + 1]; items[a + 1] := items[b + 1]; cnts[a + 1] := cnts[b + 1]; items[b + 1] := ti; cnts[b + 1] := tc; end if;
+    elsif op = 'merge' then
+        if a <> b and items[a + 1] is not null then
+            if items[b + 1] = items[a + 1] then
+                ms := case when items[a+1] < 100 then 64 when items[a+1] < 180 then 16 else 1 end;
+                mv := least(cnts[a + 1], ms - cnts[b + 1]);
+                if mv > 0 then cnts[b + 1] := cnts[b + 1] + mv; cnts[a + 1] := cnts[a + 1] - mv; if cnts[a + 1] = 0 then items[a + 1] := null; cnts[a + 1] := null; end if; end if;
+            else ti := items[a + 1]; tc := cnts[a + 1]; items[a + 1] := items[b + 1]; cnts[a + 1] := cnts[b + 1]; items[b + 1] := ti; cnts[b + 1] := tc; end if;
+        end if;
+    elsif op = 'quick' then
+        if items[a + 1] is not null and (a between 9 and 44) then
+            if a <= 35 then lo := 36; hi := 44; else lo := 9; hi := 35; end if;
+            ms := case when items[a+1] < 100 then 64 when items[a+1] < 180 then 16 else 1 end; rem := cnts[a + 1];
+            for s in lo .. hi loop
+                exit when rem = 0;
+                if items[s + 1] = items[a + 1] and cnts[s + 1] < ms then mv := least(rem, ms - cnts[s + 1]); cnts[s + 1] := cnts[s + 1] + mv; rem := rem - mv; end if;
+            end loop;
+            if rem > 0 then
+                for s in lo .. hi loop
+                    if items[s + 1] is null then mv := least(rem, ms); items[s + 1] := items[a + 1]; cnts[s + 1] := mv; rem := rem - mv; exit; end if;
+                end loop;
+            end if;
+            if rem = 0 then items[a + 1] := null; cnts[a + 1] := null; else cnts[a + 1] := rem; end if;
+        end if;
+    elsif op = 'drop' then
+        if items[a + 1] is not null then
+            mv := least(b, cnts[a + 1]);
+            if mv > 0 then cnts[a + 1] := cnts[a + 1] - mv; if cnts[a + 1] = 0 then items[a + 1] := null; cnts[a + 1] := null; end if; end if;
+        end if;
+    end if;
+    return (items, cnts)::mct.invst;
+end $$;
+create temp table inv0 as select * from mc.inv;
+create temp table clicks as
+  select n, 1 + (random() * 5)::int as player, (array['swap','merge','quick','drop'])[1 + (random() * 3)::int] as op,
+         0 as a, 0 as b from generate_series(1, 4000) n;
+update clicks set a = case when op = 'quick' and random() < 0.7 then 9 + (random() * 35)::int else (random() * 45)::int end,
+                  b = case when op = 'drop' then (random() * 70)::int else (random() * 45)::int end;
+update clicks set b = (a + 1) % 46 where op in ('swap', 'merge') and a = b;
+select mc.inv_clicks_bulk(array_agg(player order by n), array_agg(op order by n), array_agg(a order by n), array_agg(b order by n)) from clicks \g /dev/null
+do $$
+declare
+    p int; c record; items int[]; cnts int[]; r mct.invst; got_i int[]; got_c int[];
+begin
+    for p in 1 .. 6 loop
+        items := array_fill(null::int, array[46]); cnts := array_fill(null::int, array[46]);
+        for c in select slot, item, count from inv0 where player = p loop items[c.slot + 1] := c.item; cnts[c.slot + 1] := c.count; end loop;
+        for c in select op, a, b from clicks where player = p order by n loop
+            r := mct.inv_ref((items, cnts)::mct.invst, c.op, c.a, c.b); items := r.items; cnts := r.cnts;
+        end loop;
+        got_i := array_fill(null::int, array[46]); got_c := array_fill(null::int, array[46]);
+        for c in select slot, item, count from mc.inv_load(p) loop got_i[c.slot + 1] := c.item; got_c[c.slot + 1] := c.count; end loop;
+        if got_i is distinct from items or got_c is distinct from cnts then raise exception 'FAIL: inventory of player % differs from the reference model', p; end if;
+    end loop;
+end $$;
+select mct.ok('4000 random clicks (swap/merge/quick/drop) in one inv_clicks_bulk call == reference model, every player', (select count(*) = 4000 from clicks) and (select count(*) > 0 from mc.inv));
+
+select 'ALL TESTS PASSED';
