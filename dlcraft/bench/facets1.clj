@@ -114,7 +114,7 @@
   [kv]
   (vec (for [[^bytes k ^bytes v] (d/get-range kv "sect" [:all] :bytes :bytes false)]
          (let [bb (ByteBuffer/wrap k)]
-           [(- (.getInt bb 0) 2147483648) (- (.getInt bb 4) 2147483648) (- (bit-and (long (.getShort bb 8)) 0xFFFF) 32768) v]))))
+           [(+ (long (.getInt bb 0)) 2147483648) (+ (long (.getInt bb 4)) 2147483648) (- (bit-and (long (.getShort bb 8)) 0xFFFF) 32768) v]))))
 
 (defn- hex-bytea [^bytes b] (let [sb (StringBuilder. (+ 2 (* 2 (alength b))))] (.append sb "\\x") (doseq [x b] (.append sb (format "%02x" (bit-and (long x) 0xff)))) (str sb)))
 
@@ -181,7 +181,7 @@
       (let [dl-before (st/disk-bytes env)
             dest "/srv/dlcraft/dl/compact-copy"
             _ (when (.exists (java.io.File. dest)) (doseq [f (reverse (file-seq (java.io.File. dest)))] (.delete ^java.io.File f)))
-            [_ dl-ms] (timed (d/copy (:conn env) dest true))
+            [_ dl-ms] (timed (d/copy (:kv env) dest true))
             dl-after (reduce + (map #(.length ^java.io.File %) (filter #(.isFile ^java.io.File %) (file-seq (java.io.File. dest)))))
             pg-before (pg-world)
             [_ pg-ms] (timed (do (pgx/exec! pg "vacuum full mc.chunk_section") (pgx/exec! pg "vacuum full mc.chunk")))

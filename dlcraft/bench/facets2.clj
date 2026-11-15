@@ -71,9 +71,10 @@
               :note (str "visible pairs at start: " (pr-str (:pairs r))))))))
 
 ;; ---------------------------------------------------------------------------------------------- hot rows
-(defn f-hot [{:keys [env pg]}]
+(defn f-hot [{:keys [pg]}]
   (facet "hot-row churn: 1000 players updated every tick, 200 ticks"
-    (let [n 1000 rounds 200 conn (:conn env) kv (:kv env)
+    (let [env (st/open "/srv/dlcraft/dl/hot" {:fresh? true :profile :nometasync})
+          n 1000 rounds 200 conn (:conn env) kv (:kv env)
           eids (vec (range 1 (inc n)))
           pg-run (fn [reset-fn round-fn]
                    (pgx/exec! pg (str "select " reset-fn "(" n ")"))
@@ -103,11 +104,13 @@
             ts (vec (for [r (range 1 (inc rounds))]
                       (second (timed (d/transact! conn (vec (mapcat (fn [e] [[:db/add [:p/eid e] :p/x (+ e (* 0.01 r))] [:db/add [:p/eid e] :p/y (+ 64 (* 0.02 r))]
                                                                               [:db/add [:p/eid e] :p/z (+ e (* 0.03 r))] [:db/add [:p/eid e] :p/tick r]]) eids)))))))]
-        (rec-series "datalevin/datalog" "transact! 4 datoms x 1000 players" ts (/ (- (st/disk-bytes env) size0) 1048576.0))))))
+        (rec-series "datalevin/datalog" "transact! 4 datoms x 1000 players" ts (/ (- (st/disk-bytes env) size0) 1048576.0)))
+      (st/close env))))
 
-(defn f-reader [{:keys [env pg]}]
+(defn f-reader [{:keys [pg]}]
   (facet "an idle reader that never finishes (the \"psql left open\" problem)"
-    (let [n 1000 conn (:conn env) kv (:kv env)
+    (let [env (st/open "/srv/dlcraft/dl/reader" {:fresh? true :profile :nometasync})
+          n 1000 conn (:conn env) kv (:kv env)
           eids (vec (range 1 (inc n)))
           ekey (fn [e] (.array (.putInt (ByteBuffer/allocate 4) (int e))))
           rec (fn [e r] (let [bb (ByteBuffer/allocate 40)] (.putDouble bb (+ e (* 0.01 r))) (.putDouble bb (+ 64 (* 0.02 r))) (.putDouble bb (+ e (* 0.03 r))) (.putLong bb r) (.array bb)))
@@ -130,7 +133,8 @@
         (rec! "100 rounds before the reader (avg)" "datalevin/kv" (/ (reduce + base) 100.0) "ms")
         (rec! "rounds 101-300 with an open read transaction (avg of last 100)" "datalevin/kv" (/ (reduce + (take-last 100 held)) 100.0) "ms" :note (if pinned "lazy range-seq held open" "NOT pinned"))
         (rec! "file size: before / with the reader" "datalevin/kv" (/ sz1 1048576.0) "MB" :note (format "%.1f MB before" (/ sz0 1048576.0)))
-        (when pinned (try (doall (take 5 pinned)) (catch Throwable _ nil)))))))
+        (when pinned (try (dorun pinned) (catch Throwable _ nil))))
+      (st/close env))))
 
 ;; ---------------------------------------------------------------------------------------------- chat
 (defn f-chat [{:keys [env pg]}]
