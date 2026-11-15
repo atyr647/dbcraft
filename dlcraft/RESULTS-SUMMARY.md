@@ -14,7 +14,7 @@ numbers are medians of 3 to 10 passes.  Single-digit-percent differences are noi
   directly, and the tick is Clojure code over sorted byte keys.  There is no SQL to interpret, no round trip, no tuple/MVCC overhead per value.
   Tick **4x to 9x faster** at 500 to 2000 players, point reads **58x**, chunk generation **33x**, analytics scans **3x to 42x**.
 * **Where PostgreSQL wins**, it is on what a relational database is *for*: full-text search (**10x**), group-by aggregation, indexed lookups, group commit under many
-  concurrent strict writers, much smaller memory footprint, and it is the only one of the two that gives a second client a normal way in (`psql`).
+  concurrent strict writers, much smaller memory footprint, a second client gets in with `psql` (Datalevin is embedded here, so a second process has no way in; its client/server mode was not tried).
 * **The sharpest design lesson is internal to Datalevin:** its Datalog layer is for relational data, not hot data.  The same per-tick position update costs
   **0.94 ms as raw KV puts but 16.5 ms as datoms** (PostgreSQL: 2.0 ms), and inventories are **20x slower** as Datalog entities than as one KV record per player.
   The winning design uses both layers in one atomic transaction (`datalog-kv`), which is what `src/dlcraft/` does.
@@ -37,7 +37,7 @@ Lower is better unless stated.  "pg" values are server-side unless marked; where
 | **tick, 500 players, 20% moving** | 6.0 ms (p99 11) | 24.0 ms (p99 42) | 4.0x |
 | tick, 500 players, 100% moving | 21 ms (p99 33) | 158 ms (p99 254) | 7.5x |
 | tick, 500 players, 20% moving + 20 block edits/tick | 7.7 ms | 19.4 ms | 2.5x |
-| tick, 500 players **crowded** (~79 in view of each) | 34 ms (p99 47) | 44.7 ms (p99 67) | 1.3x |
+| tick, 500 players **crowded** (~158 in view of each, 16k frames/tick) | 34 ms (p99 47) | 44.7 ms (p99 67) | 1.3x |
 | tick, 1000 players, 20% moving | 10.7 ms | 63.9 ms | 6.0x |
 | tick, 2000 players, 20% moving | 19.9 ms | 181 ms | 9.1x |
 | fill 40^3 (27 partial sections) | 4.5 ms | 92.6 ms | 21x |
@@ -61,7 +61,7 @@ Lower is better unless stated.  "pg" values are server-side unless marked; where
 ## What the tick numbers mean
 
 The tick is the one facet that resembles dbcraft's real bottleneck.  Datalevin is 4x to 9x faster until the world gets crowded, where it collapses to 1.3x.  That is
-informative rather than embarrassing: at 500 players with about 79 in view of each, both engines spend their time building and moving about 40k outbound frames
+informative rather than embarrassing: at 500 players with about 158 in view of each, both engines spend their time building and moving about 16k outbound frames (200 KB)
 a tick (every mover's packet to every viewer), which is the same amount of byte shuffling in both.  The advantage Datalevin shows elsewhere is overhead removed; the
 crowded case is the part of the tick that has no overhead left to remove.  It also bounds what "database-native logic" can give a Minecraft tick: fan-out cost
 is inherent.
@@ -101,11 +101,10 @@ and bloated, LMDB stays fast and grows until the map is full.  (dbcraft mitigate
 
 ## What to distrust
 
-1. **The PostgreSQL side is a re-implementation, not dbcraft.**  It follows dbcraft's patterns and settings but is 700 lines written for this experiment, in about 50 minutes of an agent's time with
+1. **The PostgreSQL side is a re-implementation, not dbcraft.**  It follows dbcraft's patterns and settings but is about 980 lines of SQL written for this experiment, in about 50 minutes of an agent's time with
    byte-identical equivalence as the hard constraint.  dbcraft's real tick does far more (light, heightmaps, survival, containers), so none of these are dbcraft's tick times.
 2. **Several large ratios come from implementation effort, not the engine.**  `random ticks` (130x), `find every diamond` (42x) and chunk generation (33x) reflect that the Datalevin version reads
-   section headers (palette skip) and works on bytes in a tuned loop, while the PostgreSQL version unpacks through SQL.  dbcraft itself reaches about 4 ms per chunk with a native C accelerator,
-   which this PostgreSQL side deliberately does not use; a native-extension PostgreSQL would close much of the generation gap.  Conversely, the fills where PostgreSQL wins (whole-section) are a
+   section headers (palette skip) and works on bytes in a tuned loop, while the PostgreSQL version unpacks through SQL.  dbcraft's own docs report about 4 ms to generate a chunk of its flat world in SQL (this terrain is noisier, so not the same work), and dbcraft ships a native accelerator for fills that this PostgreSQL side deliberately does not use; a tuned or accelerated PostgreSQL would close part of the generation gap.  Conversely, the fills where PostgreSQL wins (whole-section) are a
    Datalevin implementation inefficiency: it parses and compares before replacing, PostgreSQL just writes.
 3. **In-process versus server.**  Datalevin never crosses a socket; the rows marked "round trip" or "shipped" are where PostgreSQL pays for that, and they are labelled, but the in-DB loops
    (PL/pgSQL, one statement per tick) are the fair server-side comparison.  The tick numbers include one `select mc.server_tick()` round trip for PostgreSQL (about 0.1 ms) and zero for Datalevin.

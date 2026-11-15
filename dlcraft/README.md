@@ -9,7 +9,11 @@ world storage in Minecraft's wire format, terrain generation, block edits, fills
 inbound move packets into outbound entity packets, scheduled ticks and water, random ticks, chat, inventories, and durability.  Both implementations are driven from
 the same deterministic inputs and **must produce byte-identical outputs** before any timing is reported (see "How the comparison is kept honest").
 
-> **RESULTS**: see [RESULTS-SUMMARY.md](RESULTS-SUMMARY.md) for the reading, [results/RESULTS.md](results/RESULTS.md) for every number.
+> **Results** ([RESULTS-SUMMARY.md](RESULTS-SUMMARY.md) has the reading and the caveats, [results/RESULTS.md](results/RESULTS.md) every number):
+> Datalevin's in-process, byte-level design is **4x to 9x faster on the tick** (500 to 2000 players; only 1.3x in a crowded world where fan-out dominates), 30x to 60x on world and
+> chunk operations, and equal on disk size.  PostgreSQL is **6x faster on chat inserts, 10x on full-text search**, scales better with many strict concurrent writers, and uses about
+> 5x less memory.  Inside Datalevin, hot data must go in raw KV (0.94 ms per tick of position updates) and not in datoms (16.5 ms).  Both engines produce byte-identical output
+> for every workload (78 equivalence checks plus a digest of every frame of every benchmarked tick).
 
 ## Layout
 
