@@ -1,3 +1,2 @@
-results/run.log
-results/run2.log
+results/run*.log
 results/*.bak

@@ -47,22 +47,6 @@
   "better" : "higher",
   "note" : null
 }, {
-  "facet" : "?",
-  "metric" : "resident memory, after generating 640 chunks",
-  "engine" : "datalevin (JVM process)",
-  "value" : 1768,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : "heap used 114 MB, JVM started with -Xms2g -Xmx4g"
-}, {
-  "facet" : "?",
-  "metric" : "resident memory, after generating 640 chunks",
-  "engine" : "postgres (postmaster + backends)",
-  "value" : 438,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : "shared_buffers 128MB (dbcraft's setting)"
-}, {
   "facet" : "chunk reads (a 16x16 join burst = 256 chunks, ~4.7 MB)",
   "metric" : "assemble 256 chunk payloads from sections",
   "engine" : "datalevin",
@@ -1135,198 +1119,6 @@
   "better" : "higher",
   "note" : "visible pairs at start: [8552 8552]"
 }, {
-  "facet" : "?",
-  "metric" : "resident memory, after the tick scenarios (up to 2000 players)",
-  "engine" : "datalevin (JVM process)",
-  "value" : 1649,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : "heap used 73 MB, JVM started with -Xms2g -Xmx4g"
-}, {
-  "facet" : "?",
-  "metric" : "resident memory, after the tick scenarios (up to 2000 players)",
-  "engine" : "postgres (postmaster + backends)",
-  "value" : 545,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : "shared_buffers 128MB (dbcraft's setting)"
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "update 1000 rows (fillfactor 60, no hot index): round avg",
-  "engine" : "postgres",
-  "value" : 2.1488345850000012,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "update 1000 rows (fillfactor 60, no hot index): round p99",
-  "engine" : "postgres",
-  "value" : 15.283851,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "update 1000 rows (fillfactor 60, no hot index): last 20 rounds avg",
-  "engine" : "postgres",
-  "value" : 2.0725012499999997,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "update 1000 rows (fillfactor 60, no hot index): storage after 200 rounds",
-  "engine" : "postgres",
-  "value" : 0.25,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "update 1000 rows (index on the changing column): round avg",
-  "engine" : "postgres",
-  "value" : 4.419459589999998,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "update 1000 rows (index on the changing column): round p99",
-  "engine" : "postgres",
-  "value" : 7.255597,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "update 1000 rows (index on the changing column): last 20 rounds avg",
-  "engine" : "postgres",
-  "value" : 4.337278950000001,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "update 1000 rows (index on the changing column): storage after 200 rounds",
-  "engine" : "postgres",
-  "value" : 4.8359375,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "put 1000 packed records: round avg",
-  "engine" : "datalevin/kv",
-  "value" : 1.2542664599999995,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "put 1000 packed records: round p99",
-  "engine" : "datalevin/kv",
-  "value" : 1.919387,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "put 1000 packed records: last 20 rounds avg",
-  "engine" : "datalevin/kv",
-  "value" : 1.1939986,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "put 1000 packed records: storage after 200 rounds",
-  "engine" : "datalevin/kv",
-  "value" : 0.0,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "transact! 4 datoms x 1000 players: round avg",
-  "engine" : "datalevin/datalog",
-  "value" : 17.55138959,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "transact! 4 datoms x 1000 players: round p99",
-  "engine" : "datalevin/datalog",
-  "value" : 67.939819,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "transact! 4 datoms x 1000 players: last 20 rounds avg",
-  "engine" : "datalevin/datalog",
-  "value" : 16.974985300000004,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
-  "metric" : "transact! 4 datoms x 1000 players: storage after 200 rounds",
-  "engine" : "datalevin/datalog",
-  "value" : 0.0,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
-  "metric" : "100 rounds before the reader (avg)",
-  "engine" : "postgres",
-  "value" : 2.6325885400000004,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
-  "metric" : "rounds 101-300 with an idle-in-transaction reader (avg of last 100)",
-  "engine" : "postgres",
-  "value" : 26.105155869999994,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
-  "metric" : "table size: before / with the reader",
-  "engine" : "postgres",
-  "value" : 14.203125,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : "0.3 MB before"
-}, {
-  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
-  "metric" : "100 rounds before the reader (avg)",
-  "engine" : "datalevin/kv",
-  "value" : 1.2124938299999999,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
-  "metric" : "rounds 101-300 with an open read transaction (avg of last 100)",
-  "engine" : "datalevin/kv",
-  "value" : 0.94665332,
-  "unit" : "ms",
-  "better" : "lower",
-  "note" : "lazy range-seq held open"
-}, {
-  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
-  "metric" : "file size: before / with the reader",
-  "engine" : "datalevin/kv",
-  "value" : 43.3243465423584,
-  "unit" : "MB",
-  "better" : "lower",
-  "note" : "37.9 MB before"
-}, {
   "facet" : "chat: 50,000 messages with full-text search",
   "metric" : "insert 50k messages (500 batches of 100, one commit each)",
   "engine" : "datalevin",
@@ -1575,52 +1367,6 @@
   "better" : "lower",
   "note" : null
 }, {
-  "unit" : "ERROR: value \"-4294967296\" is out of range for type integer\n  Where: COPY chunk, line 65, column cx: \"-4294967296\"",
-  "value" : null,
-  "facet" : "bulk import of a generated world (512 chunks)",
-  "better" : "lower",
-  "engine" : "-",
-  "metric" : "FAILED"
-}, {
-  "facet" : "storage",
-  "metric" : "chunks stored",
-  "engine" : "postgres",
-  "value" : 576,
-  "unit" : "chunks",
-  "better" : "lower",
-  "note" : null
-}, {
-  "facet" : "storage",
-  "metric" : "world on disk, sections only, no packet cache",
-  "engine" : "datalevin",
-  "value" : 1246485.565972222,
-  "unit" : "bytes/chunk",
-  "better" : "lower",
-  "note" : "whole LMDB file incl. everything else in the store"
-}, {
-  "facet" : "storage",
-  "metric" : "world on disk, sections only, no packet cache",
-  "engine" : "postgres",
-  "value" : 268814.2222222222,
-  "unit" : "bytes/chunk",
-  "better" : "lower",
-  "note" : "chunk + chunk_section incl. indexes"
-}, {
-  "facet" : "storage",
-  "metric" : "packet cache for 256 chunks",
-  "engine" : "postgres",
-  "value" : 25088,
-  "unit" : "bytes/chunk",
-  "better" : "lower",
-  "note" : null
-}, {
-  "unit" : "No implementation of method: :copy of protocol: #'datalevin.interface/ILMDB found for class: datalevin.conn.CloseableConn",
-  "value" : null,
-  "facet" : "storage",
-  "better" : "lower",
-  "engine" : "-",
-  "metric" : "FAILED"
-}, {
   "facet" : "durability: commit latency, one block edit per commit (2000 edits)",
   "metric" : "set_block, one commit each: mean",
   "engine" : "datalevin/sync",
@@ -1861,25 +1607,393 @@
   "better" : "higher",
   "note" : null
 }, {
-  "unit" : "",
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (fillfactor 60, no hot index): round avg",
+  "engine" : "postgres",
+  "value" : 2.075612819999999,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (fillfactor 60, no hot index): round p99",
+  "engine" : "postgres",
+  "value" : 3.316344,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (fillfactor 60, no hot index): last 20 rounds avg",
+  "engine" : "postgres",
+  "value" : 2.3462623999999996,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (fillfactor 60, no hot index): storage after 200 rounds",
+  "engine" : "postgres",
+  "value" : 0.25,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (index on the changing column): round avg",
+  "engine" : "postgres",
+  "value" : 4.942104160000002,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (index on the changing column): round p99",
+  "engine" : "postgres",
+  "value" : 7.373989,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (index on the changing column): last 20 rounds avg",
+  "engine" : "postgres",
+  "value" : 4.99817305,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "update 1000 rows (index on the changing column): storage after 200 rounds",
+  "engine" : "postgres",
+  "value" : 7.1484375,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "put 1000 packed records: round avg",
+  "engine" : "datalevin/kv",
+  "value" : 1.189120365,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "put 1000 packed records: round p99",
+  "engine" : "datalevin/kv",
+  "value" : 6.964892,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "put 1000 packed records: last 20 rounds avg",
+  "engine" : "datalevin/kv",
+  "value" : 0.7885445999999998,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "put 1000 packed records: storage after 200 rounds",
+  "engine" : "datalevin/kv",
+  "value" : 0.1640625,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "transact! 4 datoms x 1000 players: round avg",
+  "engine" : "datalevin/datalog",
+  "value" : 16.186365045000006,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "transact! 4 datoms x 1000 players: round p99",
+  "engine" : "datalevin/datalog",
+  "value" : 54.083655,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "transact! 4 datoms x 1000 players: last 20 rounds avg",
+  "engine" : "datalevin/datalog",
+  "value" : 14.123784299999997,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "hot-row churn: 1000 players updated every tick, 200 ticks",
+  "metric" : "transact! 4 datoms x 1000 players: storage after 200 rounds",
+  "engine" : "datalevin/datalog",
+  "value" : 0.390625,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "100 rounds before the reader (avg)",
+  "engine" : "postgres",
+  "value" : 2.20311251,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "rounds 101-300 with an idle-in-transaction reader (avg of last 100)",
+  "engine" : "postgres",
+  "value" : 24.405503959999997,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "table size: before / with the reader",
+  "engine" : "postgres",
+  "value" : 14.203125,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "0.3 MB before"
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "100 rounds before the reader (avg)",
+  "engine" : "datalevin/kv",
+  "value" : 0.8784418800000005,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "rounds 101-300 with an open read transaction (avg of last 100)",
+  "engine" : "datalevin/kv",
+  "value" : 0.9880685699999999,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : "lazy range-seq held open"
+}, {
+  "facet" : "an idle reader that never finishes (the \"psql left open\" problem)",
+  "metric" : "file size: before / with the reader",
+  "engine" : "datalevin/kv",
+  "value" : 14.218877792358398,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "0.3 MB before"
+}, {
+  "unit" : "ERROR: value \"4294967288\" is out of range for type integer\n  Where: COPY chunk, line 1, column cx: \"4294967288\"",
   "value" : null,
-  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "facet" : "bulk import of a generated world (512 chunks)",
   "better" : "lower",
   "engine" : "-",
   "metric" : "FAILED"
 }, {
+  "facet" : "storage",
+  "metric" : "chunks stored",
+  "engine" : "postgres",
+  "value" : 256,
+  "unit" : "chunks",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "storage",
+  "metric" : "world on disk, sections only, no packet cache",
+  "engine" : "datalevin",
+  "value" : 2847840.5234375,
+  "unit" : "bytes/chunk",
+  "better" : "lower",
+  "note" : "whole LMDB file incl. everything else in the store"
+}, {
+  "facet" : "storage",
+  "metric" : "world on disk, sections only, no packet cache",
+  "engine" : "postgres",
+  "value" : 39744,
+  "unit" : "bytes/chunk",
+  "better" : "lower",
+  "note" : "chunk + chunk_section incl. indexes"
+}, {
+  "facet" : "storage",
+  "metric" : "packet cache for 256 chunks",
+  "engine" : "postgres",
+  "value" : 21472,
+  "unit" : "bytes/chunk",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "storage",
+  "metric" : "size before compaction (after the edits of the earlier facets)",
+  "engine" : "datalevin",
+  "value" : 695.2735652923584,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "storage",
+  "metric" : "size after compaction (mdb_copy -c)",
+  "engine" : "datalevin",
+  "value" : 63.1367244720459,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "66 ms"
+}, {
+  "facet" : "storage",
+  "metric" : "size before compaction (sections only)",
+  "engine" : "postgres",
+  "value" : 9.703125,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "storage",
+  "metric" : "size after compaction (VACUUM FULL)",
+  "engine" : "postgres",
+  "value" : 9.5234375,
+  "unit" : "MB",
+  "better" : "lower",
+  "note" : "89 ms"
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "0 concurrent chunk readers: tick avg",
+  "engine" : "datalevin",
+  "value" : 6.866500786666667,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "0 concurrent chunk readers: tick p99",
+  "engine" : "datalevin",
+  "value" : 9.61518,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "0 concurrent chunk readers: tick avg",
+  "engine" : "postgres",
+  "value" : 21.904154466666665,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "0 concurrent chunk readers: tick p99",
+  "engine" : "postgres",
+  "value" : 29.255369,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: tick avg",
+  "engine" : "datalevin",
+  "value" : 5.159403486666669,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: tick p99",
+  "engine" : "datalevin",
+  "value" : 10.940314,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: tick avg",
+  "engine" : "postgres",
+  "value" : 22.555451926666674,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: tick p99",
+  "engine" : "postgres",
+  "value" : 34.983039,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: chunks served during the run",
+  "engine" : "datalevin",
+  "value" : 99674,
+  "unit" : "chunks",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "1 concurrent chunk readers: chunks served during the run",
+  "engine" : "postgres",
+  "value" : 68740,
+  "unit" : "chunks",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: tick avg",
+  "engine" : "datalevin",
+  "value" : 5.258397013333334,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: tick p99",
+  "engine" : "datalevin",
+  "value" : 14.250062,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: tick avg",
+  "engine" : "postgres",
+  "value" : 23.68780893333334,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: tick p99",
+  "engine" : "postgres",
+  "value" : 40.05701,
+  "unit" : "ms",
+  "better" : "lower",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: chunks served during the run",
+  "engine" : "datalevin",
+  "value" : 374449,
+  "unit" : "chunks",
+  "better" : "higher",
+  "note" : null
+}, {
+  "facet" : "tick latency while other sessions read chunks (500 players, 20% moving)",
+  "metric" : "3 concurrent chunk readers: chunks served during the run",
+  "engine" : "postgres",
+  "value" : 442883,
+  "unit" : "chunks",
+  "better" : "higher",
+  "note" : null
+}, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "acknowledged commits lost",
   "engine" : "datalevin/sync",
   "value" : 0,
   "unit" : "commits",
   "better" : "lower",
-  "note" : "8334 acknowledged, reopen 11 ms, 0 unacknowledged edits also applied"
+  "note" : "7770 acknowledged, reopen 12 ms, 0 unacknowledged edits also applied"
 }, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "restart after kill -9",
   "engine" : "datalevin/sync",
-  "value" : 11.196866,
+  "value" : 11.871302,
   "unit" : "ms",
   "better" : "lower",
   "note" : null
@@ -1890,12 +2004,12 @@
   "value" : 0,
   "unit" : "commits",
   "better" : "lower",
-  "note" : "13917 acknowledged, reopen 9 ms, 1 unacknowledged edits also applied"
+  "note" : "11467 acknowledged, reopen 10 ms, 0 unacknowledged edits also applied"
 }, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "restart after kill -9",
   "engine" : "datalevin/nometasync",
-  "value" : 8.589936,
+  "value" : 10.217373,
   "unit" : "ms",
   "better" : "lower",
   "note" : null
@@ -1906,12 +2020,12 @@
   "value" : 0,
   "unit" : "commits",
   "better" : "lower",
-  "note" : "9388 acknowledged, reopen 221 ms, 0 unacknowledged edits also applied"
+  "note" : "8357 acknowledged, reopen 246 ms, 1 unacknowledged edits also applied"
 }, {
   "facet" : "kill -9 (SIGKILL of the whole server process tree; the OS and its page cache survive)",
   "metric" : "restart after kill -9",
   "engine" : "datalevin/wal-relaxed",
-  "value" : 220.770476,
+  "value" : 245.587069,
   "unit" : "ms",
   "better" : "lower",
   "note" : null
@@ -1926,10 +2040,10 @@
   "facet" : "?",
   "metric" : "resident memory, end of run",
   "engine" : "datalevin (JVM process)",
-  "value" : 1666,
+  "value" : 3228,
   "unit" : "MB",
   "better" : "lower",
-  "note" : "heap used 92 MB, JVM started with -Xms2g -Xmx4g"
+  "note" : "heap used 85 MB, JVM started with -Xms2g -Xmx4g"
 }, {
   "facet" : "?",
   "metric" : "resident memory, end of run",

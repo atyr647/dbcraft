@@ -28,6 +28,11 @@ case "${1:-}" in
     if [ ! -d "$DATA/base" ]; then as_pg "mkdir -p $DATA && $PGBIN/initdb -D $DATA -A trust -E UTF8 --locale=C.UTF-8 >/dev/null"; fi
     # "running" = the port answers (after kill -9 a dead postmaster lingers as an unreaped zombie that pg_ctl status still calls running)
     if ! "$PGBIN/pg_isready" -q -h 127.0.0.1 -p "$PORT"; then
+      # a postmaster killed with SIGKILL stays a zombie here (nothing reaps it), and PostgreSQL refuses to start next to its pid: treat a zombie pid as stale
+      if [ -f "$DATA/postmaster.pid" ]; then
+        zp=$(head -1 "$DATA/postmaster.pid")
+        if [ -z "$(ps -o stat= -p "$zp" 2>/dev/null | tr -d ' ')" ] || ps -o stat= -p "$zp" | grep -q '^Z'; then rm -f "$DATA/postmaster.pid"; fi
+      fi
       as_pg "ulimit -n 20000; $PGBIN/pg_ctl -D $DATA -o '$(opts)' -l $ROOT/pg.log -w start" >/dev/null
     fi
     psql -h 127.0.0.1 -p "$PORT" -U postgres -tAc "select 1 from pg_database where datname='dlcraft'" | grep -q 1 \

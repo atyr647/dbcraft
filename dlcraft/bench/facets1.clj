@@ -114,7 +114,7 @@
   [kv]
   (vec (for [[^bytes k ^bytes v] (d/get-range kv "sect" [:all] :bytes :bytes false)]
          (let [bb (ByteBuffer/wrap k)]
-           [(+ (long (.getInt bb 0)) 2147483648) (+ (long (.getInt bb 4)) 2147483648) (- (bit-and (long (.getShort bb 8)) 0xFFFF) 32768) v]))))
+           [(long (unchecked-int (bit-xor (.getInt bb 0) Integer/MIN_VALUE))) (long (unchecked-int (bit-xor (.getInt bb 4) Integer/MIN_VALUE))) (- (bit-and (long (.getShort bb 8)) 0xFFFF) 32768) v]))))
 
 (defn- hex-bytea [^bytes b] (let [sb (StringBuilder. (+ 2 (* 2 (alength b))))] (.append sb "\\x") (doseq [x b] (.append sb (format "%02x" (bit-and (long x) 0xff)))) (str sb)))
 
