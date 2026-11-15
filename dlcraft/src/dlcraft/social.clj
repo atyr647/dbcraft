@@ -9,7 +9,7 @@
 (set! *unchecked-math* true)
 
 ;; ---------------------------------------------------------------------------------------------- chat
-(defonce chat-seq (AtomicLong. 0))
+(defonce ^AtomicLong chat-seq (AtomicLong. 0))
 
 (defn reset-chat! [{:keys [conn]}]
   (.set chat-seq 0)

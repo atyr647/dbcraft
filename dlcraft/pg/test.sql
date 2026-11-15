@@ -309,7 +309,8 @@ select mct.ok('find_state == brute force, ordered by (x,y,z): diamond, coal, a 5
 
 ------------------------------------------------------------------------------------------------ tick: hand-written expectations (bytes spelled out from SPEC 6)
 create function mct.drain_hex() returns text[] language sql as $$
-  select coalesce(array_agg(conn || ':' || encode(data, 'hex') order by conn, data), '{}') from mc.outbox_drain() $$;
+  select coalesce(array_agg(conn || ':' || encode(data, 'hex') order by conn || ':' || encode(data, 'hex')), '{}') from mc.outbox_drain() $$;
+create function mct.srt(a text[]) returns text[] language sql immutable as $$ select array_agg(x order by x) from unnest(a) x $$;
 create function mct.uuid_hex(e int) returns text language sql as $$ select md5('p' || e) $$;
 create function mct.push1(conn int, x float8, y float8, z float8, yaw float4, pitch float4, og boolean) returns void language sql as $$
   select mc.inbox_push(array[conn], array[mc.move_payload(x, y, z, yaw, pitch, og)]) $$;
@@ -327,13 +328,13 @@ select mct.push1(2, 45, 64, 0, 90, 0, true) \g /dev/null
 select mc.server_tick() as t \gset
 select mct.ok('tick 1 returns game_time 1', :t = 1 and mc.game_time() = 1);
 select mct.ok('enter: add_entity(2) -> conn 1, add_entity(1) -> conn 2 (exact bytes)',
-              mct.drain_hex() = array['1:2c0102' || mct.uuid_hex(2) || '4046800000000000' || '4050000000000000' || '0000000000000000' || '4000',
-                                      '2:2c0101' || mct.uuid_hex(1) || '0000000000000000' || '4050000000000000' || '0000000000000000' || '0000']);
+              mct.drain_hex() = mct.srt(array['1:2c0102' || mct.uuid_hex(2) || '4046800000000000' || '4050000000000000' || '0000000000000000' || '4000',
+                                      '2:2c0101' || mct.uuid_hex(1) || '0000000000000000' || '4050000000000000' || '0000000000000000' || '0000']));
 select mct.ok('enter: visible pair stored', mc.visible_pairs() = 1 and (select count(*) = 2 from mc.visible));
 -- tick 2: P2 steps out to 49.5 -> leave, remove_entities both ways
 select mct.push1(2, 49.5, 64, 0, 90, 0, true) \g /dev/null
 select mc.server_tick() \g /dev/null
-select mct.ok('leave: remove_entities(2) -> conn 1, remove_entities(1) -> conn 2', mct.drain_hex() = array['1:03020102', '2:03020101'] and mc.visible_pairs() = 0);
+select mct.ok('leave: remove_entities(2) -> conn 1, remove_entities(1) -> conn 2', mct.drain_hex() = mct.srt(array['1:03020102', '2:03020101']) and mc.visible_pairs() = 0);
 -- tick 3: back in range (sent_q becomes 45*4096); tick 4: retained small move -> move_entity to the viewer only
 select mct.push1(2, 45, 64, 0, 90, 0, true) \g /dev/null
 select mc.server_tick() \g /dev/null
@@ -361,12 +362,12 @@ select mct.ok('move of exactly 10 blocks is accepted; dq = 40960 -> teleport_ent
 select mc.inbox_push(array[1, 2], array[mc.move_payload(3, 64, 0, 0, 0, true), mc.move_payload(51, 64, 0, 0, 0, true)]) \g /dev/null
 select mc.server_tick() \g /dev/null
 select mct.ok('both moved: one retained pair, two packets (not four); distance exactly 48 is visible',
-              mct.drain_hex() = array['1:0b0302' || '6000' || '0000' || '0000' || '0000' || '01',    -- about P2: (51-45)*4096 = 24576
-                                      '2:0b0301' || '3000' || '0000' || '0000' || '0000' || '01'] and mc.visible_pairs() = 1);
+              mct.drain_hex() = mct.srt(array['1:0b0302' || '6000' || '0000' || '0000' || '0000' || '01',    -- about P2: (51-45)*4096 = 24576
+                                      '2:0b0301' || '3000' || '0000' || '0000' || '0000' || '01']) and mc.visible_pairs() = 1);
 -- tick 9: just beyond 48 -> leave
 select mct.push1(2, 51.0001, 64, 0, 0, 0, true) \g /dev/null
 select mc.server_tick() \g /dev/null
-select mct.ok('48.0001 blocks apart: leave', mct.drain_hex() = array['1:03020102', '2:03020101'] and mc.visible_pairs() = 0);
+select mct.ok('48.0001 blocks apart: leave', mct.drain_hex() = mct.srt(array['1:03020102', '2:03020101']) and mc.visible_pairs() = 0);
 -- several packets of one conn in a tick: the last valid one counts; unknown conn ignored; invalid last does not shadow a valid earlier one
 select mc.inbox_push(array[2, 2, 99, 1, 1], array[mc.move_payload(53, 64, 0, 0, 0, true), mc.move_payload(54, 64, 0, 0, 0, true), mc.move_payload(1, 1, 1, 0, 0, true),
                                                    mc.move_payload(4, 64, 0, 0, 0, true), mc.move_payload(400, 64, 0, 0, 0, true)]) \g /dev/null
@@ -376,8 +377,9 @@ select mct.ok('duplicate packets: last valid per conn wins, unknown conn skipped
 select mct.drain_hex() \g /dev/null
 
 -- block events: ids in order, to every player within 8 chunks (|dcx| <= 8 and |dcz| <= 8) of the event chunk; none elsewhere
+-- players in chunks (0,0) and (4,0)
 select mc.reset_players() \g /dev/null
-select mc.join_bulk(array[1, 2], array[1.0, 70.0], array[64.0, 64.0], array[1.0, 1.0]) \g /dev/null   -- chunks (0,0) and (4,0)
+select mc.join_bulk(array[1, 2], array[1.0, 70.0], array[64.0, 64.0], array[1.0, 1.0]) \g /dev/null
 truncate mc.block_event restart identity;
 insert into mc.block_event (kind, x, y, z, old_state, new_state, cnt) values
   ('block', 5, 70, 5, 0, 20, 0),                    -- chunk (0,0): both players
@@ -386,16 +388,165 @@ insert into mc.block_event (kind, x, y, z, old_state, new_state, cnt) values
   ('fill', 200, 10, 0, -1, 7, 1);                    -- chunk (12,0): |4-12| = 8 -> P2 only (boundary), P1 12 -> none
 select mc.server_tick() \g /dev/null
 select mct.ok('block events: exact packets (i64 pos, varint state / count), in event order, only to players within 8 chunks',
-              mct.drain_hex() = array[
+              mct.drain_hex() = mct.srt(array[
                 '1:0a05' || '0000014000005046' || '14',
                 '1:0a05' || 'ffffffffffffffc0' || '00',
                 '2:0a05' || '0000014000005046' || '14',
-                '2:' || '0e06' || encode(int8send(176::bigint * 274877906944 + 0 * 4096 + 10), 'hex') || '07' || 'ac02',
+                '2:' || '0c06' || encode(int8send(176::bigint * 274877906944 + 0 * 4096 + 10), 'hex') || '07' || 'ac02',
                 '2:0a05' || 'ffffffffffffffc0' || '00',
-                '2:' || '0d06' || encode(int8send(200::bigint * 274877906944 + 0 * 4096 + 10), 'hex') || '07' || '01']);
+                '2:' || '0b06' || encode(int8send(200::bigint * 274877906944 + 0 * 4096 + 10), 'hex') || '07' || '01']));
 select mct.ok('events were consumed', (select count(*) = 0 from mc.block_event));
 select mct.ok('pkt_move: teleport branch at |dq| = 32768 and move branch at 32767, negative side too',
-              mc.pkt_move(5, 32767, -32767, 0, 1, 2, 3, 0, 0, true) = '\x0b030500007fff8001000000'::bytea || '' and substring(mc.pkt_move(5, 32768, 0, 0, 1, 2, 3, 0, 0, true) from 2 for 1) = '\x04'
+              mc.pkt_move(5, 32767, -32767, 0, 1, 2, 3, 0, 0, true) = '\x0b03057fff80010000000001'::bytea and substring(mc.pkt_move(5, 32768, 0, 0, 1, 2, 3, 0, 0, true) from 2 for 1) = '\x04'
               and substring(mc.pkt_move(5, 0, -32768, 0, 1, 2, 3, 0, 0, true) from 2 for 1) = '\x04' and substring(mc.pkt_move(5, 0, 0, 32768, 1, 2, 3, 0, 0, false) from 2 for 1) = '\x04');
 select mct.ok('pos64 of negative coordinates is two''s complement masked: (-1,-64,-1) -> ff..c0', mc.pos64(-1, -64, -1) = '\xffffffffffffffc0');
 select mct.ok('angle(): floor(deg*256/360) & 255 on the float4 value', mc.angle(90) = 64 and mc.angle(-90) = 192 and mc.angle(360) = 0 and mc.angle(-0.5) = 255 and mc.angle(0.1::float4) = 0 and mc.angle(450) = 64);
+
+------------------------------------------------------------------------------------------------ tick: differential test against a brute-force oracle (all pairs, plain loops, own packet builders)
+create table mct.o_p (eid int primary key, x float8, y float8, z float8, yaw float4, pitch float4, og boolean, sqx bigint, sqy bigint, sqz bigint, moved boolean default false);
+create table mct.o_v (a int, b int, primary key (a, b));
+create table mct.o_exp (conn int, data bytea);
+create function mct.o_frame(body bytea) returns bytea language sql immutable as $$ select mct.varint_ref(length(body)) || body $$;
+create function mct.o_angle(d float4) returns bytea language sql immutable as $$ select set_byte('\x00'::bytea, 0, (floor(d::float8 * 256.0 / 360.0)::bigint & 255)::int) $$;
+-- round half to even without round()
+create function mct.o_quant(x float8) returns bigint language plpgsql immutable as $$
+declare v float8 := x * 4096; f float8 := floor(x * 4096);
+begin
+    if v - f < 0.5 then return f::bigint; elsif v - f > 0.5 then return f::bigint + 1;
+    else return case when (f::bigint) % 2 = 0 then f::bigint else f::bigint + 1 end; end if;
+end $$;
+create function mct.o_add(p mct.o_p) returns bytea language sql immutable as $$
+  select mct.o_frame('\x01'::bytea || mct.varint_ref(p.eid) || decode(md5('p' || p.eid), 'hex') || float8send(p.x) || float8send(p.y) || float8send(p.z) || mct.o_angle(p.yaw) || mct.o_angle(p.pitch)) $$;
+create function mct.o_move(p mct.o_p) returns bytea language plpgsql immutable as $$
+declare dx bigint := mct.o_quant(p.x) - p.sqx; dy bigint := mct.o_quant(p.y) - p.sqy; dz bigint := mct.o_quant(p.z) - p.sqz; og bytea := case when p.og then '\x01' else '\x00' end;
+begin
+    if abs(dx) <= 32767 and abs(dy) <= 32767 and abs(dz) <= 32767 then
+        return mct.o_frame('\x03'::bytea || mct.varint_ref(p.eid) || substring(int4send(dx::int) from 3) || substring(int4send(dy::int) from 3) || substring(int4send(dz::int) from 3)
+                           || mct.o_angle(p.yaw) || mct.o_angle(p.pitch) || og);
+    end if;
+    return mct.o_frame('\x04'::bytea || mct.varint_ref(p.eid) || float8send(p.x) || float8send(p.y) || float8send(p.z) || mct.o_angle(p.yaw) || mct.o_angle(p.pitch) || og);
+end $$;
+create function mct.o_sync() returns void language sql as $$
+  truncate mct.o_p, mct.o_v;
+  insert into mct.o_p select eid, x, y, z, yaw, pitch, on_ground, sent_qx, sent_qy, sent_qz, false from mc.player;
+  insert into mct.o_v select viewer_eid, target_eid from mc.visible where viewer_eid < target_eid $$;
+create function mct.o_digest() returns bigint language sql as $$
+  select sum(eid::bigint * 1000003 + sqx * 7 + sqy * 13 + sqz * 17 + floor(x / 16)::bigint * 31 + floor(z / 16)::bigint * 37)::bigint from mct.o_p $$;
+
+create function mct.o_tick(conns int[], xs float8[], ys float8[], zs float8[], yaws float4[], pitches float4[], ogs boolean[],
+                           ev_kind text[], ev_x int[], ev_y int[], ev_z int[], ev_new int[], ev_cnt int[]) returns void language plpgsql as $$
+declare
+    n int; c int; r mct.o_p; a mct.o_p; b mct.o_p; lastn int[] := array_fill(0, array[1000]); r2 record; was boolean; isnow boolean; e int; body bytea; pos bytea;
+begin
+    truncate mct.o_exp;
+    update mct.o_p set moved = false;
+    for n in 1 .. coalesce(cardinality(conns), 0) loop
+        c := conns[n];
+        select * into r from mct.o_p where eid = c;
+        if not found then continue; end if;
+        if abs(xs[n] - r.x) <= 10 and abs(zs[n] - r.z) <= 10 then lastn[c] := n; end if;
+    end loop;
+    for c in select eid from mct.o_p order by eid loop
+        if lastn[c] > 0 then
+            n := lastn[c];
+            update mct.o_p set x = xs[n], y = ys[n], z = zs[n], yaw = yaws[n], pitch = pitches[n], og = ogs[n], moved = true where eid = c;
+        end if;
+    end loop;
+    for r2 in select pa.eid as ea, pb.eid as eb from mct.o_p pa, mct.o_p pb where pa.eid < pb.eid and (pa.moved or pb.moved) order by pa.eid, pb.eid loop
+        select * into a from mct.o_p where eid = r2.ea;
+        select * into b from mct.o_p where eid = r2.eb;
+        isnow := (a.x - b.x) * (a.x - b.x) + (a.z - b.z) * (a.z - b.z) <= 2304.0;
+        was := exists (select 1 from mct.o_v where mct.o_v.a = a.eid and mct.o_v.b = b.eid);
+        if isnow and not was then
+            insert into mct.o_v values (a.eid, b.eid);
+            insert into mct.o_exp values (a.eid, mct.o_add(b)), (b.eid, mct.o_add(a));
+        elsif was and not isnow then
+            delete from mct.o_v where mct.o_v.a = a.eid and mct.o_v.b = b.eid;
+            insert into mct.o_exp values (a.eid, mct.o_frame('\x0201'::bytea || mct.varint_ref(b.eid))), (b.eid, mct.o_frame('\x0201'::bytea || mct.varint_ref(a.eid)));
+        elsif isnow and was then
+            if a.moved then insert into mct.o_exp values (b.eid, mct.o_move(a)); end if;
+            if b.moved then insert into mct.o_exp values (a.eid, mct.o_move(b)); end if;
+        end if;
+    end loop;
+    update mct.o_p set sqx = mct.o_quant(x), sqy = mct.o_quant(y), sqz = mct.o_quant(z) where moved;
+    for e in 1 .. coalesce(cardinality(ev_kind), 0) loop
+        pos := int8send(((ev_x[e]::bigint & 67108863) << 38) | ((ev_z[e]::bigint & 67108863) << 12) | (ev_y[e]::bigint & 4095));
+        if ev_kind[e] = 'block' then body := '\x05'::bytea || pos || mct.varint_ref(ev_new[e]);
+        else body := '\x06'::bytea || pos || mct.varint_ref(ev_new[e]) || mct.varint_ref(ev_cnt[e]); end if;
+        insert into mct.o_exp select p.eid, mct.o_frame(body) from mct.o_p p
+         where abs(floor(p.x / 16)::int - (ev_x[e] >> 4)) <= 8 and abs(floor(p.z / 16)::int - (ev_z[e] >> 4)) <= 8;
+    end loop;
+end $$;
+
+create temp table difftick_stats (packets bigint default 0, enters bigint default 0, leaves bigint default 0, teleports bigint default 0, moves bigint default 0, rejected bigint default 0, evpk bigint default 0);
+insert into difftick_stats default values;
+do $$
+declare
+    nplayers constant int := 90;
+    t int; i int; k int; conns int[]; xs float8[]; ys float8[]; zs float8[]; yaws float4[]; pitches float4[]; ogs boolean[];
+    ek text[]; ex int[]; ey int[]; ez int[]; en int[]; ec int[];
+    px float8[]; pz float8[]; dx float8; dz float8; nx float8; nz float8;
+    exp_ text[]; got text[]; r record; nexp bigint; total bigint := 0;
+begin
+    perform setseed(0.31337);
+    perform mc.drain_block_events();
+    perform mc.reset_players();
+    perform mc.join_bulk((select array_agg(i) from generate_series(1, nplayers) i),
+                         (select array_agg(case when i % 7 = 0 then (floor(random() * 500000) + 0.5) / 4096 else random() * 140 end) from generate_series(1, nplayers) i),
+                         (select array_agg(64 + random() * 6) from generate_series(1, nplayers) i),
+                         (select array_agg(case when i % 5 = 0 then (floor(random() * 500000) + 0.5) / 4096 else random() * 140 end) from generate_series(1, nplayers) i));
+    perform mc.vis_init();
+    perform mct.o_sync();
+    for t in 1 .. 60 loop
+        conns := '{}'; xs := '{}'; ys := '{}'; zs := '{}'; yaws := '{}'; pitches := '{}'; ogs := '{}';
+        for i in 1 .. nplayers loop
+            if random() < 0.35 then
+                for k in 1 .. (case when random() < 0.06 then 2 else 1 end) loop       -- sometimes two packets from one conn
+                    select x, z into nx, nz from mct.o_p where eid = i;
+                    dx := case when random() < 0.04 then 10 when random() < 0.04 then -10 when random() < 0.05 then 10.0000001 else (random() - 0.5) * 21.2 end;
+                    dz := (random() - 0.5) * 21.2;
+                    nx := greatest(least(nx + dx, 150), -10); nz := greatest(least(nz + dz, 150), -10);
+                    if random() < 0.15 then nx := (floor(nx * 4096) + 0.5) / 4096; end if;
+                    conns := conns || i; xs := xs || nx; ys := ys || (64 + random() * 6); zs := zs || nz;
+                    yaws := yaws || ((random() * 1500 - 750)::float4); pitches := pitches || ((random() * 180 - 90)::float4); ogs := ogs || (random() < 0.5);
+                end loop;
+            end if;
+        end loop;
+        if t % 4 = 0 then conns := conns || 9999; xs := xs || 1.0; ys := ys || 1.0; zs := zs || 1.0; yaws := yaws || 0::float4; pitches := pitches || 0::float4; ogs := ogs || true; end if;
+        if t % 3 = 0 then
+            insert into mc.block_event (kind, x, y, z, old_state, new_state, cnt)
+            select case when random() < 0.3 then 'fill' else 'block' end, (random() * 330 - 100)::int, (random() * 400 - 64)::int, (random() * 330 - 100)::int, 0, (random() * 20)::int, (random() * 5000)::int
+              from generate_series(1, 6);
+        end if;
+        select coalesce(array_agg(kind order by id), '{}'), coalesce(array_agg(x order by id), '{}'), coalesce(array_agg(y order by id), '{}'), coalesce(array_agg(z order by id), '{}'),
+               coalesce(array_agg(new_state order by id), '{}'), coalesce(array_agg(cnt order by id), '{}') into ek, ex, ey, ez, en, ec from mc.block_event;
+        -- the oracle reads the arrays it was given; the implementation gets the same bytes through the inbox
+        -- (oracle positions are the exact float8 values; float4 yaw/pitch are the values stored in the payload)
+        perform mct.o_tick(conns, xs, ys, zs, yaws, pitches, ogs, ek, ex, ey, ez, en, ec);
+        perform mc.inbox_push(conns, (select array_agg(mc.move_payload(xs[j], ys[j], zs[j], yaws[j], pitches[j], ogs[j]) order by j) from generate_series(1, coalesce(cardinality(conns), 0)) j));
+        perform mc.server_tick();
+        select coalesce(array_agg(conn || ':' || encode(data, 'hex') order by conn || ':' || encode(data, 'hex')), '{}') into got from mc.outbox_drain();
+        select coalesce(array_agg(conn || ':' || encode(data, 'hex') order by conn || ':' || encode(data, 'hex')), '{}') into exp_ from mct.o_exp;
+        if got is distinct from exp_ then
+            raise exception 'FAIL: differential tick % packets differ: got % expected %', t, cardinality(got), cardinality(exp_);
+        end if;
+        if mc.player_digest() <> mct.o_digest() then raise exception 'FAIL: differential tick %: player_digest % vs oracle %', t, mc.player_digest(), mct.o_digest(); end if;
+        if (select count(*) from mc.visible v where not exists (select 1 from mct.o_v o where (o.a, o.b) in ((v.viewer_eid, v.target_eid), (v.target_eid, v.viewer_eid)))) > 0
+           or (select count(*) from mct.o_v) <> mc.visible_pairs() or (select count(*) from mc.visible) <> 2 * mc.visible_pairs() then
+            raise exception 'FAIL: differential tick %: visible set differs', t;
+        end if;
+        if (select count(*) from mc.player p join mct.o_p o using (eid) where p.x <> o.x or p.y <> o.y or p.z <> o.z or p.yaw <> o.yaw or p.pitch <> o.pitch or p.on_ground <> o.og
+                                                                          or p.sent_qx <> o.sqx or p.sent_qy <> o.sqy or p.sent_qz <> o.sqz) > 0 then
+            raise exception 'FAIL: differential tick %: player rows differ', t;
+        end if;
+        update difftick_stats set packets = packets + cardinality(got),
+               teleports = teleports + (select count(*) from unnest(got) g where g ~ '^[0-9]+:[0-9a-f]{2}04'),
+               moves = moves + (select count(*) from unnest(got) g where g ~ '^[0-9]+:[0-9a-f]{2}03'),
+               enters = enters + (select count(*) from unnest(got) g where g ~ '^[0-9]+:[0-9a-f]{2}01'),
+               leaves = leaves + (select count(*) from unnest(got) g where g ~ '^[0-9]+:0302'),
+               evpk = evpk + (select count(*) from unnest(got) g where g ~ '^[0-9]+:[0-9a-f]{2}0[56]');
+    end loop;
+end $$;
+select mct.ok('differential tick (90 players, 60 ticks, dups, rejects, boundary distances, half-even quantisation, events): packets, digest, visible set, rows == oracle',
+              (select packets > 5000 and enters > 200 and leaves > 200 and teleports > 50 and moves > 500 and evpk > 500 from difftick_stats));
+select 'INFO differential totals: ' || packets || ' packets, ' || enters || ' enters, ' || leaves || ' leaves, ' || moves || ' moves, ' || teleports || ' teleports, ' || evpk || ' block/fill updates' from difftick_stats;

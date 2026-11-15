@@ -1,5 +1,6 @@
 (ns pgx
   "Thin JDBC helpers for the PostgreSQL side (plain pgjdbc over TCP loopback; the server-side functions do the work)."
+  (:require [clojure.java.shell] [clojure.string])
   (:import [java.sql Connection DriverManager PreparedStatement ResultSet Statement Types]
            [java.util Properties]))
 

@@ -36,6 +36,6 @@ case "${1:-}" in
   reset) "$0" stop 2>/dev/null || true; rm -rf "$DATA"; "$0" start "$mode" ;;
   psql)  shift; exec psql -h 127.0.0.1 -p "$PORT" -U postgres dlcraft "$@" ;;
   rss)   # resident memory of the postmaster and its children, MB
-         pid=$(head -1 $DATA/postmaster.pid); { echo $pid; pgrep -P $pid; } | xargs -I{} awk '/VmRSS/{s+=$2} END{printf "%.0f\n", s/1024}' /proc/{}/status ;;
+         pid=$(head -1 $DATA/postmaster.pid); for p in $pid $(pgrep -P $pid); do awk '/VmRSS/{print $2}' /proc/$p/status; done | awk '{s+=$2+0; if ($1+0>0) s+=0} {t+=$1} END{printf "%.0f\n", t/1024}' ;;
   *) echo "usage: $0 start|stop|kill9|reset|psql|rss"; exit 2 ;;
 esac

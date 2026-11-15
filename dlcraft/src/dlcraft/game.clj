@@ -43,7 +43,7 @@
 (defn- rint-q ^long [^double v] (long (Math/rint (* v 4096.0))))
 (defn- chunk-of ^long [^double v] (long (Math/floor (/ v 16.0))))
 
-(defonce ^:private uuid-cache (ConcurrentHashMap.))
+(defonce ^:private ^ConcurrentHashMap uuid-cache (ConcurrentHashMap.))
 (defn uuid-bytes ^bytes [^long eid]
   (or (.get uuid-cache eid)
       (let [b (.digest (MessageDigest/getInstance "MD5") (.getBytes (str "p" eid) "UTF-8"))]
@@ -269,7 +269,7 @@
               (let [q (long q)]
                 (when-not (== q eid)
                   (when (in-range? p (final-of q)) (.add now q)))))
-            (let [was (visible-set kv eid)]
+            (let [^HashSet was (visible-set kv eid)]
               ;; enters
               (doseq [q now]
                 (let [q (long q)]

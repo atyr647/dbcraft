@@ -309,14 +309,14 @@
       (let [full? (and (<= x1 (* cx 16)) (>= x2 (+ (* cx 16) 15)) (<= z1 (* cz 16)) (>= z2 (+ (* cz 16) 15)))
             rows (d/get-range kv "sect" [:closed (skey cx cz c/MIN-SY) (skey cx cz c/MAX-SY)] :bytes :bytes true)]
         (doseq [^bytes bl rows]
-          (let [^Section sec (c/parse-blob bl) pal ^ints (:palette sec) bits (:bits sec)]
+          (let [^Section sec (c/parse-blob bl) ^ints pal (:palette sec) bits (:bits sec)]
             (if (zero? (long bits))
               (if full?
                 (aset tally (aget pal 0) (+ (aget tally (aget pal 0)) 4096))
                 (let [w (- (inc (min x2 (+ (* cx 16) 15))) (max x1 (* cx 16)))
                       h (- (inc (min z2 (+ (* cz 16) 15))) (max z1 (* cz 16)))]
-                  (aset tally (aget pal 0) (+ (aget tally (aget pal 0)) (* 16 w h)))))
-              (let [entries (c/unpack-longs (:data sec) bits)]
+                  (aset tally (aget pal 0) (long (+ (aget tally (aget pal 0)) (* 16 (long w) (long h)))))))
+              (let [^ints entries (c/unpack-longs (:data sec) bits)]
                 (if full?
                   (dotimes [i 4096] (let [s (aget pal (aget entries i))] (aset tally s (inc (aget tally s)))))
                   (dotimes [i 4096]
@@ -336,7 +336,7 @@
           (when (some #(== (long %) state) pal)
             (let [sy (- (bit-and (.getShort (ByteBuffer/wrap k) 8) 0xFFFF) 32768)
                   ^Section sec (c/parse-blob bl)
-                  entries (if (zero? (long (:bits sec))) (int-array 4096) (c/unpack-longs (:data sec) (:bits sec)))
+                  ^ints entries (if (zero? (long (:bits sec))) (int-array 4096) (c/unpack-longs (:data sec) (:bits sec)))
                   ^ints p (:palette sec)]
               (dotimes [i 4096]
                 (when (== (aget p (aget entries i)) state)
